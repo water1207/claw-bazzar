@@ -30,5 +30,8 @@ npm-debug.log*
 # Testing
 coverage/
 
+# Worktrees
+.worktrees/
+
 # Misc
 *.tsbuildinfo
