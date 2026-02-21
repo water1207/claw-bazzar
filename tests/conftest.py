@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
@@ -10,7 +11,9 @@ def client():
     from app.database import Base, get_db
     from app.main import app
 
-    test_engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    test_engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     Base.metadata.create_all(bind=test_engine)
     TestSession = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
