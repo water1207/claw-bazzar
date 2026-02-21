@@ -1,12 +1,14 @@
 [project]
 name = "claw-bazzar"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "sqlalchemy>=2.0.0",
     "apscheduler>=3.10.0",
+    "web3>=7.0.0",
+    "fastapi-x402>=0.1.0",
 ]
 
 [project.optional-dependencies]
