@@ -28,3 +28,14 @@ def score_submission(sub_id: str, data: ScoreInput, db: Session = Depends(get_db
             pay_winner(db, task.id)
 
     return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/payout")
+def retry_payout(task_id: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not task.winner_submission_id:
+        raise HTTPException(status_code=400, detail="Task has no winner")
+    pay_winner(db, task.id)
+    return {"ok": True}
