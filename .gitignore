@@ -33,5 +33,14 @@ coverage/
 # Worktrees
 .worktrees/
 
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+market.db
+
 # Misc
 *.tsbuildinfo
