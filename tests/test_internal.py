@@ -1,17 +1,24 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+PAYMENT_MOCK = patch(
+    "app.routers.tasks.verify_payment",
+    return_value={"valid": True, "tx_hash": "0xtest"},
+)
+PAYMENT_HEADERS = {"X-PAYMENT": "test"}
+
 
 def future() -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
 
 
 def make_task_and_submission(client, type="fastest_first", threshold=0.8):
-    task = client.post("/tasks", json={
-        "title": "T", "description": "d", "type": type,
-        "threshold": threshold, "deadline": future(),
-        "publisher_id": "test-pub", "bounty": 1.0,
-    }).json()
+    with PAYMENT_MOCK:
+        task = client.post("/tasks", json={
+            "title": "T", "description": "d", "type": type,
+            "threshold": threshold, "deadline": future(),
+            "publisher_id": "test-pub", "bounty": 1.0,
+        }, headers=PAYMENT_HEADERS).json()
     with patch("app.routers.submissions.invoke_oracle"):
         sub = client.post(f"/tasks/{task['id']}/submissions", json={
             "worker_id": "w1", "content": "answer"

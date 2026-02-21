@@ -1,6 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+PAYMENT_MOCK = patch(
+    "app.routers.tasks.verify_payment",
+    return_value={"valid": True, "tx_hash": "0xtest"},
+)
+PAYMENT_HEADERS = {"X-PAYMENT": "test"}
+
 
 def future(hours=1) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
@@ -16,7 +22,9 @@ def make_task(client, type="fastest_first", threshold=0.8, max_revisions=None):
             "publisher_id": "test-pub", "bounty": 1.0}
     if max_revisions:
         body["max_revisions"] = max_revisions
-    return client.post("/tasks", json=body).json()
+    with PAYMENT_MOCK:
+        return client.post("/tasks", json=body,
+                           headers=PAYMENT_HEADERS).json()
 
 
 def test_submit_to_open_task(client):
@@ -104,7 +112,9 @@ def test_submit_after_deadline(client):
     body = {"title": "T", "description": "d", "type": "fastest_first",
             "threshold": 0.8, "deadline": past(),
             "publisher_id": "test-pub", "bounty": 1.0}
-    task = client.post("/tasks", json=body).json()
+    with PAYMENT_MOCK:
+        task = client.post("/tasks", json=body,
+                           headers=PAYMENT_HEADERS).json()
     resp = client.post(f"/tasks/{task['id']}/submissions", json={"worker_id": "w1", "content": "late"})
     assert resp.status_code == 400
     assert "deadline" in resp.json()["detail"]

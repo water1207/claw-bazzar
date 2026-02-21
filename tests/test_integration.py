@@ -5,6 +5,12 @@ Oracle is mocked to avoid subprocess calls.
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
+PAYMENT_MOCK = patch(
+    "app.routers.tasks.verify_payment",
+    return_value={"valid": True, "tx_hash": "0xtest"},
+)
+PAYMENT_HEADERS = {"X-PAYMENT": "test"}
+
 
 def future(hours=1) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
@@ -12,14 +18,15 @@ def future(hours=1) -> str:
 
 def test_fastest_first_full_lifecycle(client):
     # 1. Publish task
-    task = client.post("/tasks", json={
-        "title": "Fastest wins", "description": "Solve it fast",
-        "type": "fastest_first", "threshold": 0.8, "deadline": future(),
-        "publisher_id": "test-pub", "bounty": 1.0,
-    }).json()
+    with PAYMENT_MOCK:
+        task = client.post("/tasks", json={
+            "title": "Fastest wins", "description": "Solve it fast",
+            "type": "fastest_first", "threshold": 0.8, "deadline": future(),
+            "publisher_id": "test-pub", "bounty": 1.0,
+        }, headers=PAYMENT_HEADERS).json()
     assert task["status"] == "open"
 
-    # 2. Worker A submits (oracle mocked — score will be applied via internal endpoint)
+    # 2. Worker A submits (oracle mocked -- score will be applied via internal endpoint)
     with patch("app.routers.submissions.invoke_oracle"):
         sub_a = client.post(f"/tasks/{task['id']}/submissions", json={
             "worker_id": "agent-A", "content": "My answer"
@@ -45,11 +52,12 @@ def test_fastest_first_full_lifecycle(client):
 
 def test_quality_first_full_lifecycle(client):
     # 1. Publish quality_first task
-    task = client.post("/tasks", json={
-        "title": "Quality wins", "description": "Refine your answer",
-        "type": "quality_first", "max_revisions": 3, "deadline": future(),
-        "publisher_id": "test-pub", "bounty": 1.0,
-    }).json()
+    with PAYMENT_MOCK:
+        task = client.post("/tasks", json={
+            "title": "Quality wins", "description": "Refine your answer",
+            "type": "quality_first", "max_revisions": 3, "deadline": future(),
+            "publisher_id": "test-pub", "bounty": 1.0,
+        }, headers=PAYMENT_HEADERS).json()
 
     # 2. Worker submits revision 1
     with patch("app.routers.submissions.invoke_oracle"):
@@ -91,23 +99,25 @@ def test_quality_first_full_lifecycle(client):
 
 
 def test_filter_tasks_by_status(client):
-    with patch("app.routers.submissions.invoke_oracle"):
-        t1 = client.post("/tasks", json={
-            "title": "Open", "description": "d",
-            "type": "fastest_first", "threshold": 0.5, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0,
-        }).json()
-        sub = client.post(f"/tasks/{t1['id']}/submissions", json={
-            "worker_id": "w", "content": "x"
-        }).json()
+    with PAYMENT_MOCK:
+        with patch("app.routers.submissions.invoke_oracle"):
+            t1 = client.post("/tasks", json={
+                "title": "Open", "description": "d",
+                "type": "fastest_first", "threshold": 0.5, "deadline": future(),
+                "publisher_id": "test-pub", "bounty": 1.0,
+            }, headers=PAYMENT_HEADERS).json()
+            sub = client.post(f"/tasks/{t1['id']}/submissions", json={
+                "worker_id": "w", "content": "x"
+            }).json()
 
     client.post(f"/internal/submissions/{sub['id']}/score", json={"score": 0.9})
 
-    client.post("/tasks", json={
-        "title": "Still open", "description": "d",
-        "type": "fastest_first", "threshold": 0.5, "deadline": future(),
-        "publisher_id": "test-pub", "bounty": 1.0,
-    })
+    with PAYMENT_MOCK:
+        client.post("/tasks", json={
+            "title": "Still open", "description": "d",
+            "type": "fastest_first", "threshold": 0.5, "deadline": future(),
+            "publisher_id": "test-pub", "bounty": 1.0,
+        }, headers=PAYMENT_HEADERS)
 
     open_tasks = client.get("/tasks?status=open").json()
     closed_tasks = client.get("/tasks?status=closed").json()
