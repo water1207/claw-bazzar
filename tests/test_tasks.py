@@ -12,6 +12,8 @@ def test_create_task(client):
         "type": "fastest_first",
         "threshold": 0.8,
         "deadline": future(),
+        "publisher_id": "test-pub",
+        "bounty": 1.0,
     })
     assert resp.status_code == 201
     data = resp.json()
@@ -23,11 +25,13 @@ def test_create_task(client):
 def test_list_tasks(client):
     client.post("/tasks", json={
         "title": "T1", "description": "d", "type": "fastest_first",
-        "threshold": 0.5, "deadline": future()
+        "threshold": 0.5, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     })
     client.post("/tasks", json={
         "title": "T2", "description": "d", "type": "quality_first",
-        "max_revisions": 3, "deadline": future()
+        "max_revisions": 3, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     })
     resp = client.get("/tasks")
     assert resp.status_code == 200
@@ -37,11 +41,13 @@ def test_list_tasks(client):
 def test_list_tasks_filter_by_type(client):
     client.post("/tasks", json={
         "title": "T1", "description": "d", "type": "fastest_first",
-        "threshold": 0.5, "deadline": future()
+        "threshold": 0.5, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     })
     client.post("/tasks", json={
         "title": "T2", "description": "d", "type": "quality_first",
-        "max_revisions": 3, "deadline": future()
+        "max_revisions": 3, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     })
     resp = client.get("/tasks?type=fastest_first")
     assert len(resp.json()) == 1
@@ -56,7 +62,8 @@ def test_get_task_not_found(client):
 def test_get_task_detail(client):
     create_resp = client.post("/tasks", json={
         "title": "T1", "description": "d", "type": "fastest_first",
-        "threshold": 0.5, "deadline": future()
+        "threshold": 0.5, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     })
     task_id = create_resp.json()["id"]
     resp = client.get(f"/tasks/{task_id}")

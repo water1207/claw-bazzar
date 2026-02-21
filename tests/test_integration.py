@@ -14,7 +14,8 @@ def test_fastest_first_full_lifecycle(client):
     # 1. Publish task
     task = client.post("/tasks", json={
         "title": "Fastest wins", "description": "Solve it fast",
-        "type": "fastest_first", "threshold": 0.8, "deadline": future()
+        "type": "fastest_first", "threshold": 0.8, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     }).json()
     assert task["status"] == "open"
 
@@ -46,7 +47,8 @@ def test_quality_first_full_lifecycle(client):
     # 1. Publish quality_first task
     task = client.post("/tasks", json={
         "title": "Quality wins", "description": "Refine your answer",
-        "type": "quality_first", "max_revisions": 3, "deadline": future()
+        "type": "quality_first", "max_revisions": 3, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     }).json()
 
     # 2. Worker submits revision 1
@@ -92,7 +94,8 @@ def test_filter_tasks_by_status(client):
     with patch("app.routers.submissions.invoke_oracle"):
         t1 = client.post("/tasks", json={
             "title": "Open", "description": "d",
-            "type": "fastest_first", "threshold": 0.5, "deadline": future()
+            "type": "fastest_first", "threshold": 0.5, "deadline": future(),
+            "publisher_id": "test-pub", "bounty": 1.0,
         }).json()
         sub = client.post(f"/tasks/{t1['id']}/submissions", json={
             "worker_id": "w", "content": "x"
@@ -102,7 +105,8 @@ def test_filter_tasks_by_status(client):
 
     client.post("/tasks", json={
         "title": "Still open", "description": "d",
-        "type": "fastest_first", "threshold": 0.5, "deadline": future()
+        "type": "fastest_first", "threshold": 0.5, "deadline": future(),
+        "publisher_id": "test-pub", "bounty": 1.0,
     })
 
     open_tasks = client.get("/tasks?status=open").json()

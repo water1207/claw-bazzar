@@ -12,7 +12,8 @@ def past() -> str:
 
 def make_task(client, type="fastest_first", threshold=0.8, max_revisions=None):
     body = {"title": "T", "description": "d", "type": type,
-            "threshold": threshold, "deadline": future()}
+            "threshold": threshold, "deadline": future(),
+            "publisher_id": "test-pub", "bounty": 1.0}
     if max_revisions:
         body["max_revisions"] = max_revisions
     return client.post("/tasks", json=body).json()
@@ -101,7 +102,8 @@ def test_get_single_submission(client):
 
 def test_submit_after_deadline(client):
     body = {"title": "T", "description": "d", "type": "fastest_first",
-            "threshold": 0.8, "deadline": past()}
+            "threshold": 0.8, "deadline": past(),
+            "publisher_id": "test-pub", "bounty": 1.0}
     task = client.post("/tasks", json=body).json()
     resp = client.post(f"/tasks/{task['id']}/submissions", json={"worker_id": "w1", "content": "late"})
     assert resp.status_code == 400

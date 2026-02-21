@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel
-from .models import TaskType, TaskStatus, SubmissionStatus, UserRole
+from .models import TaskType, TaskStatus, SubmissionStatus, UserRole, PayoutStatus
 
 
 class UserCreate(BaseModel):
@@ -27,6 +27,8 @@ class TaskCreate(BaseModel):
     threshold: Optional[float] = None
     max_revisions: Optional[int] = None
     deadline: datetime
+    publisher_id: str
+    bounty: float
 
 
 class TaskOut(BaseModel):
@@ -39,6 +41,12 @@ class TaskOut(BaseModel):
     deadline: datetime
     status: TaskStatus
     winner_submission_id: Optional[str] = None
+    publisher_id: Optional[str] = None
+    bounty: Optional[float] = None
+    payment_tx_hash: Optional[str] = None
+    payout_status: PayoutStatus = PayoutStatus.pending
+    payout_tx_hash: Optional[str] = None
+    payout_amount: Optional[float] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

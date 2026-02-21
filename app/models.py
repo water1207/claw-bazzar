@@ -26,6 +26,12 @@ class UserRole(str, PyEnum):
     both = "both"
 
 
+class PayoutStatus(str, PyEnum):
+    pending = "pending"
+    paid = "paid"
+    failed = "failed"
+
+
 def _uuid() -> str:
     return str(uuid.uuid4())
 
@@ -46,6 +52,12 @@ class Task(Base):
     deadline = Column(DateTime(timezone=True), nullable=False)
     status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.open)
     winner_submission_id = Column(String, nullable=True)  # plain string, no FK
+    publisher_id = Column(String, nullable=True)
+    bounty = Column(Float, nullable=True)
+    payment_tx_hash = Column(String, nullable=True)
+    payout_status = Column(Enum(PayoutStatus), nullable=False, default=PayoutStatus.pending)
+    payout_tx_hash = Column(String, nullable=True)
+    payout_amount = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
