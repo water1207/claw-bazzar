@@ -97,7 +97,9 @@ def test_create_task_returns_402_without_payment(client):
     assert "amount" in data
     assert "network" in data
     assert "asset" in data
-    assert "pay_to" in data
+    assert "payTo" in data
+    assert "scheme" in data
+    assert "extra" in data
 
 
 def test_create_task_with_valid_payment(client):
@@ -129,3 +131,17 @@ def test_create_task_with_invalid_payment(client):
             "bounty": 1.0,
         }, headers={"X-PAYMENT": "invalid-payment"})
     assert resp.status_code == 402
+
+
+def test_create_task_zero_bounty_skips_payment(client):
+    resp = client.post("/tasks", json={
+        "title": "Free task",
+        "description": "No bounty needed",
+        "type": "fastest_first",
+        "threshold": 0.8,
+        "deadline": future(),
+        "publisher_id": "test-pub",
+        "bounty": 0,
+    })
+    assert resp.status_code == 201
+    assert resp.json()["payment_tx_hash"] is None

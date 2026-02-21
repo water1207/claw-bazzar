@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatDeadline, scoreColor } from './utils'
+import { formatDeadline, formatBounty, scoreColor } from './utils'
 
 describe('formatDeadline', () => {
   it('returns expired for past deadline', () => {
@@ -28,6 +28,28 @@ describe('formatDeadline', () => {
     const result = formatDeadline(future)
     expect(result.expired).toBe(false)
     expect(result.label).toBe('2d left')
+  })
+})
+
+describe('formatBounty', () => {
+  it('returns em dash for null bounty', () => {
+    expect(formatBounty(null)).toBe('—')
+  })
+
+  it('formats zero bounty', () => {
+    expect(formatBounty(0)).toBe('$0.00')
+  })
+
+  it('formats whole number bounty', () => {
+    expect(formatBounty(10)).toBe('$10.00')
+  })
+
+  it('formats decimal bounty', () => {
+    expect(formatBounty(5.5)).toBe('$5.50')
+  })
+
+  it('formats bounty with many decimals to 2 places', () => {
+    expect(formatBounty(1.999)).toBe('$2.00')
   })
 })
 

@@ -1,8 +1,9 @@
 import { TaskDetail as TaskDetailType } from '@/lib/api'
 import { StatusBadge } from './StatusBadge'
 import { TypeBadge } from './TypeBadge'
+import { PayoutBadge } from './PayoutBadge'
 import { SubmissionTable } from './SubmissionTable'
-import { formatDeadline } from '@/lib/utils'
+import { formatDeadline, formatBounty } from '@/lib/utils'
 
 interface Props {
   task: TaskDetailType
@@ -47,6 +48,48 @@ export function TaskDetail({ task }: Props) {
             : '—'}
         </div>
       </div>
+
+      {task.bounty !== null && (
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+          <div>
+            <span className="text-muted-foreground">Bounty: </span>
+            <span className="font-mono">{formatBounty(task.bounty)}</span>
+          </div>
+          {task.publisher_id && (
+            <div>
+              <span className="text-muted-foreground">Publisher: </span>
+              <span className="font-mono">{task.publisher_id.slice(0, 8)}…</span>
+            </div>
+          )}
+          {task.payment_tx_hash && (
+            <div>
+              <span className="text-muted-foreground">Payment Tx: </span>
+              <span className="font-mono">{task.payment_tx_hash.slice(0, 12)}…</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {task.payout_status && (
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Payout: </span>
+            <PayoutBadge status={task.payout_status} />
+          </div>
+          {task.payout_amount !== null && (
+            <div>
+              <span className="text-muted-foreground">Payout Amount: </span>
+              <span className="font-mono">{formatBounty(task.payout_amount)}</span>
+            </div>
+          )}
+          {task.payout_tx_hash && (
+            <div>
+              <span className="text-muted-foreground">Payout Tx: </span>
+              <span className="font-mono">{task.payout_tx_hash.slice(0, 12)}…</span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <h3 className="text-sm font-medium mb-3">

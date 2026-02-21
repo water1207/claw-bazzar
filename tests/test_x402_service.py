@@ -6,10 +6,13 @@ def test_build_payment_requirements():
     from app.services.x402 import build_payment_requirements
 
     result = build_payment_requirements(2.5)
-    assert result["amount"] == "2.5"
+    assert result["amount"] == "2500000"
     assert "network" in result
     assert "asset" in result
-    assert "pay_to" in result
+    assert "payTo" in result
+    assert result["scheme"] == "exact"
+    assert result["maxTimeoutSeconds"] == 30
+    assert result["extra"]["assetTransferMethod"] == "eip3009"
 
 
 def test_verify_payment_valid():

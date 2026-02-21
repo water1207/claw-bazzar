@@ -6,6 +6,9 @@ const fetcher = (url: string) =>
     return r.json()
   })
 
+export type PayoutStatus = 'pending' | 'paid' | 'failed'
+export type UserRole = 'publisher' | 'worker'
+
 export interface Task {
   id: string
   title: string
@@ -16,6 +19,20 @@ export interface Task {
   deadline: string
   status: 'open' | 'closed'
   winner_submission_id: string | null
+  created_at: string
+  publisher_id: string | null
+  bounty: number | null
+  payment_tx_hash: string | null
+  payout_status: PayoutStatus | null
+  payout_tx_hash: string | null
+  payout_amount: number | null
+}
+
+export interface User {
+  id: string
+  nickname: string
+  wallet: string
+  role: UserRole
   created_at: string
 }
 
@@ -46,9 +63,29 @@ export function useTask(id: string | null) {
 }
 
 export async function createTask(
-  data: Pick<Task, 'title' | 'description' | 'type' | 'threshold' | 'max_revisions' | 'deadline'>
+  data: Pick<Task, 'title' | 'description' | 'type' | 'threshold' | 'max_revisions' | 'deadline' | 'publisher_id' | 'bounty'>,
+  paymentHeader?: string,
 ): Promise<Task> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (paymentHeader) {
+    headers['X-PAYMENT'] = paymentHeader
+  }
   const resp = await fetch('/api/tasks', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(data),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(text)
+  }
+  return resp.json()
+}
+
+export async function registerUser(
+  data: { nickname: string; wallet: string; role: UserRole },
+): Promise<User> {
+  const resp = await fetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -58,6 +95,12 @@ export async function createTask(
     throw new Error(text)
   }
   return resp.json()
+}
+
+export function useUser(id: string | null) {
+  return useSWR<User>(id ? `/api/users/${id}` : null, fetcher, {
+    refreshInterval: 30_000,
+  })
 }
 
 export async function createSubmission(

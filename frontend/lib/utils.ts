@@ -32,6 +32,11 @@ export function formatDate(dateStr: string): string {
   })
 }
 
+export function formatBounty(bounty: number | null): string {
+  if (bounty === null) return '—'
+  return `$${bounty.toFixed(2)}`
+}
+
 export function scoreColor(score: number | null, threshold: number | null): string {
   if (score === null) return 'text-muted-foreground'
   if (threshold === null) return 'text-green-400'

@@ -8,7 +8,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Task } from '@/lib/api'
-import { formatDeadline, formatDate } from '@/lib/utils'
+import { formatDeadline, formatDate, formatBounty } from '@/lib/utils'
 import { StatusBadge } from './StatusBadge'
 import { TypeBadge } from './TypeBadge'
 
@@ -74,6 +74,7 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
             <TableRow>
               <TableHead className="min-w-[140px]">Title</TableHead>
               <TableHead className="w-20">Type</TableHead>
+              <TableHead className="w-20">Bounty</TableHead>
               <TableHead className="w-20">Status</TableHead>
               <TableHead className="w-28">Published</TableHead>
               <TableHead className="w-24">Deadline</TableHead>
@@ -97,6 +98,9 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
                   <TableCell>
                     <TypeBadge type={task.type} />
                   </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {formatBounty(task.bounty)}
+                  </TableCell>
                   <TableCell>
                     <StatusBadge status={task.status} />
                   </TableCell>
@@ -115,7 +119,7 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
             })}
             {filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
                   No tasks found
                 </TableCell>
               </TableRow>
