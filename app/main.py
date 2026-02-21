@@ -17,7 +17,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="Agent Market", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Agent Market", version="0.2.0", lifespan=lifespan)
 app.include_router(tasks_router.router)
 app.include_router(submissions_router.router)
 app.include_router(internal_router.router)

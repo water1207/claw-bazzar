@@ -52,6 +52,8 @@ def pay_winner(db: Session, task_id: str) -> None:
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task or not task.winner_submission_id or not task.bounty:
         return
+    if task.payout_status == PayoutStatus.paid:
+        return
 
     submission = db.query(Submission).filter(
         Submission.id == task.winner_submission_id

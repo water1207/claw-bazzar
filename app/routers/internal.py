@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Submission, Task, SubmissionStatus, TaskStatus
+from ..models import Submission, Task, SubmissionStatus, TaskStatus, PayoutStatus
 from ..schemas import ScoreInput
 from ..services.payout import pay_winner
 
@@ -37,5 +37,7 @@ def retry_payout(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     if not task.winner_submission_id:
         raise HTTPException(status_code=400, detail="Task has no winner")
+    if task.payout_status == PayoutStatus.paid:
+        raise HTTPException(status_code=400, detail="Task already paid out")
     pay_winner(db, task.id)
     return {"ok": True}
