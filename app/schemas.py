@@ -1,7 +1,23 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel
-from .models import TaskType, TaskStatus, SubmissionStatus
+from .models import TaskType, TaskStatus, SubmissionStatus, UserRole
+
+
+class UserCreate(BaseModel):
+    nickname: str
+    wallet: str
+    role: UserRole
+
+
+class UserOut(BaseModel):
+    id: str
+    nickname: str
+    wallet: str
+    role: UserRole
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class TaskCreate(BaseModel):

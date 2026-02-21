@@ -20,6 +20,12 @@ class SubmissionStatus(str, PyEnum):
     scored = "scored"
 
 
+class UserRole(str, PyEnum):
+    publisher = "publisher"
+    worker = "worker"
+    both = "both"
+
+
 def _uuid() -> str:
     return str(uuid.uuid4())
 
@@ -40,6 +46,16 @@ class Task(Base):
     deadline = Column(DateTime(timezone=True), nullable=False)
     status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.open)
     winner_submission_id = Column(String, nullable=True)  # plain string, no FK
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    nickname = Column(String, unique=True, nullable=False)
+    wallet = Column(String, nullable=False)
+    role = Column(Enum(UserRole), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
