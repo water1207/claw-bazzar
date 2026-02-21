@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -96,3 +97,25 @@ def test_settle_ignores_fastest_first_tasks():
     db.refresh(task)
     # fastest_first is NOT handled by scheduler
     assert task.status == TaskStatus.open
+
+
+def test_settle_triggers_payout():
+    engine = make_engine()
+    Session = sessionmaker(bind=engine)
+    db = Session()
+
+    past = datetime.now(timezone.utc) - timedelta(minutes=5)
+    task = Task(title="Q", description="d", type=TaskType.quality_first,
+                max_revisions=3, deadline=past, publisher_id="pub-1", bounty=10.0)
+    db.add(task)
+    db.flush()
+
+    s1 = Submission(task_id=task.id, worker_id="w1", revision=1, content="v1",
+                    score=0.85, status=SubmissionStatus.scored)
+    db.add(s1)
+    db.commit()
+
+    with patch("app.scheduler.pay_winner") as mock_payout:
+        from app.scheduler import settle_expired_quality_first
+        settle_expired_quality_first(db=db)
+        mock_payout.assert_called_once_with(db, task.id)

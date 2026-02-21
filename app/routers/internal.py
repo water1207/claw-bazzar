@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Submission, Task, SubmissionStatus, TaskStatus
 from ..schemas import ScoreInput
+from ..services.payout import pay_winner
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -24,5 +25,6 @@ def score_submission(sub_id: str, data: ScoreInput, db: Session = Depends(get_db
             task.winner_submission_id = sub.id
             task.status = TaskStatus.closed
             db.commit()
+            pay_winner(db, task.id)
 
     return {"ok": True}

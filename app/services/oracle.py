@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from ..models import Submission, Task, SubmissionStatus, TaskStatus
+from .payout import pay_winner
 
 ORACLE_SCRIPT = Path(__file__).parent.parent.parent / "oracle" / "oracle.py"
 
@@ -48,6 +49,7 @@ def _apply_fastest_first(db: Session, task: Task, submission: Submission) -> Non
         task.winner_submission_id = submission.id
         task.status = TaskStatus.closed
         db.commit()
+        pay_winner(db, task.id)
 
 
 def invoke_oracle(submission_id: str, task_id: str) -> None:

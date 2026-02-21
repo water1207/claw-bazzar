@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from .database import SessionLocal
 from .models import Task, Submission, TaskType, TaskStatus
+from .services.payout import pay_winner
 
 
 def settle_expired_quality_first(db: Optional[Session] = None) -> None:
@@ -36,6 +37,10 @@ def settle_expired_quality_first(db: Optional[Session] = None) -> None:
                 task.winner_submission_id = best.id
             task.status = TaskStatus.closed
         db.commit()
+
+        for task in expired:
+            if task.winner_submission_id:
+                pay_winner(db, task.id)
     finally:
         if own_session:
             db.close()

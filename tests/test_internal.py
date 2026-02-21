@@ -57,3 +57,17 @@ def test_fastest_first_stays_open_below_threshold(client):
 def test_score_nonexistent_submission(client):
     resp = client.post("/internal/submissions/bad-id/score", json={"score": 0.5})
     assert resp.status_code == 404
+
+
+def test_fastest_first_triggers_payout_on_close(client):
+    task, sub = make_task_and_submission(client, threshold=0.7)
+    with patch("app.routers.internal.pay_winner") as mock_payout:
+        client.post(f"/internal/submissions/{sub['id']}/score", json={"score": 0.9})
+        mock_payout.assert_called_once()
+
+
+def test_below_threshold_no_payout(client):
+    task, sub = make_task_and_submission(client, threshold=0.9)
+    with patch("app.routers.internal.pay_winner") as mock_payout:
+        client.post(f"/internal/submissions/{sub['id']}/score", json={"score": 0.5})
+        mock_payout.assert_not_called()
