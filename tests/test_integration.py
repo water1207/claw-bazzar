@@ -123,3 +123,94 @@ def test_filter_tasks_by_status(client):
     closed_tasks = client.get("/tasks?status=closed").json()
     assert len(open_tasks) == 1
     assert len(closed_tasks) == 1
+
+
+def test_bounty_lifecycle_fastest_first(client):
+    """Full flow: register -> publish (with payment) -> submit -> score -> payout."""
+    # 1. Register publisher and worker
+    pub = client.post("/users", json={
+        "nickname": "pub-int", "wallet": "0xPUB", "role": "publisher"
+    }).json()
+    worker = client.post("/users", json={
+        "nickname": "worker-int", "wallet": "0xWORKER", "role": "worker"
+    }).json()
+
+    # 2. Publish task with bounty (mock x402 payment)
+    with patch("app.routers.tasks.verify_payment",
+               return_value={"valid": True, "tx_hash": "0xPAYMENT"}):
+        task = client.post("/tasks", json={
+            "title": "Bounty task", "description": "Do it",
+            "type": "fastest_first", "threshold": 0.7,
+            "deadline": future(), "publisher_id": pub["id"], "bounty": 10.0,
+        }, headers={"X-PAYMENT": "valid"}).json()
+
+    assert task["bounty"] == 10.0
+    assert task["payment_tx_hash"] == "0xPAYMENT"
+    assert task["payout_status"] == "pending"
+
+    # 3. Worker submits
+    with patch("app.routers.submissions.invoke_oracle"):
+        sub = client.post(f"/tasks/{task['id']}/submissions", json={
+            "worker_id": worker["id"], "content": "my answer"
+        }).json()
+
+    # 4. Score above threshold -> triggers payout
+    with patch("app.services.payout._send_usdc_transfer", return_value="0xPAYOUT") as mock_tx:
+        client.post(f"/internal/submissions/{sub['id']}/score", json={"score": 0.9})
+        mock_tx.assert_called_once_with("0xWORKER", 8.0)  # 10.0 * 0.80
+
+    # 5. Verify final state
+    detail = client.get(f"/tasks/{task['id']}").json()
+    assert detail["status"] == "closed"
+    assert detail["winner_submission_id"] == sub["id"]
+    assert detail["payout_status"] == "paid"
+    assert detail["payout_amount"] == 8.0
+    assert detail["payout_tx_hash"] == "0xPAYOUT"
+
+
+def test_bounty_lifecycle_quality_first(client):
+    """Full flow: quality_first with deadline settlement and payout."""
+    pub = client.post("/users", json={
+        "nickname": "pub-q", "wallet": "0xPUBQ", "role": "publisher"
+    }).json()
+    worker = client.post("/users", json={
+        "nickname": "worker-q", "wallet": "0xWORKERQ", "role": "worker"
+    }).json()
+
+    with patch("app.routers.tasks.verify_payment",
+               return_value={"valid": True, "tx_hash": "0xPAY"}):
+        task = client.post("/tasks", json={
+            "title": "Quality bounty", "description": "Refine",
+            "type": "quality_first", "max_revisions": 3,
+            "deadline": future(), "publisher_id": pub["id"], "bounty": 20.0,
+        }, headers={"X-PAYMENT": "valid"}).json()
+
+    with patch("app.routers.submissions.invoke_oracle"):
+        r1 = client.post(f"/tasks/{task['id']}/submissions", json={
+            "worker_id": worker["id"], "content": "draft 1"
+        }).json()
+        r2 = client.post(f"/tasks/{task['id']}/submissions", json={
+            "worker_id": worker["id"], "content": "draft 2"
+        }).json()
+
+    client.post(f"/internal/submissions/{r1['id']}/score", json={"score": 0.5})
+    client.post(f"/internal/submissions/{r2['id']}/score", json={"score": 0.9})
+
+    # Force deadline to past and settle
+    from app.database import get_db
+    from app.main import app
+    from app.models import Task as TaskModel
+    db = next(app.dependency_overrides[get_db]())
+    t = db.query(TaskModel).filter(TaskModel.id == task["id"]).first()
+    t.deadline = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+
+    with patch("app.services.payout._send_usdc_transfer", return_value="0xQPAYOUT") as mock_tx:
+        from app.scheduler import settle_expired_quality_first
+        settle_expired_quality_first(db=db)
+        mock_tx.assert_called_once_with("0xWORKERQ", 16.0)  # 20.0 * 0.80
+
+    detail = client.get(f"/tasks/{task['id']}").json()
+    assert detail["status"] == "closed"
+    assert detail["payout_status"] == "paid"
+    assert detail["payout_amount"] == 16.0
