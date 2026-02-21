@@ -27,7 +27,7 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
     return tasks
       .filter((t) => statusFilter === 'all' || t.status === statusFilter)
       .filter((t) => typeFilter === 'all' || t.type === typeFilter)
-      .sort((a, b) => {
+      .toSorted((a, b) => {
         const diff = new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
         return sortDir === 'asc' ? diff : -diff
       })
