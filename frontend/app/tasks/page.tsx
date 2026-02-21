@@ -21,7 +21,7 @@ function TasksContent() {
   return (
     <div className="flex h-[calc(100vh-56px)] overflow-hidden">
       {/* Left panel: task list */}
-      <div className="w-80 border-r border-border flex flex-col p-4 overflow-hidden shrink-0">
+      <div className="w-[560px] border-r border-border flex flex-col p-4 overflow-hidden shrink-0">
         <div className="flex items-center justify-between mb-3">
           <h1 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">
             Tasks

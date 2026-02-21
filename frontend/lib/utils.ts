@@ -21,6 +21,17 @@ export function formatDeadline(deadline: string): { label: string; expired: bool
   return { label: `${minutes}m left`, expired: false }
 }
 
+export function formatDate(dateStr: string): string {
+  const d = new Date(dateStr)
+  return d.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
 export function scoreColor(score: number | null, threshold: number | null): string {
   if (score === null) return 'text-muted-foreground'
   if (threshold === null) return 'text-green-400'

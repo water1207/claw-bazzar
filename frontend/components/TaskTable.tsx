@@ -8,7 +8,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Task } from '@/lib/api'
-import { formatDeadline } from '@/lib/utils'
+import { formatDeadline, formatDate } from '@/lib/utils'
 import { StatusBadge } from './StatusBadge'
 import { TypeBadge } from './TypeBadge'
 
@@ -72,10 +72,11 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>⏱</TableHead>
+              <TableHead className="min-w-[140px]">Title</TableHead>
+              <TableHead className="w-20">Type</TableHead>
+              <TableHead className="w-20">Status</TableHead>
+              <TableHead className="w-28">Published</TableHead>
+              <TableHead className="w-24">Deadline</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -90,7 +91,7 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
                   }`}
                   onClick={() => onSelect(task.id)}
                 >
-                  <TableCell className="font-medium max-w-[120px] truncate">
+                  <TableCell className="font-medium">
                     {task.title}
                   </TableCell>
                   <TableCell>
@@ -99,8 +100,11 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
                   <TableCell>
                     <StatusBadge status={task.status} />
                   </TableCell>
+                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                    {formatDate(task.created_at)}
+                  </TableCell>
                   <TableCell
-                    className={`text-xs ${
+                    className={`text-xs whitespace-nowrap ${
                       expired ? 'text-red-400' : 'text-muted-foreground'
                     }`}
                   >
@@ -111,7 +115,7 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
             })}
             {filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-10">
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
                   No tasks found
                 </TableCell>
               </TableRow>
