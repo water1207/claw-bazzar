@@ -1,10 +1,12 @@
-# V4 Challenge Mechanism Implementation Plan
+# V7 Challenge Mechanism Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 为 quality_first 模式实现挑战仲裁机制：deadline 到期 → Oracle 统一评分 → 公示暂定 winner → 落选者可挑战 → Arbiter 仲裁 → 结算。
 
 **Architecture:** 新增 Challenge 模型和 Arbiter 服务，扩展 Task/Submission/User 模型，改造 Scheduler 为四阶段生命周期引擎。fastest_first 完全不动。Oracle 和 Arbiter 均使用 Stub。
+
+> **押金机制说明（Stub）：** 押金仅做数据库记账（`deposit` / `deposit_returned` 字段），不涉及任何链上收款或退款操作。`deposit_returned` 字段仅记录"应退金额"，实际 USDC 转账留待后续版本实现。
 
 **Tech Stack:** Python / FastAPI / SQLAlchemy / APScheduler / pytest
 
@@ -268,7 +270,7 @@ Expected: All existing 53 tests still PASS (new TaskStatus values are backward-c
 
 ```bash
 git add app/models.py tests/test_challenge_model.py
-git commit -m "feat: add Challenge model, extend Task/Submission/User for V4"
+git commit -m "feat: add Challenge model, extend Task/Submission/User for V7"
 ```
 
 ---
@@ -280,12 +282,25 @@ git commit -m "feat: add Challenge model, extend Task/Submission/User for V4"
 
 **Step 1: Update schemas**
 
+> **重要：** 必须保留现有的 `model_validator`（`fastest_first` 任务必须填写 `threshold`）。在更新 `TaskCreate` 时，保留以下代码，并确保 `from pydantic import BaseModel, model_validator` 导入不丢失：
+> ```python
+> from pydantic import BaseModel, model_validator
+> # ...
+> class TaskCreate(BaseModel):
+>     # ... fields ...
+>     @model_validator(mode="after")
+>     def check_fastest_first_threshold(self) -> "TaskCreate":
+>         if self.type == TaskType.fastest_first and self.threshold is None:
+>             raise ValueError("fastest_first tasks require a threshold")
+>         return self
+> ```
+
 在 `app/schemas.py` 中添加 Challenge 相关 schemas，并更新 TaskCreate/TaskOut/SubmissionOut：
 
 ```python
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from .models import (
     TaskType, TaskStatus, SubmissionStatus, UserRole, PayoutStatus,
     ChallengeVerdict, ChallengeStatus,
@@ -320,6 +335,12 @@ class TaskCreate(BaseModel):
     bounty: float
     submission_deposit: Optional[float] = None
     challenge_duration: Optional[int] = None
+
+    @model_validator(mode="after")
+    def check_fastest_first_threshold(self) -> "TaskCreate":
+        if self.type == TaskType.fastest_first and self.threshold is None:
+            raise ValueError("fastest_first tasks require a threshold")
+        return self
 
 
 class TaskOut(BaseModel):
@@ -530,7 +551,7 @@ def create_submission(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if task.status != TaskStatus.open:
-        raise HTTPException(status_code=400, detail="Task is closed")
+        raise HTTPException(status_code=400, detail="Task is not open")
     deadline = task.deadline if task.deadline.tzinfo else task.deadline.replace(tzinfo=timezone.utc)
     if datetime.now(timezone.utc) > deadline:
         raise HTTPException(status_code=400, detail="Task deadline has passed")
@@ -1076,7 +1097,6 @@ git commit -m "feat: add challenge API endpoints with validation"
 
 **Files:**
 - Modify: `app/scheduler.py`
-- Modify: `app/services/oracle.py`
 - Test: `tests/test_quality_lifecycle.py` (Create)
 
 **Step 1: Write the failing tests**
@@ -1860,7 +1880,7 @@ Expected: All tests PASS (original 53 + new tests)
 **Step 2: Run frontend tests**
 
 Run: `cd frontend && npm test`
-Expected: All 18 tests PASS (frontend unchanged)
+Expected: All 19 tests PASS (frontend unchanged)
 
 **Step 3: Start dev server and smoke test**
 
@@ -1871,5 +1891,5 @@ Verify: `http://localhost:8000/docs` shows new endpoints
 
 ```bash
 git add -A
-git commit -m "feat: V4 challenge mechanism for quality_first complete"
+git commit -m "feat: V7 challenge mechanism for quality_first complete"
 ```

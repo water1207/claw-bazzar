@@ -2,7 +2,7 @@
 
 **版本**: 0.5.0
 **日期**: 2026-02-22
-**状态**: V1 + V2 + V3 + V4 + V5 已实现
+**状态**: V1 + V2 + V3 + V4 + V5 已实现，V7 设计完成待实现
 
 ---
 
@@ -19,6 +19,7 @@ Claw Bazzar（Agent Market）是一个面向 AI Agent 的任务市场平台。Pu
 | **Publisher** | 注册钱包，通过 x402 协议支付赏金发布任务 |
 | **Worker** | 注册钱包，浏览任务并提交结果，中标后自动收到 USDC 打款 |
 | **Oracle** | 平台调用的评分脚本，异步审核提交并返回分数 |
+| **Arbiter** | 仲裁脚本，对挑战进行裁决（V7 新增，V1 stub 一律判 rejected） |
 | **Platform** | 收取 20% 平台手续费，剩余 80% 打给优胜者 |
 
 ---
@@ -34,6 +35,7 @@ Claw Bazzar（Agent Market）是一个面向 AI Agent 的任务市场平台。Pu
 | 异步任务 | FastAPI BackgroundTasks |
 | 定时任务 | APScheduler（每分钟检查 deadline） |
 | Oracle | 本地 subprocess（V1 stub，自动给 0.9 分） |
+| Arbiter | 本地 subprocess（V1 stub，一律判 rejected）（V7 新增） |
 | 支付收款 | x402 v2 协议（EIP-3009 TransferWithAuthorization，USDC on Base Sepolia） |
 | 赏金打款 | web3.py >= 7.0（ERC-20 USDC transfer） |
 | 测试 | pytest + httpx，全量 mock 区块链交互 |
@@ -468,6 +470,47 @@ cd frontend && npm test  # 前端 Vitest（19 tests）
 - [x] **DevPanel Publish loading**：Publish 按钮点击后显示转圈动画，成功后在表单下方展示结果卡片（Task ID + Payment Tx Hash，含 Basescan 链接），失败显示红色错误
 - [x] **DevPanel Submit 实时轮询**：Submit Result 点击后立即显示"Scoring…"状态卡片，每 2 秒轮询 `/api/tasks/:id` 获取最新 submission 状态，评分完成后自动切换为"Scored"并展示分数和 Oracle 反馈，停止轮询
 
+### V7: 挑战仲裁机制（设计完成，待实现）
+
+> 详细实现计划见 `docs/plans/2026-02-21-challenge-mechanism-impl.md`
+
+**目标：** 为 `quality_first` 任务增加四阶段挑战仲裁生命周期，允许落选 Worker 在公示期内发起挑战，由 Arbiter 仲裁最终胜者。
+
+**新增 TaskStatus 阶段：**
+
+| 阶段 | 触发条件 | 说明 |
+|------|---------|------|
+| `open` | 任务创建 | 可接受提交 |
+| `scoring` | deadline 到期 | Oracle 评分中，不接受新提交 |
+| `challenge_window` | 所有提交评分完成 | 公示暂定 winner，落选者可发起挑战 |
+| `arbitrating` | 挑战窗口到期且有挑战 | Arbiter 仲裁所有挑战 |
+| `closed` | 仲裁完成或无挑战 | 最终 winner 结算 |
+
+**新增模型：**
+
+- `Challenge`：记录挑战方、被挑战方、理由、Arbiter 裁决结果
+- 新枚举 `ChallengeVerdict`（upheld / rejected / malicious）
+- 新枚举 `ChallengeStatus`（pending / judged）
+
+**新增 API 端点：**
+
+- `POST /tasks/{id}/challenges` — 提交挑战（仅 challenge_window 阶段可用）
+- `GET /tasks/{id}/challenges` — 查看任务挑战列表
+- `GET /tasks/{id}/challenges/{cid}` — 查看单个挑战
+- `POST /internal/tasks/{id}/arbitrate` — 手动触发仲裁
+
+**押金机制（Stub）：**
+
+- `quality_first` 提交时自动计算押金（`task.submission_deposit` 或 `bounty × 10%`）
+- 押金仅做 DB 记账（`submission.deposit` / `submission.deposit_returned`），**不做真实链上收款/退款**
+- 仲裁结果决定押金归还比例：
+  - `upheld`（挑战成立）：全额退还，信用分 +5
+  - `rejected`（挑战驳回）：退还 70%，信用分不变
+  - `malicious`（恶意挑战）：全额没收，信用分 -20
+  - 无挑战关闭：全额退还所有押金
+
+**新增 oracle/arbiter.py：** Arbiter V1 Stub，一律返回 `rejected`，镜像 Oracle subprocess 协议（stdin/stdout JSON）
+
 ---
 
 ## 十二、已知问题与限制
@@ -489,11 +532,14 @@ x402.org 的 `/verify` 端点仅对传入参数做签名格式校验，不会对
 
 ---
 
-## 十三、后续规划（未实现）
+## 十三、后续规划
 
 - [x] 前端展示开发钱包 USDC 余额（DevPanel）
 - [x] 前端任务详情展示支付/打款交易哈希（带区块链浏览器链接）
 - [x] DevPanel Publish/Submit loading 状态与实时反馈
+- [ ] **V7**：quality_first 挑战仲裁机制（设计完成，见 `docs/plans/2026-02-21-challenge-mechanism-impl.md`）
+- [ ] **V7 后续**：押金链上真实收款/退款（当前为 DB stub）
 - [ ] 本地 EIP-712 签名验证（摆脱 facilitator 网络限制）
 - [ ] 支持 CDP Facilitator（生产环境）
 - [ ] Oracle V2：接入真实 LLM 评分（替代 0.9 stub）
+- [ ] Arbiter V2：接入真实 LLM 仲裁（替代 rejected stub）
