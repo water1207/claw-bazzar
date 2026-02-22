@@ -1,8 +1,8 @@
 # Claw Bazzar — 项目设计与功能文档
 
-**版本**: 0.3.0
-**日期**: 2026-02-21
-**状态**: V1 + V2 + V3 已实现
+**版本**: 0.4.0
+**日期**: 2026-02-22
+**状态**: V1 + V2 + V3 + V4 已实现
 
 ---
 
@@ -263,7 +263,12 @@ V1 stub 固定返回 `{score: 0.9, feedback: "Stub oracle: auto-approved"}`。
 
 ### 2. 开发者调试页 `/dev`
 
-两栏表单：左栏发布任务，右栏提交结果。发布成功后 Task ID 自动填入右栏。
+三栏布局：左栏手动注册用户，中栏发布任务，右栏提交结果。
+
+- **钱包卡片**：中栏（Publisher Wallet）和右栏（Worker Wallet）各有一张钱包卡，显示地址、USDC 余额（实时查询 Base Sepolia RPC）、User ID，以及余额刷新按钮
+- **自动注册**：页面挂载时自动用 `dev-publisher` / `dev-worker` 钱包注册并将 ID 写入 localStorage，下次刷新直接复用
+- **截止日期**：使用时长选择器（数字 + 小时/天单位 + 快捷预设：1h / 6h / 12h / 1d / 3d / 7d）替代 datetime-local 输入框
+- 发布成功后 Task ID 自动填入右栏提交表单
 
 ---
 
@@ -305,8 +310,8 @@ claw-bazzar/
 │       ├── api.ts              # API 封装 + SWR hooks
 │       ├── x402.ts             # x402 v2 签名（EIP-712 + ERC-3009）
 │       ├── x402.test.ts        # x402 签名测试
-│       ├── utils.ts            # 工具函数 (formatDeadline, scoreColor)
-│       └── utils.test.ts       # Vitest 单元测试
+│       ├── utils.ts            # 工具函数 (formatDeadline, scoreColor, fetchUsdcBalance)
+│       └── utils.test.ts       # Vitest 单元测试（含 fetchUsdcBalance RPC 测试）
 ├── tests/
 │   ├── conftest.py             # 测试基础设施 (TestClient, 内存 SQLite)
 │   ├── test_models.py          # ORM 模型测试
@@ -329,7 +334,8 @@ claw-bazzar/
 │       ├── 2026-02-21-frontend-design.md
 │       ├── 2026-02-21-frontend-impl.md
 │       ├── 2026-02-21-blockchain-bounty-design.md
-│       └── 2026-02-21-blockchain-bounty-impl.md
+│       ├── 2026-02-21-blockchain-bounty-impl.md
+│       └── 2026-02-22-devpanel-wallet-ui.md
 └── pyproject.toml
 ```
 
@@ -347,6 +353,14 @@ claw-bazzar/
 | `PLATFORM_FEE_RATE` | `0.20` | 平台手续费率（20%） |
 | `FACILITATOR_URL` | `https://x402.org/facilitator` | x402 验证服务地址 |
 | `X402_NETWORK` | `eip155:84532` | x402 支付网络（CAIP-2 格式） |
+
+### 前端（`frontend/.env.local`，已 gitignore）
+
+| 变量 | 说明 |
+|------|------|
+| `NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY` | DevPanel Publisher 钱包私钥（签发 x402 支付） |
+| `NEXT_PUBLIC_DEV_WORKER_WALLET_KEY` | DevPanel Worker 钱包私钥（自动注册用） |
+| `NEXT_PUBLIC_PLATFORM_WALLET` | 平台钱包地址（x402 收款目标） |
 
 ---
 
@@ -366,7 +380,7 @@ cd frontend && npm install && npm run dev
 
 # 运行测试
 pytest -v            # 后端 53 tests
-cd frontend && npm test  # 前端 Vitest
+cd frontend && npm test  # 前端 Vitest（19 tests）
 ```
 
 ---
@@ -425,6 +439,18 @@ cd frontend && npm test  # 前端 Vitest
 - [x] 前端 x402 签名测试（4 tests）
 - [x] `frontend/.env.local` 开发钱包配置（已 gitignore）
 
+### V4: DevPanel 双钱包 UI (53 后端 + 19 前端)
+
+- [x] 新增 Worker 钱包（`NEXT_PUBLIC_DEV_WORKER_WALLET_KEY`），原 Publisher 钱包变量重命名
+- [x] `fetchUsdcBalance(address)`：直接调用 Base Sepolia RPC 查询 USDC 余额（`frontend/lib/utils.ts`）
+- [x] `WalletCard` 组件：显示地址、USDC 余额、User ID，含刷新按钮（RPC 失败时显示 `error`）
+- [x] DevPanel Publisher 钱包卡片（含 Circle 水龙头链接）位于发布表单上方
+- [x] DevPanel Worker 钱包卡片位于提交表单上方
+- [x] 页面挂载自动注册 `dev-publisher` / `dev-worker`，User ID 写入 localStorage 持久化
+- [x] 截止日期改为时长选择器（数字 + 小时/天单位 + 快捷预设：1h / 6h / 12h / 1d / 3d / 7d）
+- [x] 后端 `app/main.py` 启动时自动加载 `.env`（python-dotenv）
+- [x] `fetchUsdcBalance` Vitest 测试（调用真实 RPC，19 tests 总计）
+
 ---
 
 ## 十二、已知问题与限制
@@ -448,6 +474,7 @@ x402.org 公共 facilitator **仅支持 Base Sepolia**（`eip155:84532`），不
 
 ## 十三、后续规划（未实现）
 
-- [ ] 前端展示赏金/打款信息
+- [x] 前端展示开发钱包 USDC 余额（DevPanel）
+- [ ] 前端任务列表/详情展示赏金/打款信息
 - [ ] 本地 EIP-712 签名验证（摆脱 facilitator 网络限制）
 - [ ] 支持 CDP Facilitator（生产环境）
