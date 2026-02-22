@@ -18,6 +18,15 @@ const DEV_PUBLISHER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KE
 const DEV_WORKER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_WORKER_WALLET_KEY as Hex | undefined
 const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET as Hex | undefined
 
+const PRESETS = [
+  { label: '1h', value: '1', unit: 'hours' },
+  { label: '6h', value: '6', unit: 'hours' },
+  { label: '12h', value: '12', unit: 'hours' },
+  { label: '1d', value: '1', unit: 'days' },
+  { label: '3d', value: '3', unit: 'days' },
+  { label: '7d', value: '7', unit: 'days' },
+] as const
+
 function WalletCard({
   label, address, id, balance, onRefresh, refreshing, showFundLink,
 }: {
@@ -89,7 +98,8 @@ export function DevPanel() {
   const [type, setType] = useState<'fastest_first' | 'quality_first'>('fastest_first')
   const [threshold, setThreshold] = useState('')
   const [maxRevisions, setMaxRevisions] = useState('')
-  const [deadline, setDeadline] = useState('')
+  const [deadlineDuration, setDeadlineDuration] = useState('1')
+  const [deadlineUnit, setDeadlineUnit] = useState<'hours' | 'days'>('days')
   const [bounty, setBounty] = useState('')
   const [publishMsg, setPublishMsg] = useState<string | null>(null)
 
@@ -157,11 +167,12 @@ export function DevPanel() {
     if (wrkId) setWorkerId(wrkId)
   }
 
-  useEffect(() => {
-    autoRegister().catch(console.error)
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { autoRegister().catch(console.error) }, [])
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { refreshPubBalance() }, [publisherAddress])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { refreshWrkBalance() }, [workerAddress])
 
   async function handleRegister(e: React.FormEvent) {
@@ -180,6 +191,15 @@ export function DevPanel() {
     } catch (err) {
       setRegisterMsg(`Error: ${(err as Error).message}`)
     }
+  }
+
+  function computeDeadlineISO(): string {
+    const n = parseFloat(deadlineDuration)
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error('Deadline duration must be a positive number')
+    }
+    const ms = n * (deadlineUnit === 'days' ? 86_400_000 : 3_600_000)
+    return new Date(Date.now() + ms).toISOString()
   }
 
   async function handlePublish(e: React.FormEvent) {
@@ -208,7 +228,7 @@ export function DevPanel() {
           type,
           threshold: threshold ? parseFloat(threshold) : null,
           max_revisions: maxRevisions ? parseInt(maxRevisions, 10) : null,
-          deadline: new Date(deadline).toISOString(),
+          deadline: computeDeadlineISO(),
           publisher_id: publisherId || null,
           bounty: bountyAmount,
         },
@@ -220,7 +240,6 @@ export function DevPanel() {
       setDescription('')
       setThreshold('')
       setMaxRevisions('')
-      setDeadline('')
       setBounty('')
     } catch (err) {
       setPublishMsg(`Error: ${(err as Error).message}`)
@@ -404,12 +423,39 @@ export function DevPanel() {
 
           <div className="flex flex-col gap-1.5">
             <Label>Deadline</Label>
-            <Input
-              type="datetime-local"
-              required
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-            />
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                min="1"
+                value={deadlineDuration}
+                onChange={(e) => setDeadlineDuration(e.target.value)}
+                className="w-20"
+              />
+              <Select
+                value={deadlineUnit}
+                onValueChange={(v) => setDeadlineUnit(v as typeof deadlineUnit)}
+              >
+                <SelectTrigger className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="hours">Hours</SelectItem>
+                  <SelectItem value="days">Days</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-1 flex-wrap">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => { setDeadlineDuration(p.value); setDeadlineUnit(p.unit) }}
+                  className="text-xs px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-muted-foreground hover:text-white"
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <Button type="submit" disabled={envError}>Publish</Button>
