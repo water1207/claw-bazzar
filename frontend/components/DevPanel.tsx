@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,7 +9,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { createTask, createSubmission, registerUser } from '@/lib/api'
-import type { UserRole } from '@/lib/api'
+import type { UserRole, Task, Submission, TaskDetail } from '@/lib/api'
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
 import { fetchUsdcBalance } from '@/lib/utils'
 import type { Hex } from 'viem'
@@ -101,13 +101,19 @@ export function DevPanel() {
   const [deadlineDuration, setDeadlineDuration] = useState('1')
   const [deadlineUnit, setDeadlineUnit] = useState<'hours' | 'days'>('days')
   const [bounty, setBounty] = useState('')
-  const [publishMsg, setPublishMsg] = useState<string | null>(null)
+  const [publishing, setPublishing] = useState(false)
+  const [publishedTask, setPublishedTask] = useState<Task | null>(null)
+  const [publishError, setPublishError] = useState<string | null>(null)
 
   // Submit form state
   const [taskId, setTaskId] = useState('')
   const [workerId, setWorkerId] = useState('')
   const [content, setContent] = useState('')
-  const [submitMsg, setSubmitMsg] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [trackedSub, setTrackedSub] = useState<Submission | null>(null)
+  const [polledSub, setPolledSub] = useState<Submission | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Balance state
   const [pubBalance, setPubBalance] = useState('...')
@@ -175,6 +181,33 @@ export function DevPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { refreshWrkBalance() }, [workerAddress])
 
+  // Poll submission status after submit
+  useEffect(() => {
+    if (!trackedSub) return
+    if (polledSub?.status === 'scored') return
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const resp = await fetch(`/api/tasks/${trackedSub.task_id}`)
+        if (!resp.ok) return
+        const task: TaskDetail = await resp.json()
+        const found = task.submissions.find((s) => s.id === trackedSub.id)
+        if (found) {
+          setPolledSub(found)
+          if (found.status === 'scored') {
+            clearInterval(pollRef.current!)
+            pollRef.current = null
+          }
+        }
+      } catch {}
+    }, 2000)
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackedSub])
+
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     setRegisterMsg(null)
@@ -204,14 +237,16 @@ export function DevPanel() {
 
   async function handlePublish(e: React.FormEvent) {
     e.preventDefault()
-    setPublishMsg(null)
+    setPublishError(null)
+    setPublishedTask(null)
+    setPublishing(true)
 
     try {
       const bountyAmount = bounty ? parseFloat(bounty) : 0
       let paymentHeader: string | undefined
       if (bountyAmount > 0) {
         if (!DEV_PUBLISHER_WALLET_KEY || !PLATFORM_WALLET) {
-          setPublishMsg('Error: DEV_PUBLISHER_WALLET_KEY or PLATFORM_WALLET env vars not set')
+          setPublishError('Error: DEV_PUBLISHER_WALLET_KEY or PLATFORM_WALLET env vars not set')
           return
         }
         paymentHeader = await signX402Payment({
@@ -234,27 +269,36 @@ export function DevPanel() {
         },
         paymentHeader,
       )
-      setPublishMsg(`Published: ${task.id}`)
+      setPublishedTask(task)
       setTaskId(task.id)
       setTitle('')
       setDescription('')
-      setThreshold('')
+      setThreshold('0.8')
       setMaxRevisions('')
       setBounty('')
     } catch (err) {
-      setPublishMsg(`Error: ${(err as Error).message}`)
+      setPublishError((err as Error).message)
+    } finally {
+      setPublishing(false)
     }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSubmitMsg(null)
+    setSubmitError(null)
+    setTrackedSub(null)
+    setPolledSub(null)
+    if (pollRef.current) clearInterval(pollRef.current)
+    setSubmitting(true)
     try {
       const sub = await createSubmission(taskId, { worker_id: workerId, content })
-      setSubmitMsg(`Submitted: revision ${sub.revision}, status: ${sub.status}`)
+      setTrackedSub(sub)
+      setPolledSub(sub)
       setContent('')
     } catch (err) {
-      setSubmitMsg(`Error: ${(err as Error).message}`)
+      setSubmitError((err as Error).message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -458,10 +502,40 @@ export function DevPanel() {
             </div>
           </div>
 
-          <Button type="submit" disabled={envError}>Publish</Button>
+          <Button type="submit" disabled={envError || publishing}>
+            {publishing ? (
+              <span className="flex items-center gap-2">
+                <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Publishing…
+              </span>
+            ) : 'Publish'}
+          </Button>
 
-          {publishMsg && (
-            <p className="text-sm font-mono break-all">{publishMsg}</p>
+          {publishError && (
+            <p className="text-sm text-red-400 break-all">{publishError}</p>
+          )}
+
+          {publishedTask && (
+            <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1">
+              <p className="text-green-400 font-medium">Task published</p>
+              <p className="text-muted-foreground">
+                ID: <span className="font-mono text-white break-all">{publishedTask.id}</span>
+              </p>
+              {publishedTask.payment_tx_hash && (
+                <p className="text-muted-foreground">
+                  Tx:{' '}
+                  <a
+                    href={`https://sepolia.basescan.org/tx/${publishedTask.payment_tx_hash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-blue-400 hover:underline break-all"
+                    title={publishedTask.payment_tx_hash}
+                  >
+                    {publishedTask.payment_tx_hash.slice(0, 10)}…{publishedTask.payment_tx_hash.slice(-6)}
+                  </a>
+                </p>
+              )}
+            </div>
           )}
         </form>
       </div>
@@ -511,10 +585,48 @@ export function DevPanel() {
             />
           </div>
 
-          <Button type="submit">Submit Result</Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? (
+              <span className="flex items-center gap-2">
+                <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Submitting…
+              </span>
+            ) : 'Submit Result'}
+          </Button>
 
-          {submitMsg && (
-            <p className="text-sm font-mono break-all">{submitMsg}</p>
+          {submitError && (
+            <p className="text-sm text-red-400 break-all">{submitError}</p>
+          )}
+
+          {polledSub && (
+            <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1">
+              <div className="flex items-center gap-2">
+                {polledSub.status === 'pending' ? (
+                  <>
+                    <span className="inline-block w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-yellow-400 font-medium">Scoring…</span>
+                  </>
+                ) : (
+                  <span className="text-green-400 font-medium">Scored</span>
+                )}
+              </div>
+              <p className="text-muted-foreground">
+                Revision: <span className="text-white">{polledSub.revision}</span>
+              </p>
+              <p className="text-muted-foreground">
+                ID: <span className="font-mono text-white break-all">{polledSub.id}</span>
+              </p>
+              {polledSub.score !== null && (
+                <p className="text-muted-foreground">
+                  Score: <span className="text-white font-mono">{polledSub.score.toFixed(2)}</span>
+                </p>
+              )}
+              {polledSub.oracle_feedback && (
+                <p className="text-muted-foreground">
+                  Feedback: <span className="text-white">{polledSub.oracle_feedback}</span>
+                </p>
+              )}
+            </div>
           )}
         </form>
       </div>
