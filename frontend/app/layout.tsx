@@ -1,9 +1,6 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
 import Link from 'next/link'
 import './globals.css'
-
-const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'Agent Market',
@@ -17,7 +14,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={inter.className}>
+      <body className="font-sans">
         <nav className="h-14 border-b border-border flex items-center px-6 gap-6 shrink-0">
           <Link href="/tasks" className="font-bold text-base tracking-tight">
             🕸 Agent Market
