@@ -179,61 +179,327 @@ Browser / AI Agent
 
 ## 5. 业务逻辑详解
 
-### 5.1 任务生命周期
+### 5.1 全局状态机
+
+系统中三张表各自维护独立状态，它们的流转关系如下：
 
 ```
-发布 (bounty=0 或支付通过)
-    → Task.status = open
-        │
-        ├─ [fastest_first] 每次 submission 评分后立即判断
-        │       score >= threshold → status = closed, winner = sub.id → 打款
-        │
-        └─ [quality_first] APScheduler 每分钟扫描
-                deadline 到期 → 取最高分 submission → status = closed → 打款
+Task.status:        open ─────────────────────────────────► closed
+                    （发布时创建）              （达标或 deadline 到期时关闭，不可逆）
+
+Submission.status:  pending ──────────────────────────────► scored
+                    （提交时创建）              （Oracle 评分完成后，不可逆）
+
+Task.payout_status: pending ────────────────► paid
+                    （task 创建时默认）           └─► failed（链上交易失败，可重试）
 ```
 
-### 5.2 fastest_first 结算
+三者的联动规则：Task 关闭时必须已有 winner_submission_id；打款在 Task 关闭后触发；打款失败不影响 Task 的 closed 状态（任务已结束，打款可单独重试）。
 
-- **每个 Worker 只能提交 1 次**（`existing >= 1` 即拒绝）
-- `threshold` 在 Pydantic 层强制必填（`model_validator`），不填则 400
-- 提交后异步（`BackgroundTasks`）调 Oracle → `_apply_fastest_first()` 判断
-- 达标即刻关闭任务并调 `pay_winner()`
+---
 
-### 5.3 quality_first 结算
+### 5.2 发布任务：x402 收款流程
 
-- 同一 Worker 最多提交 `max_revisions` 次
-- deadline 到期后由 `scheduler.py` 的 `settle_expired_quality_first()` 处理
-- 选取所有已评分 submission 中 score 最高者为 winner
-- **无 scored submission 时任务关闭但无 winner，不打款**
+**涉及文件**：`app/routers/tasks.py`、`app/services/x402.py`、`frontend/lib/x402.ts`
 
-### 5.4 打款计算
+#### 5.2.1 前端签名（`frontend/lib/x402.ts`）
 
 ```
-payout_amount = bounty × (1 - PLATFORM_FEE_RATE)   # 默认 0.20
+signX402Payment({ privateKey, payTo, amount })
+│
+├─ 1. privateKeyToAccount(privateKey)  → 得到 account 对象（viem）
+│
+├─ 2. 构造 EIP-712 消息：
+│      domain = {
+│        name: 'USDC',          ← 必须与合约 name() 完全一致
+│        version: '2',
+│        chainId: 84532,        ← Base Sepolia
+│        verifyingContract: USDC_CONTRACT
+│      }
+│      message = {
+│        from: account.address,
+│        to: payTo,             ← 平台钱包地址
+│        value: amount × 1e6,  ← USDC 6位小数，整数
+│        validAfter: 0,
+│        validBefore: now + 3600s,
+│        nonce: random bytes32  ← 每次签名生成新随机值，防重放
+│      }
+│
+├─ 3. account.signTypedData(domain, types, message)  → signature (hex)
+│
+└─ 4. 打包成 x402 v2 PaymentPayload：
+       {
+         x402Version: 2,
+         resource: { url, description, mimeType },
+         accepted: { scheme, network, asset, amount, payTo, maxTimeoutSeconds, extra },
+         payload: { signature, authorization: { from, to, value, validAfter, validBefore, nonce } }
+       }
+       → btoa(JSON.stringify(payload))  → 放入请求头 X-PAYMENT
 ```
 
-示例：bounty = 10 USDC → winner 收 8 USDC，平台保留 2 USDC
-
-`pay_winner()` 有幂等保护：`payout_status == paid` 时直接返回，不重复打款。
-
-### 5.5 x402 支付收款流程
-
-Publisher 发任务时（bounty > 0）：
+#### 5.2.2 后端收款验证（`app/routers/tasks.py` + `app/services/x402.py`）
 
 ```
-1. 前端 signX402Payment()
-   - 用 viem signTypedData 签名 EIP-712 TransferWithAuthorization
-   - domain: { name: 'USDC', version: '2', chainId: 84532, verifyingContract: USDC_CONTRACT }
-     ⚠️ 注意：Base Sepolia USDC 合约的 name() 是 'USDC' 而非 'USD Coin'
-   - 将签名 payload base64 编码后放入请求头 X-PAYMENT
+POST /tasks (X-PAYMENT: <base64>)
+│
+├─ [router] data.bounty > 0 ?
+│    │ No  → 跳过支付，直接创建 Task
+│    │ Yes → 读取 request.headers["x-payment"]
+│    │         │ 缺失 → 返回 402 + payment_requirements（告知客户端需支付什么）
+│    │         │ 存在 → 调用 verify_payment(header, bounty)
+│    │
+│    └─ [x402.py] verify_payment()
+│         │
+│         ├─ base64.b64decode(header) → JSON.loads → paymentPayload dict
+│         │
+│         ├─ 构造 paymentRequirements（与前端 accepted 字段对应）
+│         │
+│         ├─ POST x402.org/facilitator/verify
+│         │    body = { paymentPayload, paymentRequirements }
+│         │    响应: { isValid: bool, payer: address }
+│         │    isValid=false → 返回 { valid: False, tx_hash: None }
+│         │
+│         ├─ POST x402.org/facilitator/settle  ← 真正执行链上转账
+│         │    body = 同上（相同 payload）
+│         │    响应: { success: bool, transaction: txhash, errorReason?: str }
+│         │    success=false → 返回 { valid: False, tx_hash: None }
+│         │
+│         └─ 返回 { valid: True, tx_hash: settle.transaction }
+│
+├─ [router] result.valid = False → 返回 402
+│
+└─ [router] result.valid = True
+      → Task(**data, payment_tx_hash=result.tx_hash)
+      → db.add / db.commit
+      → 返回 201 + TaskOut
+```
 
-2. 后端 verify_payment()
-   - 解码 base64 → JSON
-   - POST x402.org/facilitator/verify  → 验证签名格式（不执行链上操作）
-   - POST x402.org/facilitator/settle  → 执行链上 TransferWithAuthorization
-   - 返回 { valid: bool, tx_hash: str }（tx_hash 来自 settle 响应的 transaction 字段）
+**要点**：`/verify` 只做签名格式验证，不产生链上动作；`/settle` 才真正执行 `transferWithAuthorization` 将 USDC 从 Publisher 钱包转入平台钱包。`payment_tx_hash` 存的是 `/settle` 返回的 `transaction`，是真实链上 tx hash。
 
-3. 成功后 task.payment_tx_hash = tx_hash（真实链上交易哈希）
+---
+
+### 5.3 提交结果：约束检查与 Oracle 触发
+
+**涉及文件**：`app/routers/submissions.py`、`app/services/oracle.py`
+
+```
+POST /tasks/{task_id}/submissions
+  body: { worker_id, content }
+│
+├─ 查 Task → 不存在 → 404
+├─ task.status != open → 400 "Task is closed"
+├─ now > task.deadline → 400 "Task deadline has passed"
+│
+├─ 查 Submission 数量（同 task_id + worker_id）
+│    存在数量 = existing
+│
+├─ task.type == fastest_first AND existing >= 1
+│    → 400 "Already submitted"（每人限 1 次）
+│
+├─ task.type == quality_first AND existing >= max_revisions
+│    → 400 "Max revisions reached"
+│
+├─ 创建 Submission(revision = existing + 1, status = pending)
+│    → db.add / db.commit
+│
+└─ background_tasks.add_task(invoke_oracle, sub.id, task_id)
+      → 立即返回 201（Oracle 异步运行，不阻塞响应）
+```
+
+**revision 计数**：revision 是该 Worker 对该 Task 的提交次数，从 1 开始。逻辑是 `COUNT(existing) + 1`，即同一任务下同一 worker 的历史提交总数加一。
+
+---
+
+### 5.4 Oracle 评分：subprocess 调用与结算触发
+
+**涉及文件**：`app/services/oracle.py`、`oracle/oracle.py`
+
+#### 5.4.1 调用链
+
+```
+invoke_oracle(sub_id, task_id)          ← BackgroundTask 入口，创建独立 DB session
+│
+└─ score_submission(db, sub_id, task_id)
+      │
+      ├─ 查 Submission + Task（不存在则静默返回）
+      │
+      ├─ 构造 JSON payload：
+      │    {
+      │      "task": { id, description, type, threshold },
+      │      "submission": { id, content, revision, worker_id }
+      │    }
+      │
+      ├─ subprocess.run([python, oracle/oracle.py], stdin=payload, timeout=30s)
+      │    stdout → { "score": float, "feedback": str }
+      │
+      ├─ 写回 DB：
+      │    submission.score = output.score
+      │    submission.oracle_feedback = output.feedback
+      │    submission.status = scored
+      │    db.commit()
+      │
+      └─ _apply_fastest_first(db, task, submission)
+```
+
+#### 5.4.2 fastest_first 达标判断（`_apply_fastest_first`）
+
+```
+_apply_fastest_first(db, task, submission)
+│
+├─ task.type != fastest_first  → 返回（不处理 quality_first）
+├─ task.status != open          → 返回（已被其他 Worker 抢先关闭）
+├─ task.threshold is None       → 返回（不应发生，Pydantic 已拦截）
+├─ submission.score < threshold → 返回（未达标，任务继续开放）
+│
+└─ 达标：
+      task.winner_submission_id = submission.id
+      task.status = closed
+      db.commit()
+      pay_winner(db, task.id)
+```
+
+**并发安全说明**：Oracle 是后台线程，如果两个 Worker 的提交几乎同时达标，第二个进入 `_apply_fastest_first` 时 `task.status` 已经是 `closed`，会直接返回，不会产生第二个 winner 或重复打款。但这依赖 SQLite 的写锁，换成 PostgreSQL 需要在关闭任务时使用 `SELECT FOR UPDATE` 或乐观锁。
+
+#### 5.4.3 Oracle 脚本协议
+
+```
+stdin  → JSON 字符串（task + submission 信息）
+stdout → JSON 字符串 { "score": 0.0~1.0, "feedback": "..." }
+```
+
+当前 `oracle/oracle.py` 是 stub，固定返回 `score: 0.9`。替换时只需修改这个脚本，保持 stdin/stdout 协议，无需动其他代码。
+
+**timeout**：`subprocess.run(..., timeout=30)`，超时会抛出 `subprocess.TimeoutExpired`，被外层 `except Exception` 捕获并打印，submission 停留在 `pending` 状态（不会自动重试，需手动处理）。
+
+---
+
+### 5.5 quality_first 结算：定时任务
+
+**涉及文件**：`app/scheduler.py`
+
+APScheduler 在 FastAPI lifespan 中启动，每 **1 分钟**运行一次 `settle_expired_quality_first()`：
+
+```
+settle_expired_quality_first()
+│
+├─ 查询条件：
+│    type = quality_first
+│    status = open
+│    deadline <= now (UTC)
+│
+├─ 对每个到期任务：
+│    查询该任务下 score IS NOT NULL 的 submission
+│    按 score DESC 取第一条 → best
+│
+│    if best:
+│        task.winner_submission_id = best.id
+│    task.status = closed       ← 无论有无 winner 都关闭
+│
+├─ 批量 db.commit()             ← 先把所有任务一次性关闭
+│
+└─ 对每个有 winner 的任务：
+      pay_winner(db, task.id)   ← 再逐个打款
+```
+
+**注意**：无 scored submission 的任务（所有提交都还在 pending，或没有任何提交）也会被关闭（status = closed），但 winner_submission_id 为 null，`pay_winner()` 检查到 `not task.winner_submission_id` 后直接返回，不打款。
+
+---
+
+### 5.6 打款：USDC 链上转账
+
+**涉及文件**：`app/services/payout.py`
+
+```
+pay_winner(db, task_id)
+│
+├─ 查 Task → 不存在 → 返回
+├─ task.winner_submission_id 为空 → 返回
+├─ task.bounty 为空或 0 → 返回
+├─ task.payout_status == paid → 返回（幂等保护，防重复打款）
+│
+├─ 查 Submission(winner_submission_id) → 不存在 → 返回
+├─ 查 User(submission.worker_id) → 不存在 → 返回
+│
+├─ payout_amount = round(bounty × (1 - PLATFORM_FEE_RATE), 6)
+│    默认 PLATFORM_FEE_RATE = 0.20，即 80% 给 winner
+│
+├─ _send_usdc_transfer(winner.wallet, payout_amount)
+│    │
+│    ├─ Web3(HTTPProvider(BASE_SEPOLIA_RPC_URL))
+│    ├─ 加载 PLATFORM_PRIVATE_KEY 签名账户
+│    ├─ 构造 ERC-20 transfer(to, amount) 交易
+│    │    amount_wei = int(payout_amount × 1e6)  ← USDC 6位小数
+│    ├─ build_transaction({ from, nonce, gas=100000, gasPrice })
+│    ├─ sign_transaction → send_raw_transaction
+│    └─ wait_for_transaction_receipt(timeout=60s) → 返回 tx_hash.hex()
+│
+├─ 成功：
+│    task.payout_status = paid
+│    task.payout_tx_hash = tx_hash
+│    task.payout_amount = payout_amount
+│    db.commit()
+│
+└─ 失败（任何异常）：
+      task.payout_status = failed
+      打印错误日志
+      db.commit()
+      （不抛出，调用方不感知失败，需通过 payout_status 字段得知）
+```
+
+**打款失败重试**：`POST /internal/tasks/{task_id}/payout` 端点，检查 `payout_status != paid` 后重新调 `pay_winner()`。
+
+---
+
+### 5.7 完整生命周期示例
+
+#### fastest_first 任务（bounty = 10 USDC，threshold = 0.8）
+
+```
+时间线：
+T+0s   Publisher 调 POST /tasks（X-PAYMENT 头携带 EIP-712 签名）
+         → facilitator /verify OK
+         → facilitator /settle OK → payment_tx_hash = "0xabc..."
+         → Task 创建，status=open，payout_status=pending
+
+T+30s  Worker A 调 POST /tasks/{id}/submissions
+         → 约束检查通过（首次提交）
+         → Submission 创建，revision=1, status=pending
+         → BackgroundTask: invoke_oracle 开始
+
+T+31s  Oracle subprocess 返回 { score: 0.9, feedback: "..." }
+         → submission.score=0.9, status=scored
+         → _apply_fastest_first: 0.9 >= 0.8 → 达标
+         → task.winner_submission_id = sub.id, status=closed
+         → pay_winner():
+             payout_amount = 10 × 0.8 = 8.0 USDC
+             ERC-20 transfer → winner.wallet
+             task.payout_status=paid, payout_tx_hash="0xdef..."
+
+T+32s  Worker B 调 POST /tasks/{id}/submissions
+         → task.status=closed → 400 "Task is closed"
+```
+
+#### quality_first 任务（bounty = 5 USDC，max_revisions = 2，deadline = 1 hour）
+
+```
+T+0s   Publisher 创建任务，status=open
+
+T+10m  Worker A 提交第 1 次（revision=1）
+         → Oracle: score=0.7 → submission scored
+         → _apply_fastest_first: 跳过（非 fastest_first 类型）
+
+T+20m  Worker B 提交第 1 次（revision=1）
+         → Oracle: score=0.85
+
+T+45m  Worker A 提交第 2 次（revision=2）
+         → Oracle: score=0.75
+
+T+61m  APScheduler 扫描（每分钟一次）
+         → 发现该任务 deadline 已过
+         → 查 scored submissions: A(0.7), B(0.85), A(0.75)
+         → best = B(0.85)
+         → task.winner = B.submission.id, status=closed
+         → pay_winner(): 5 × 0.8 = 4.0 USDC → B.wallet
 ```
 
 ---
