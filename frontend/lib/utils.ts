@@ -44,3 +44,24 @@ export function scoreColor(score: number | null, threshold: number | null): stri
   if (score >= threshold * 0.75) return 'text-yellow-400'
   return 'text-red-400'
 }
+
+const BASE_SEPOLIA_RPC = 'https://sepolia.base.org'
+const USDC_CONTRACT = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
+
+export async function fetchUsdcBalance(address: string): Promise<string> {
+  // balanceOf(address) selector = 0x70a08231
+  const data = '0x70a08231' + address.replace('0x', '').toLowerCase().padStart(64, '0')
+  const resp = await fetch(BASE_SEPOLIA_RPC, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', method: 'eth_call',
+      params: [{ to: USDC_CONTRACT, data }, 'latest'],
+      id: 1,
+    }),
+  })
+  const json = await resp.json()
+  if (json.error) throw new Error(`RPC error: ${json.error.message}`)
+  const raw = BigInt(json.result ?? '0x0')
+  return (Number(raw) / 1e6).toFixed(2)
+}

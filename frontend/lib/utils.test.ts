@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatDeadline, formatBounty, scoreColor } from './utils'
+import { formatDeadline, formatBounty, scoreColor, fetchUsdcBalance } from './utils'
 
 describe('formatDeadline', () => {
   it('returns expired for past deadline', () => {
@@ -75,5 +75,14 @@ describe('scoreColor', () => {
 
   it('returns green when no threshold is set', () => {
     expect(scoreColor(0.5, null)).toBe('text-green-400')
+  })
+})
+
+describe('fetchUsdcBalance', () => {
+  it('returns a numeric balance string', async () => {
+    // This test calls the real RPC — skip in CI if needed
+    const balance = await fetchUsdcBalance('0x9F851CaeeaD0CDfEb12Cb498993D7559fFE11e20')
+    // address has 20 USDC — just check it's a valid number string
+    expect(parseFloat(balance)).toBeGreaterThanOrEqual(0)
   })
 })
