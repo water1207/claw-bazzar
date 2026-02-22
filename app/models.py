@@ -12,6 +12,9 @@ class TaskType(str, PyEnum):
 
 class TaskStatus(str, PyEnum):
     open = "open"
+    scoring = "scoring"
+    challenge_window = "challenge_window"
+    arbitrating = "arbitrating"
     closed = "closed"
 
 
@@ -30,6 +33,17 @@ class PayoutStatus(str, PyEnum):
     pending = "pending"
     paid = "paid"
     failed = "failed"
+
+
+class ChallengeVerdict(str, PyEnum):
+    upheld = "upheld"
+    rejected = "rejected"
+    malicious = "malicious"
+
+
+class ChallengeStatus(str, PyEnum):
+    pending = "pending"
+    judged = "judged"
 
 
 def _uuid() -> str:
@@ -51,13 +65,16 @@ class Task(Base):
     max_revisions = Column(Integer, nullable=True)  # quality_first only
     deadline = Column(DateTime(timezone=True), nullable=False)
     status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.open)
-    winner_submission_id = Column(String, nullable=True)  # plain string, no FK
+    winner_submission_id = Column(String, nullable=True)
     publisher_id = Column(String, nullable=True)
     bounty = Column(Float, nullable=True)
     payment_tx_hash = Column(String, nullable=True)
     payout_status = Column(Enum(PayoutStatus), nullable=False, default=PayoutStatus.pending)
     payout_tx_hash = Column(String, nullable=True)
     payout_amount = Column(Float, nullable=True)
+    submission_deposit = Column(Float, nullable=True)
+    challenge_duration = Column(Integer, nullable=True)
+    challenge_window_end = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -68,6 +85,7 @@ class User(Base):
     nickname = Column(String, unique=True, nullable=False)
     wallet = Column(String, nullable=False)
     role = Column(Enum(UserRole), nullable=False)
+    credit_score = Column(Float, nullable=False, default=100.0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -75,11 +93,28 @@ class Submission(Base):
     __tablename__ = "submissions"
 
     id = Column(String, primary_key=True, default=_uuid)
-    task_id = Column(String, nullable=False)       # FK enforced in app layer
+    task_id = Column(String, nullable=False)
     worker_id = Column(String, nullable=False)
     revision = Column(Integer, nullable=False, default=1)
     content = Column(Text, nullable=False)
     score = Column(Float, nullable=True)
     oracle_feedback = Column(Text, nullable=True)
     status = Column(Enum(SubmissionStatus), nullable=False, default=SubmissionStatus.pending)
+    deposit = Column(Float, nullable=True)
+    deposit_returned = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class Challenge(Base):
+    __tablename__ = "challenges"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    task_id = Column(String, nullable=False)
+    challenger_submission_id = Column(String, nullable=False)
+    target_submission_id = Column(String, nullable=False)
+    reason = Column(Text, nullable=False)
+    verdict = Column(Enum(ChallengeVerdict), nullable=True)
+    arbiter_feedback = Column(Text, nullable=True)
+    arbiter_score = Column(Float, nullable=True)
+    status = Column(Enum(ChallengeStatus), nullable=False, default=ChallengeStatus.pending)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
