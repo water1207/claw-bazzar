@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,22 +11,70 @@ import {
 import { createTask, createSubmission, registerUser } from '@/lib/api'
 import type { UserRole } from '@/lib/api'
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
+import { fetchUsdcBalance } from '@/lib/utils'
 import type { Hex } from 'viem'
 
-const DEV_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_WALLET_KEY as Hex | undefined
+const DEV_PUBLISHER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY as Hex | undefined
+const DEV_WORKER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_WORKER_WALLET_KEY as Hex | undefined
 const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET as Hex | undefined
 
+function WalletCard({
+  label, address, id, balance, onRefresh, refreshing, showFundLink,
+}: {
+  label: string
+  address: string | null
+  id: string
+  balance: string
+  onRefresh: () => void
+  refreshing: boolean
+  showFundLink?: boolean
+}) {
+  return (
+    <div className="relative mb-4 p-3 bg-zinc-900 border border-zinc-700 rounded text-sm">
+      <button
+        onClick={onRefresh}
+        disabled={refreshing}
+        className="absolute top-2 right-2 text-muted-foreground hover:text-white disabled:opacity-40"
+        title="Refresh balance"
+      >
+        ↻
+      </button>
+      <p className="text-muted-foreground mb-1">{label}</p>
+      <p className="font-mono text-xs break-all">{address ?? '—'}</p>
+      <p className="text-xs text-muted-foreground mt-1">
+        Balance: <span className="text-white">{balance} USDC</span>
+      </p>
+      {id && (
+        <p className="text-xs text-muted-foreground mt-0.5">
+          ID: <span className="font-mono text-white break-all">{id}</span>
+        </p>
+      )}
+      {showFundLink && (
+        <a
+          href="https://faucet.circle.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-400 text-xs hover:underline mt-1 inline-block"
+        >
+          Fund with testnet USDC
+        </a>
+      )}
+    </div>
+  )
+}
+
 export function DevPanel() {
-  const devWalletAddress = useMemo(() => {
-    if (!DEV_WALLET_KEY) return null
-    try {
-      return getDevWalletAddress(DEV_WALLET_KEY)
-    } catch {
-      return null
-    }
+  const publisherAddress = useMemo(() => {
+    if (!DEV_PUBLISHER_WALLET_KEY) return null
+    try { return getDevWalletAddress(DEV_PUBLISHER_WALLET_KEY) } catch { return null }
   }, [])
 
-  const envError = !DEV_WALLET_KEY || !PLATFORM_WALLET
+  const workerAddress = useMemo(() => {
+    if (!DEV_WORKER_WALLET_KEY) return null
+    try { return getDevWalletAddress(DEV_WORKER_WALLET_KEY) } catch { return null }
+  }, [])
+
+  const envError = !DEV_PUBLISHER_WALLET_KEY || !PLATFORM_WALLET
 
   // Register form state
   const [nickname, setNickname] = useState('')
@@ -50,6 +98,71 @@ export function DevPanel() {
   const [workerId, setWorkerId] = useState('')
   const [content, setContent] = useState('')
   const [submitMsg, setSubmitMsg] = useState<string | null>(null)
+
+  // Balance state
+  const [pubBalance, setPubBalance] = useState('...')
+  const [wrkBalance, setWrkBalance] = useState('...')
+  const [pubRefreshing, setPubRefreshing] = useState(false)
+  const [wrkRefreshing, setWrkRefreshing] = useState(false)
+
+  async function refreshPubBalance() {
+    if (!publisherAddress) return
+    setPubRefreshing(true)
+    try {
+      setPubBalance(await fetchUsdcBalance(publisherAddress))
+    } catch {
+      setPubBalance('error')
+    } finally {
+      setPubRefreshing(false)
+    }
+  }
+
+  async function refreshWrkBalance() {
+    if (!workerAddress) return
+    setWrkRefreshing(true)
+    try {
+      setWrkBalance(await fetchUsdcBalance(workerAddress))
+    } catch {
+      setWrkBalance('error')
+    } finally {
+      setWrkRefreshing(false)
+    }
+  }
+
+  async function autoRegister() {
+    // Publisher
+    let pubId = localStorage.getItem('devPublisherId')
+    if (!pubId && DEV_PUBLISHER_WALLET_KEY) {
+      const user = await registerUser({
+        nickname: 'dev-publisher',
+        wallet: publisherAddress!,
+        role: 'publisher',
+      })
+      pubId = user.id
+      localStorage.setItem('devPublisherId', pubId)
+    }
+    if (pubId) setPublisherId(pubId)
+
+    // Worker
+    let wrkId = localStorage.getItem('devWorkerId')
+    if (!wrkId && DEV_WORKER_WALLET_KEY) {
+      const user = await registerUser({
+        nickname: 'dev-worker',
+        wallet: workerAddress!,
+        role: 'worker',
+      })
+      wrkId = user.id
+      localStorage.setItem('devWorkerId', wrkId)
+    }
+    if (wrkId) setWorkerId(wrkId)
+  }
+
+  useEffect(() => {
+    autoRegister().catch(console.error)
+  }, [])
+
+  useEffect(() => { refreshPubBalance() }, [publisherAddress])
+  useEffect(() => { refreshWrkBalance() }, [workerAddress])
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
@@ -77,12 +190,12 @@ export function DevPanel() {
       const bountyAmount = bounty ? parseFloat(bounty) : 0
       let paymentHeader: string | undefined
       if (bountyAmount > 0) {
-        if (!DEV_WALLET_KEY || !PLATFORM_WALLET) {
-          setPublishMsg('Error: DEV_WALLET_KEY or PLATFORM_WALLET env vars not set')
+        if (!DEV_PUBLISHER_WALLET_KEY || !PLATFORM_WALLET) {
+          setPublishMsg('Error: DEV_PUBLISHER_WALLET_KEY or PLATFORM_WALLET env vars not set')
           return
         }
         paymentHeader = await signX402Payment({
-          privateKey: DEV_WALLET_KEY,
+          privateKey: DEV_PUBLISHER_WALLET_KEY,
           payTo: PLATFORM_WALLET,
           amount: bountyAmount,
         })
@@ -180,25 +293,20 @@ export function DevPanel() {
       <div>
         <h2 className="text-base font-semibold mb-5">Publish Task</h2>
 
+        <WalletCard
+          label="Publisher Wallet"
+          address={publisherAddress}
+          id={publisherId}
+          balance={pubBalance}
+          onRefresh={refreshPubBalance}
+          refreshing={pubRefreshing}
+          showFundLink
+        />
+
         {envError && (
           <div className="mb-4 p-3 bg-red-950 border border-red-800 rounded text-sm text-red-300">
-            Missing env vars: set <code>NEXT_PUBLIC_DEV_WALLET_KEY</code> and{' '}
+            Missing env vars: set <code>NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY</code> and{' '}
             <code>NEXT_PUBLIC_PLATFORM_WALLET</code> in <code>frontend/.env.local</code>
-          </div>
-        )}
-
-        {devWalletAddress && (
-          <div className="mb-4 p-3 bg-zinc-900 border border-zinc-700 rounded text-sm">
-            <p className="text-muted-foreground mb-1">Dev Wallet</p>
-            <p className="font-mono text-xs break-all">{devWalletAddress}</p>
-            <a
-              href="https://faucet.circle.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 text-xs hover:underline mt-1 inline-block"
-            >
-              Fund with testnet USDC
-            </a>
           </div>
         )}
 
@@ -315,6 +423,16 @@ export function DevPanel() {
       {/* Submit Result */}
       <div>
         <h2 className="text-base font-semibold mb-5">Submit Result</h2>
+
+        <WalletCard
+          label="Worker Wallet"
+          address={workerAddress}
+          id={workerId}
+          balance={wrkBalance}
+          onRefresh={refreshWrkBalance}
+          refreshing={wrkRefreshing}
+        />
+
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label>Task ID</Label>
