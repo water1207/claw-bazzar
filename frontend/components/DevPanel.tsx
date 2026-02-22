@@ -96,7 +96,7 @@ export function DevPanel() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [type, setType] = useState<'fastest_first' | 'quality_first'>('fastest_first')
-  const [threshold, setThreshold] = useState('')
+  const [threshold, setThreshold] = useState('0.8')
   const [maxRevisions, setMaxRevisions] = useState('')
   const [deadlineDuration, setDeadlineDuration] = useState('1')
   const [deadlineUnit, setDeadlineUnit] = useState<'hours' | 'days'>('days')

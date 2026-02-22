@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from .models import TaskType, TaskStatus, SubmissionStatus, UserRole, PayoutStatus
 
 
@@ -29,6 +29,12 @@ class TaskCreate(BaseModel):
     deadline: datetime
     publisher_id: str
     bounty: float
+
+    @model_validator(mode="after")
+    def validate_type_fields(self) -> "TaskCreate":
+        if self.type == TaskType.fastest_first and self.threshold is None:
+            raise ValueError("fastest_first tasks require a threshold")
+        return self
 
 
 class TaskOut(BaseModel):
