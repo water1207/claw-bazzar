@@ -9,6 +9,7 @@ dependencies = [
     "apscheduler>=3.10.0",
     "web3>=7.0.0",
     "fastapi-x402>=0.1.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI
 from .database import engine, Base
 from .routers import tasks as tasks_router
