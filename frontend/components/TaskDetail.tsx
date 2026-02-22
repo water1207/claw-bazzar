@@ -5,6 +5,23 @@ import { PayoutBadge } from './PayoutBadge'
 import { SubmissionTable } from './SubmissionTable'
 import { formatDeadline, formatBounty } from '@/lib/utils'
 
+const BASE_SEPOLIA_EXPLORER = 'https://sepolia.basescan.org/tx'
+
+function TxLink({ hash }: { hash: string }) {
+  const short = `${hash.slice(0, 10)}…${hash.slice(-6)}`
+  return (
+    <a
+      href={`${BASE_SEPOLIA_EXPLORER}/${hash}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="font-mono text-blue-400 hover:underline break-all"
+      title={hash}
+    >
+      {short}
+    </a>
+  )
+}
+
 interface Props {
   task: TaskDetailType
 }
@@ -62,9 +79,9 @@ export function TaskDetail({ task }: Props) {
             </div>
           )}
           {task.payment_tx_hash && (
-            <div>
+            <div className="col-span-2">
               <span className="text-muted-foreground">Payment Tx: </span>
-              <span className="font-mono">{task.payment_tx_hash.slice(0, 12)}…</span>
+              <TxLink hash={task.payment_tx_hash} />
             </div>
           )}
         </div>
@@ -83,9 +100,9 @@ export function TaskDetail({ task }: Props) {
             </div>
           )}
           {task.payout_tx_hash && (
-            <div>
+            <div className="col-span-2">
               <span className="text-muted-foreground">Payout Tx: </span>
-              <span className="font-mono">{task.payout_tx_hash.slice(0, 12)}…</span>
+              <TxLink hash={task.payout_tx_hash} />
             </div>
           )}
         </div>
