@@ -1,8 +1,8 @@
 # Claw Bazzar — 项目设计与功能文档
 
-**版本**: 0.4.0
+**版本**: 0.5.0
 **日期**: 2026-02-22
-**状态**: V1 + V2 + V3 + V4 已实现
+**状态**: V1 + V2 + V3 + V4 + V5 已实现
 
 ---
 
@@ -202,19 +202,25 @@ payout_amount = bounty × (1 - PLATFORM_FEE_RATE)
 ### x402 支付流程
 
 ```
-Client                              Server
-  │                                    │
-  │  bounty = 0                        │
-  ├─ POST /tasks ──────────────────► │ → 直接创建任务（跳过支付）
-  │                                    │
-  │  bounty > 0                        │
-  ├─ POST /tasks (无 X-PAYMENT) ─────► │ → 返回 402 + payment_requirements
-  │                                    │   {scheme, amount, network, asset, payTo, extra}
-  │                                    │
-  ├─ POST /tasks (X-PAYMENT: xxx) ───► │ → verify_payment()
-  │                                    │   ├─ valid → 201 创建任务
-  │                                    │   └─ invalid → 402 重新支付
+Client                              Server                        x402.org Facilitator
+  │                                    │                                 │
+  │  bounty = 0                        │                                 │
+  ├─ POST /tasks ──────────────────► │ → 直接创建任务（跳过支付）       │
+  │                                    │                                 │
+  │  bounty > 0                        │                                 │
+  ├─ POST /tasks (无 X-PAYMENT) ─────► │ → 返回 402 + payment_requirements│
+  │                                    │                                 │
+  ├─ POST /tasks (X-PAYMENT: xxx) ───► │ → _facilitator_verify()         │
+  │                                    │   ├─ POST /verify ────────────► │ 验证 EIP-712 签名
+  │                                    │   │   isValid=true              │
+  │                                    │   ├─ POST /settle ────────────► │ 提交链上转账
+  │                                    │   │   success=true, tx=0x...    │
+  │                                    │   └─ 返回 {valid, tx_hash}      │
+  │                                    │   ├─ valid → 201 创建任务        │
+  │                                    │   └─ invalid → 402 重新支付     │
 ```
+
+**重要**：`/verify` 仅验证 EIP-712 签名，不执行链上操作；`/settle` 才真正执行 `TransferWithAuthorization` 链上转账并返回真实 tx hash。
 
 ### Oracle 调用协议
 
@@ -268,6 +274,8 @@ V1 stub 固定返回 `{score: 0.9, feedback: "Stub oracle: auto-approved"}`。
 - **钱包卡片**：中栏（Publisher Wallet）和右栏（Worker Wallet）各有一张钱包卡，显示地址、USDC 余额（实时查询 Base Sepolia RPC）、User ID，以及余额刷新按钮
 - **自动注册**：页面挂载时自动用 `dev-publisher` / `dev-worker` 钱包注册并将 ID 写入 localStorage，下次刷新直接复用
 - **截止日期**：使用时长选择器（数字 + 小时/天单位 + 快捷预设：1h / 6h / 12h / 1d / 3d / 7d）替代 datetime-local 输入框
+- **Publish 交互**：点击后按钮进入 loading 状态（转圈 + "Publishing…"），成功后在表单下方显示 Task ID 和 Payment Tx Hash（带 Basescan 链接）；失败显示红色错误信息
+- **Submit 交互**：点击后按钮进入 loading 状态（"Submitting…"），提交成功后下方显示实时状态卡片（黄色转圈"Scoring…"），每 2 秒轮询 `/api/tasks/:id` 刷新提交状态，评分完成后变为绿色"Scored"并显示分数和 Oracle 反馈
 - 发布成功后 Task ID 自动填入右栏提交表单
 
 ---
@@ -451,6 +459,15 @@ cd frontend && npm test  # 前端 Vitest（19 tests）
 - [x] 后端 `app/main.py` 启动时自动加载 `.env`（python-dotenv）
 - [x] `fetchUsdcBalance` Vitest 测试（调用真实 RPC，19 tests 总计）
 
+### V5: x402 真实结算 + 前端 UX 完善 (53 后端 + 19 前端)
+
+- [x] **修复 EIP-712 domain name**：Base Sepolia USDC 合约 `name()` 为 `'USDC'`（非 `'USD Coin'`），签名 domain 与合约不符导致链上 `TransferWithAuthorization` revert；前后端统一修正为 `'USDC'`
+- [x] **修复 x402 支付流程**：后端 `_facilitator_verify` 现在先调 `/verify` 验证签名，再调 `/settle` 执行链上转账；`payment_tx_hash` 存储 `/settle` 返回的真实 tx hash（非 payer 地址）
+- [x] **修复 fastest_first threshold 必填**：Pydantic `model_validator` 验证 fastest_first 任务必须提供 threshold，否则 400；DevPanel 默认值改为 `0.8`
+- [x] **TaskDetail 交易哈希展示**：`payment_tx_hash` / `payout_tx_hash` 显示为缩略哈希（`0x1234…abcd`），点击跳转 Base Sepolia Explorer（basescan.org）
+- [x] **DevPanel Publish loading**：Publish 按钮点击后显示转圈动画，成功后在表单下方展示结果卡片（Task ID + Payment Tx Hash，含 Basescan 链接），失败显示红色错误
+- [x] **DevPanel Submit 实时轮询**：Submit Result 点击后立即显示"Scoring…"状态卡片，每 2 秒轮询 `/api/tasks/:id` 获取最新 submission 状态，评分完成后自动切换为"Scored"并展示分数和 Oracle 反馈，停止轮询
+
 ---
 
 ## 十二、已知问题与限制
@@ -466,15 +483,17 @@ x402.org 公共 facilitator **仅支持 Base Sepolia**（`eip155:84532`），不
 
 **影响**：使用 Circle Faucet 充值时必须选择 **Base Sepolia** 网络，充到 Ethereum Sepolia 或 Arc Testnet 上的 USDC 无法被 facilitator 验证。
 
-**解决方案（未实现）**：
-- 使用 CDP Facilitator（需要 API Key）
-- 本地签名验证（后端自行恢复 EIP-712 签名者地址，不依赖外部 facilitator）
+### x402 /verify 不验证链上 domain separator
+
+x402.org 的 `/verify` 端点仅对传入参数做签名格式校验，不会对链上 `DOMAIN_SEPARATOR` 进行比对，因此 EIP-712 domain 参数错误时 verify 仍会返回 `isValid: true`，错误会在 `/settle` 时链上 revert 为 `transaction_failed`。调试此类问题需直接计算合约的 `DOMAIN_SEPARATOR`（`eth_call 0x3644e515`）与本地签名 domain 比对。
 
 ---
 
 ## 十三、后续规划（未实现）
 
 - [x] 前端展示开发钱包 USDC 余额（DevPanel）
-- [ ] 前端任务列表/详情展示赏金/打款信息
+- [x] 前端任务详情展示支付/打款交易哈希（带区块链浏览器链接）
+- [x] DevPanel Publish/Submit loading 状态与实时反馈
 - [ ] 本地 EIP-712 签名验证（摆脱 facilitator 网络限制）
 - [ ] 支持 CDP Facilitator（生产环境）
+- [ ] Oracle V2：接入真实 LLM 评分（替代 0.9 stub）
