@@ -21,25 +21,45 @@ def build_payment_requirements(bounty: float) -> dict:
         "maxTimeoutSeconds": 30,
         "extra": {
             "assetTransferMethod": "eip3009",
-            "name": "USD Coin",
+            "name": "USDC",
             "version": "2",
         },
     }
 
 
 def _facilitator_verify(payment_header: str, requirements: dict) -> dict:
-    """Call the x402 facilitator to verify a payment. Separated for easy mocking."""
+    """Call the x402 facilitator to verify then settle a payment. Separated for easy mocking."""
     try:
         decoded = json.loads(base64.b64decode(payment_header))
-        resp = httpx.post(
+        payload = {"paymentPayload": decoded, "paymentRequirements": requirements}
+
+        # Step 1: verify signature
+        verify_resp = httpx.post(
             f"{FACILITATOR_URL}/verify",
-            json={"paymentPayload": decoded, "paymentRequirements": requirements},
+            json=payload,
             timeout=30,
             follow_redirects=True,
         )
-        data = resp.json()
-        return {"valid": data.get("isValid", False), "tx_hash": data.get("payer")}
-    except Exception:
+        verify_data = verify_resp.json()
+        print(f"[x402] verify status={verify_resp.status_code} body={verify_data}", flush=True)
+        if not verify_data.get("isValid", False):
+            return {"valid": False, "tx_hash": None}
+
+        # Step 2: settle (executes the on-chain USDC transfer)
+        settle_resp = httpx.post(
+            f"{FACILITATOR_URL}/settle",
+            json=payload,
+            timeout=30,
+            follow_redirects=True,
+        )
+        settle_data = settle_resp.json()
+        print(f"[x402] settle status={settle_resp.status_code} body={settle_data}", flush=True)
+        if settle_resp.status_code != 200 or not settle_data.get("success", False):
+            return {"valid": False, "tx_hash": None}
+
+        return {"valid": True, "tx_hash": settle_data.get("transaction")}
+    except Exception as e:
+        print(f"[x402] exception: {e}", flush=True)
         return {"valid": False, "tx_hash": None}
 
 

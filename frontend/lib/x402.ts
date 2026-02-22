@@ -6,7 +6,7 @@ const USDC_CONTRACT: Address = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
 const X402_VERSION = 2
 
 const EIP712_DOMAIN = {
-  name: 'USD Coin',
+  name: 'USDC',
   version: '2',
   chainId: baseSepolia.id,
   verifyingContract: USDC_CONTRACT,
@@ -79,7 +79,7 @@ export async function signX402Payment(params: {
       maxTimeoutSeconds: 30,
       extra: {
         assetTransferMethod: 'eip3009',
-        name: 'USD Coin',
+        name: 'USDC',
         version: '2',
       },
     },
