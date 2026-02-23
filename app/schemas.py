@@ -1,6 +1,15 @@
-from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, model_validator
+from datetime import datetime, timezone
+from typing import Optional, List, Annotated
+from pydantic import BaseModel, model_validator, PlainSerializer
+
+
+def _utc_iso(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat().replace('+00:00', 'Z')
+
+
+UTCDatetime = Annotated[datetime, PlainSerializer(_utc_iso, return_type=str)]
 from .models import (
     TaskType, TaskStatus, SubmissionStatus, UserRole, PayoutStatus,
     ChallengeVerdict, ChallengeStatus,
@@ -19,7 +28,7 @@ class UserOut(BaseModel):
     wallet: str
     role: UserRole
     credit_score: float = 100.0
-    created_at: datetime
+    created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
 
@@ -50,7 +59,7 @@ class TaskOut(BaseModel):
     type: TaskType
     threshold: Optional[float] = None
     max_revisions: Optional[int] = None
-    deadline: datetime
+    deadline: UTCDatetime
     status: TaskStatus
     winner_submission_id: Optional[str] = None
     publisher_id: Optional[str] = None
@@ -61,8 +70,8 @@ class TaskOut(BaseModel):
     payout_amount: Optional[float] = None
     submission_deposit: Optional[float] = None
     challenge_duration: Optional[int] = None
-    challenge_window_end: Optional[datetime] = None
-    created_at: datetime
+    challenge_window_end: Optional[UTCDatetime] = None
+    created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
 
@@ -87,7 +96,7 @@ class SubmissionOut(BaseModel):
     status: SubmissionStatus
     deposit: Optional[float] = None
     deposit_returned: Optional[float] = None
-    created_at: datetime
+    created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
 
@@ -107,7 +116,7 @@ class ChallengeOut(BaseModel):
     arbiter_feedback: Optional[str] = None
     arbiter_score: Optional[float] = None
     status: ChallengeStatus
-    created_at: datetime
+    created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
 
