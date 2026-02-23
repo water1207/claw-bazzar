@@ -117,4 +117,10 @@ class ScoreInput(BaseModel):
     feedback: Optional[str] = None
 
 
+class ManualJudgeInput(BaseModel):
+    verdict: ChallengeVerdict
+    score: float
+    feedback: Optional[str] = None
+
+
 TaskDetail.model_rebuild()

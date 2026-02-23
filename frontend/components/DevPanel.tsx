@@ -8,8 +8,8 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { createTask, createSubmission, registerUser } from '@/lib/api'
-import type { UserRole, Task, Submission, TaskDetail } from '@/lib/api'
+import { createTask, createSubmission, registerUser, createChallenge } from '@/lib/api'
+import type { UserRole, Task, Submission, TaskDetail, Challenge } from '@/lib/api'
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
 import { fetchUsdcBalance } from '@/lib/utils'
 import type { Hex } from 'viem'
@@ -114,6 +114,14 @@ export function DevPanel() {
   const [polledSub, setPolledSub] = useState<Submission | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Challenge form state
+  const [challengeTaskId, setChallengeTaskId] = useState('')
+  const [challengeSubId, setChallengeSubId] = useState('')
+  const [challengeReason, setChallengeReason] = useState('')
+  const [challenging, setChallenging] = useState(false)
+  const [challengeResult, setChallengeResult] = useState<Challenge | null>(null)
+  const [challengeError, setChallengeError] = useState<string | null>(null)
 
   // Balance state
   const [pubBalance, setPubBalance] = useState('...')
@@ -299,6 +307,25 @@ export function DevPanel() {
       setSubmitError((err as Error).message)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleChallenge(e: React.FormEvent) {
+    e.preventDefault()
+    setChallengeError(null)
+    setChallengeResult(null)
+    setChallenging(true)
+    try {
+      const result = await createChallenge(challengeTaskId, {
+        challenger_submission_id: challengeSubId,
+        reason: challengeReason,
+      })
+      setChallengeResult(result)
+      setChallengeReason('')
+    } catch (err) {
+      setChallengeError((err as Error).message)
+    } finally {
+      setChallenging(false)
     }
   }
 
@@ -629,6 +656,68 @@ export function DevPanel() {
             </div>
           )}
         </form>
+
+        {/* Challenge */}
+        <div className="mt-8 pt-6 border-t border-zinc-700">
+          <h2 className="text-base font-semibold mb-5">Submit Challenge</h2>
+          <form onSubmit={handleChallenge} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label>Task ID</Label>
+              <Input
+                value={challengeTaskId}
+                onChange={(e) => setChallengeTaskId(e.target.value)}
+                required
+                placeholder="Task in challenge_window state"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label>Your Submission ID</Label>
+              <Input
+                value={challengeSubId}
+                onChange={(e) => setChallengeSubId(e.target.value)}
+                required
+                placeholder="Your (non-winner) submission ID"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label>Reason</Label>
+              <Textarea
+                value={challengeReason}
+                onChange={(e) => setChallengeReason(e.target.value)}
+                required
+                rows={3}
+                placeholder="Why should the winner be reconsidered?"
+              />
+            </div>
+
+            <Button type="submit" disabled={challenging}>
+              {challenging ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Challenging…
+                </span>
+              ) : 'Submit Challenge'}
+            </Button>
+
+            {challengeError && (
+              <p className="text-sm text-red-400 break-all">{challengeError}</p>
+            )}
+
+            {challengeResult && (
+              <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1">
+                <p className="text-green-400 font-medium">Challenge submitted</p>
+                <p className="text-muted-foreground">
+                  ID: <span className="font-mono text-white break-all">{challengeResult.id}</span>
+                </p>
+                <p className="text-muted-foreground">
+                  Status: <span className="text-white">{challengeResult.status}</span>
+                </p>
+              </div>
+            )}
+          </form>
+        </div>
       </div>
     </div>
   )

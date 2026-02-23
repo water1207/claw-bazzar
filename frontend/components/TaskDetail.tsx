@@ -3,6 +3,7 @@ import { StatusBadge } from './StatusBadge'
 import { TypeBadge } from './TypeBadge'
 import { PayoutBadge } from './PayoutBadge'
 import { SubmissionTable } from './SubmissionTable'
+import { ChallengePanel } from './ChallengePanel'
 import { formatDeadline, formatBounty } from '@/lib/utils'
 
 const BASE_SEPOLIA_EXPLORER = 'https://sepolia.basescan.org/tx'
@@ -114,6 +115,8 @@ export function TaskDetail({ task }: Props) {
         </h3>
         <SubmissionTable submissions={task.submissions} task={task} />
       </div>
+
+      <ChallengePanel task={task} />
     </div>
   )
 }
