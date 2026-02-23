@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from sqlalchemy import create_engine
@@ -155,3 +156,29 @@ def test_phase3_no_challenge_refunds_all_deposits():
     db.refresh(s2)
     assert s1.deposit_returned == s1.deposit
     assert s2.deposit_returned == s2.deposit
+
+
+def test_phase1_triggers_batch_scoring():
+    """After open->scoring transition, pending submissions get scored."""
+    db = make_db()
+    task = make_expired_quality_task(db)
+    # Add pending submission (no score yet)
+    sub = Submission(
+        task_id=task.id, worker_id="w1", revision=1,
+        content="answer", status=SubmissionStatus.pending,
+    )
+    db.add(sub)
+    db.commit()
+
+    fake_score = json.dumps({"score": 0.88, "feedback": "ok"})
+    mock_result = type("R", (), {"stdout": fake_score, "returncode": 0})()
+
+    with patch("app.services.oracle.subprocess.run", return_value=mock_result):
+        from app.scheduler import quality_first_lifecycle
+        quality_first_lifecycle(db=db)
+
+    db.refresh(task)
+    db.refresh(sub)
+    assert task.status == TaskStatus.scoring
+    assert sub.status == SubmissionStatus.scored
+    assert sub.score == 0.88

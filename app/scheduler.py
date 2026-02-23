@@ -9,6 +9,7 @@ from .models import (
 )
 from .services.payout import pay_winner
 from .services.arbiter import run_arbitration
+from .services.oracle import batch_score_submissions
 
 
 def _refund_all_deposits(db: Session, task_id: str) -> None:
@@ -66,6 +67,11 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             task.status = TaskStatus.scoring
         if expired_open:
             db.commit()
+            for task in expired_open:
+                try:
+                    batch_score_submissions(db, task.id)
+                except Exception as e:
+                    print(f"[scheduler] batch_score error for {task.id}: {e}", flush=True)
 
         # Phase 2: scoring -> challenge_window (all submissions scored)
         scoring_tasks = (
