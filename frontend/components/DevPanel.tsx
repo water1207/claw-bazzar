@@ -116,7 +116,7 @@ export function DevPanel() {
   const [threshold, setThreshold] = useState('0.8')
   const [maxRevisions, setMaxRevisions] = useState('')
   const [deadlineDuration, setDeadlineDuration] = useState('1')
-  const [deadlineUnit, setDeadlineUnit] = useState<'hours' | 'days'>('days')
+  const [deadlineUnit, setDeadlineUnit] = useState<'minutes' | 'hours' | 'days'>('days')
   const [bounty, setBounty] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [publishedTask, setPublishedTask] = useState<Task | null>(null)
@@ -280,7 +280,7 @@ export function DevPanel() {
     if (!Number.isFinite(n) || n <= 0) {
       throw new Error('Deadline duration must be a positive number')
     }
-    const ms = n * (deadlineUnit === 'days' ? 86_400_000 : 3_600_000)
+    const ms = n * (deadlineUnit === 'days' ? 86_400_000 : deadlineUnit === 'hours' ? 3_600_000 : 60_000)
     return new Date(Date.now() + ms).toISOString()
   }
 
@@ -553,6 +553,7 @@ export function DevPanel() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="minutes">Minutes</SelectItem>
                   <SelectItem value="hours">Hours</SelectItem>
                   <SelectItem value="days">Days</SelectItem>
                 </SelectContent>
