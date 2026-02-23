@@ -115,9 +115,9 @@ export function DevPanel() {
   const [type, setType] = useState<'fastest_first' | 'quality_first'>('fastest_first')
   const [threshold, setThreshold] = useState('0.8')
   const [maxRevisions, setMaxRevisions] = useState('')
-  const [deadlineDuration, setDeadlineDuration] = useState('1')
-  const [deadlineUnit, setDeadlineUnit] = useState<'minutes' | 'hours' | 'days'>('days')
-  const [bounty, setBounty] = useState('')
+  const [deadlineDuration, setDeadlineDuration] = useState('5')
+  const [deadlineUnit, setDeadlineUnit] = useState<'minutes' | 'hours' | 'days'>('minutes')
+  const [bounty, setBounty] = useState('0.01')
   const [publishing, setPublishing] = useState(false)
   const [publishedTask, setPublishedTask] = useState<Task | null>(null)
   const [publishError, setPublishError] = useState<string | null>(null)
@@ -590,7 +590,17 @@ export function DevPanel() {
             <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1">
               <p className="text-green-400 font-medium">Task published</p>
               <p className="text-muted-foreground">
-                ID: <span className="font-mono text-white break-all">{publishedTask.id}</span>
+                Status: <span className="text-white">{publishedTask.status}</span>
+              </p>
+              <p className="text-muted-foreground">
+                Task ID:{' '}
+                <span
+                  className="font-mono text-white break-all cursor-pointer hover:text-blue-400"
+                  title="Click to copy"
+                  onClick={() => navigator.clipboard.writeText(publishedTask.id)}
+                >
+                  {publishedTask.id}
+                </span>
               </p>
               {publishedTask.payment_tx_hash && (
                 <p className="text-muted-foreground">
