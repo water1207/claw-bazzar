@@ -11,7 +11,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 def register_user(data: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.nickname == data.nickname).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Nickname already taken")
+        return existing
     user = User(**data.model_dump())
     db.add(user)
     db.commit()

@@ -78,7 +78,7 @@ def test_quality_first_full_lifecycle(client):
     client.post(f"/internal/submissions/{r2['id']}/score", json={"score": 0.85})
 
     # 5. Manually trigger scheduler settlement (simulates deadline passing)
-    from app.scheduler import settle_expired_quality_first
+    from app.scheduler import quality_first_lifecycle
     from app.database import get_db
     from app.main import app
 
@@ -91,7 +91,18 @@ def test_quality_first_full_lifecycle(client):
     t.deadline = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    settle_expired_quality_first(db=db)
+    # Phase 1: open → scoring
+    quality_first_lifecycle(db=db)
+    # Phase 2: scoring → challenge_window
+    quality_first_lifecycle(db=db)
+
+    # Expire challenge window
+    db.refresh(t)
+    t.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+
+    # Phase 3: challenge_window → closed (no challenges)
+    quality_first_lifecycle(db=db)
 
     task_detail = client.get(f"/tasks/{task['id']}").json()
     assert task_detail["status"] == "closed"
@@ -196,18 +207,29 @@ def test_bounty_lifecycle_quality_first(client):
     client.post(f"/internal/submissions/{r1['id']}/score", json={"score": 0.5})
     client.post(f"/internal/submissions/{r2['id']}/score", json={"score": 0.9})
 
-    # Force deadline to past and settle
+    # Force deadline to past and settle through multi-phase lifecycle
     from app.database import get_db
     from app.main import app
     from app.models import Task as TaskModel
+    from app.scheduler import quality_first_lifecycle
     db = next(app.dependency_overrides[get_db]())
     t = db.query(TaskModel).filter(TaskModel.id == task["id"]).first()
     t.deadline = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
+    # Phase 1: open → scoring
+    quality_first_lifecycle(db=db)
+    # Phase 2: scoring → challenge_window
+    quality_first_lifecycle(db=db)
+
+    # Expire challenge window
+    db.refresh(t)
+    t.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+
+    # Phase 3: challenge_window → closed (with payout)
     with patch("app.services.payout._send_usdc_transfer", return_value="0xQPAYOUT") as mock_tx:
-        from app.scheduler import settle_expired_quality_first
-        settle_expired_quality_first(db=db)
+        quality_first_lifecycle(db=db)
         mock_tx.assert_called_once_with("0xWORKERQ", 16.0)  # 20.0 * 0.80
 
     detail = client.get(f"/tasks/{task['id']}").json()

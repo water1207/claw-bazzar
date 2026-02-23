@@ -8,15 +8,26 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { createTask, createSubmission, registerUser } from '@/lib/api'
-import type { UserRole, Task, Submission, TaskDetail } from '@/lib/api'
+import { createTask, createSubmission, registerUser, createChallenge } from '@/lib/api'
+import type { UserRole, Task, Submission, TaskDetail, Challenge } from '@/lib/api'
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
 import { fetchUsdcBalance } from '@/lib/utils'
 import type { Hex } from 'viem'
 
 const DEV_PUBLISHER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY as Hex | undefined
-const DEV_WORKER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_WORKER_WALLET_KEY as Hex | undefined
 const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET as Hex | undefined
+
+interface WorkerDef {
+  key: Hex
+  nickname: string
+  storageKey: string
+}
+
+const DEV_WORKERS: WorkerDef[] = [
+  { key: process.env.NEXT_PUBLIC_DEV_WORKER_WALLET_KEY as Hex, nickname: 'Alice', storageKey: 'devWorkerId' },
+  { key: process.env.NEXT_PUBLIC_DEV_WORKER2_WALLET_KEY as Hex, nickname: 'Bob', storageKey: 'devWorker2Id' },
+  { key: process.env.NEXT_PUBLIC_DEV_WORKER3_WALLET_KEY as Hex, nickname: 'Charlie', storageKey: 'devWorker3Id' },
+].filter((w) => w.key)
 
 const PRESETS = [
   { label: '1h', value: '1', unit: 'hours' },
@@ -78,10 +89,16 @@ export function DevPanel() {
     try { return getDevWalletAddress(DEV_PUBLISHER_WALLET_KEY) } catch { return null }
   }, [])
 
-  const workerAddress = useMemo(() => {
-    if (!DEV_WORKER_WALLET_KEY) return null
-    try { return getDevWalletAddress(DEV_WORKER_WALLET_KEY) } catch { return null }
-  }, [])
+  const workerAddresses = useMemo(
+    () => DEV_WORKERS.map((w) => {
+      try { return getDevWalletAddress(w.key) } catch { return null }
+    }),
+    [],
+  )
+
+  const [activeWorkerIdx, setActiveWorkerIdx] = useState(0)
+  const activeWorker = DEV_WORKERS[activeWorkerIdx]
+  const activeWorkerAddress = workerAddresses[activeWorkerIdx] ?? null
 
   const envError = !DEV_PUBLISHER_WALLET_KEY || !PLATFORM_WALLET
 
@@ -99,7 +116,7 @@ export function DevPanel() {
   const [threshold, setThreshold] = useState('0.8')
   const [maxRevisions, setMaxRevisions] = useState('')
   const [deadlineDuration, setDeadlineDuration] = useState('1')
-  const [deadlineUnit, setDeadlineUnit] = useState<'hours' | 'days'>('days')
+  const [deadlineUnit, setDeadlineUnit] = useState<'minutes' | 'hours' | 'days'>('days')
   const [bounty, setBounty] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [publishedTask, setPublishedTask] = useState<Task | null>(null)
@@ -115,11 +132,22 @@ export function DevPanel() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Challenge form state
+  const [challengeTaskId, setChallengeTaskId] = useState('')
+  const [challengeSubId, setChallengeSubId] = useState('')
+  const [challengeReason, setChallengeReason] = useState('')
+  const [challenging, setChallenging] = useState(false)
+  const [challengeResult, setChallengeResult] = useState<Challenge | null>(null)
+  const [challengeError, setChallengeError] = useState<string | null>(null)
+
   // Balance state
   const [pubBalance, setPubBalance] = useState('...')
-  const [wrkBalance, setWrkBalance] = useState('...')
+  const [wrkBalances, setWrkBalances] = useState<string[]>(() => DEV_WORKERS.map(() => '...'))
   const [pubRefreshing, setPubRefreshing] = useState(false)
   const [wrkRefreshing, setWrkRefreshing] = useState(false)
+
+  // Worker IDs (one per worker)
+  const [workerIds, setWorkerIds] = useState<string[]>(() => DEV_WORKERS.map(() => ''))
 
   async function refreshPubBalance() {
     if (!publisherAddress) return
@@ -134,12 +162,22 @@ export function DevPanel() {
   }
 
   async function refreshWrkBalance() {
-    if (!workerAddress) return
+    const addr = activeWorkerAddress
+    if (!addr) return
     setWrkRefreshing(true)
     try {
-      setWrkBalance(await fetchUsdcBalance(workerAddress))
+      const bal = await fetchUsdcBalance(addr)
+      setWrkBalances((prev) => {
+        const next = [...prev]
+        next[activeWorkerIdx] = bal
+        return next
+      })
     } catch {
-      setWrkBalance('error')
+      setWrkBalances((prev) => {
+        const next = [...prev]
+        next[activeWorkerIdx] = 'error'
+        return next
+      })
     } finally {
       setWrkRefreshing(false)
     }
@@ -159,18 +197,29 @@ export function DevPanel() {
     }
     if (pubId) setPublisherId(pubId)
 
-    // Worker
-    let wrkId = localStorage.getItem('devWorkerId')
-    if (!wrkId && DEV_WORKER_WALLET_KEY) {
-      const user = await registerUser({
-        nickname: 'dev-worker',
-        wallet: workerAddress!,
-        role: 'worker',
-      })
-      wrkId = user.id
-      localStorage.setItem('devWorkerId', wrkId)
+    // All workers
+    const ids: string[] = []
+    for (let i = 0; i < DEV_WORKERS.length; i++) {
+      const w = DEV_WORKERS[i]
+      const addr = workerAddresses[i]
+      let wrkId = localStorage.getItem(w.storageKey)
+      if (!wrkId && addr) {
+        try {
+          const user = await registerUser({
+            nickname: w.nickname,
+            wallet: addr,
+            role: 'worker',
+          })
+          wrkId = user.id
+          localStorage.setItem(w.storageKey, wrkId)
+        } catch {
+          wrkId = localStorage.getItem(w.storageKey)
+        }
+      }
+      ids.push(wrkId || '')
     }
-    if (wrkId) setWorkerId(wrkId)
+    setWorkerIds(ids)
+    if (ids[0]) setWorkerId(ids[0])
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -179,7 +228,7 @@ export function DevPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { refreshPubBalance() }, [publisherAddress])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { refreshWrkBalance() }, [workerAddress])
+  useEffect(() => { refreshWrkBalance() }, [activeWorkerIdx])
 
   // Poll submission status after submit
   useEffect(() => {
@@ -231,7 +280,7 @@ export function DevPanel() {
     if (!Number.isFinite(n) || n <= 0) {
       throw new Error('Deadline duration must be a positive number')
     }
-    const ms = n * (deadlineUnit === 'days' ? 86_400_000 : 3_600_000)
+    const ms = n * (deadlineUnit === 'days' ? 86_400_000 : deadlineUnit === 'hours' ? 3_600_000 : 60_000)
     return new Date(Date.now() + ms).toISOString()
   }
 
@@ -295,10 +344,31 @@ export function DevPanel() {
       setTrackedSub(sub)
       setPolledSub(sub)
       setContent('')
+      setChallengeTaskId(taskId)
+      setChallengeSubId(sub.id)
     } catch (err) {
       setSubmitError((err as Error).message)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleChallenge(e: React.FormEvent) {
+    e.preventDefault()
+    setChallengeError(null)
+    setChallengeResult(null)
+    setChallenging(true)
+    try {
+      const result = await createChallenge(challengeTaskId, {
+        challenger_submission_id: challengeSubId,
+        reason: challengeReason,
+      })
+      setChallengeResult(result)
+      setChallengeReason('')
+    } catch (err) {
+      setChallengeError((err as Error).message)
+    } finally {
+      setChallenging(false)
     }
   }
 
@@ -483,6 +553,7 @@ export function DevPanel() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="minutes">Minutes</SelectItem>
                   <SelectItem value="hours">Hours</SelectItem>
                   <SelectItem value="days">Days</SelectItem>
                 </SelectContent>
@@ -544,11 +615,34 @@ export function DevPanel() {
       <div>
         <h2 className="text-base font-semibold mb-5">Submit Result</h2>
 
+        <div className="flex flex-col gap-1.5 mb-4">
+          <Label>Active Worker</Label>
+          <Select
+            value={String(activeWorkerIdx)}
+            onValueChange={(v) => {
+              const idx = parseInt(v, 10)
+              setActiveWorkerIdx(idx)
+              setWorkerId(workerIds[idx] || '')
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DEV_WORKERS.map((w, i) => (
+                <SelectItem key={w.storageKey} value={String(i)}>
+                  {w.nickname}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <WalletCard
-          label="Worker Wallet"
-          address={workerAddress}
-          id={workerId}
-          balance={wrkBalance}
+          label={`${activeWorker?.nickname ?? 'Worker'} Wallet`}
+          address={activeWorkerAddress}
+          id={workerIds[activeWorkerIdx] || ''}
+          balance={wrkBalances[activeWorkerIdx] || '...'}
           onRefresh={refreshWrkBalance}
           refreshing={wrkRefreshing}
         />
@@ -561,16 +655,6 @@ export function DevPanel() {
               onChange={(e) => setTaskId(e.target.value)}
               required
               placeholder="Auto-filled after publish"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label>Worker ID</Label>
-            <Input
-              value={workerId}
-              onChange={(e) => setWorkerId(e.target.value)}
-              required
-              placeholder="Auto-filled after register"
             />
           </div>
 
@@ -629,6 +713,70 @@ export function DevPanel() {
             </div>
           )}
         </form>
+
+        {/* Challenge */}
+        <div className="mt-8 pt-6 border-t border-zinc-700">
+          <h2 className="text-base font-semibold mb-5">Submit Challenge</h2>
+          <form onSubmit={handleChallenge} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label>Task ID</Label>
+              <Input
+                value={challengeTaskId}
+                onChange={(e) => setChallengeTaskId(e.target.value)}
+                required
+                placeholder="Task ID to challenge"
+              />
+            </div>
+
+            {challengeSubId ? (
+              <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs">
+                <p className="text-muted-foreground">
+                  Submission: <span className="font-mono text-white break-all">{challengeSubId}</span>
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Submit a result above first — Submission ID will be auto-filled.
+              </p>
+            )}
+
+            <div className="flex flex-col gap-1.5">
+              <Label>Reason</Label>
+              <Textarea
+                value={challengeReason}
+                onChange={(e) => setChallengeReason(e.target.value)}
+                required
+                rows={3}
+                placeholder="Why should the winner be reconsidered?"
+              />
+            </div>
+
+            <Button type="submit" disabled={challenging || !challengeTaskId || !challengeSubId}>
+              {challenging ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Challenging…
+                </span>
+              ) : 'Submit Challenge'}
+            </Button>
+
+            {challengeError && (
+              <p className="text-sm text-red-400 break-all">{challengeError}</p>
+            )}
+
+            {challengeResult && (
+              <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1">
+                <p className="text-green-400 font-medium">Challenge submitted</p>
+                <p className="text-muted-foreground">
+                  ID: <span className="font-mono text-white break-all">{challengeResult.id}</span>
+                </p>
+                <p className="text-muted-foreground">
+                  Status: <span className="text-white">{challengeResult.status}</span>
+                </p>
+              </div>
+            )}
+          </form>
+        </div>
       </div>
     </div>
   )

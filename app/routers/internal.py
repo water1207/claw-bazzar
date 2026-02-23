@@ -1,9 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Submission, Task, SubmissionStatus, TaskStatus, PayoutStatus
-from ..schemas import ScoreInput
+from ..models import (
+    Submission, Task, Challenge,
+    SubmissionStatus, TaskStatus, PayoutStatus, ChallengeStatus,
+)
+from ..schemas import ScoreInput, ManualJudgeInput, ChallengeOut
 from ..services.payout import pay_winner
+from ..services.arbiter import run_arbitration
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -41,3 +45,36 @@ def retry_payout(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Task already paid out")
     pay_winner(db, task.id)
     return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/arbitrate")
+def trigger_arbitration(task_id: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.status != TaskStatus.arbitrating:
+        raise HTTPException(status_code=400, detail="Task is not in arbitrating state")
+    run_arbitration(db, task_id)
+    return {"ok": True}
+
+
+@router.post("/challenges/{challenge_id}/judge", response_model=ChallengeOut)
+def judge_challenge(challenge_id: str, data: ManualJudgeInput, db: Session = Depends(get_db)):
+    challenge = db.query(Challenge).filter(Challenge.id == challenge_id).first()
+    if not challenge:
+        raise HTTPException(status_code=404, detail="Challenge not found")
+
+    task = db.query(Task).filter(Task.id == challenge.task_id).first()
+    if not task or task.status != TaskStatus.arbitrating:
+        raise HTTPException(status_code=400, detail="Task is not in arbitrating state")
+
+    if challenge.status == ChallengeStatus.judged:
+        raise HTTPException(status_code=400, detail="Challenge already judged")
+
+    challenge.verdict = data.verdict
+    challenge.arbiter_score = data.score
+    challenge.arbiter_feedback = data.feedback
+    challenge.status = ChallengeStatus.judged
+    db.commit()
+    db.refresh(challenge)
+    return challenge

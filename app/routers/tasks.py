@@ -55,5 +55,16 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     subs = db.query(Submission).filter(Submission.task_id == task_id).all()
     result = TaskDetail.model_validate(task)
-    result.submissions = [SubmissionOut.model_validate(s) for s in subs]
+
+    hide_content = task.status in (
+        TaskStatus.challenge_window,
+        TaskStatus.arbitrating,
+    )
+    sub_outs = []
+    for s in subs:
+        out = SubmissionOut.model_validate(s)
+        if hide_content and s.id != task.winner_submission_id:
+            out.content = "[hidden]"
+        sub_outs.append(out)
+    result.submissions = sub_outs
     return result

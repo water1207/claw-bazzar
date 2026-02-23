@@ -8,6 +8,9 @@ const fetcher = (url: string) =>
 
 export type PayoutStatus = 'pending' | 'paid' | 'failed'
 export type UserRole = 'publisher' | 'worker'
+export type TaskStatus = 'open' | 'scoring' | 'challenge_window' | 'arbitrating' | 'closed'
+export type ChallengeVerdict = 'upheld' | 'rejected' | 'malicious'
+export type ChallengeStatus = 'pending' | 'judged'
 
 export interface Task {
   id: string
@@ -17,7 +20,7 @@ export interface Task {
   threshold: number | null
   max_revisions: number | null
   deadline: string
-  status: 'open' | 'closed'
+  status: TaskStatus
   winner_submission_id: string | null
   created_at: string
   publisher_id: string | null
@@ -26,6 +29,9 @@ export interface Task {
   payout_status: PayoutStatus | null
   payout_tx_hash: string | null
   payout_amount: number | null
+  submission_deposit: number | null
+  challenge_duration: number | null
+  challenge_window_end: string | null
 }
 
 export interface User {
@@ -48,6 +54,19 @@ export interface Submission {
   created_at: string
 }
 
+export interface Challenge {
+  id: string
+  task_id: string
+  challenger_submission_id: string
+  target_submission_id: string
+  reason: string
+  verdict: ChallengeVerdict | null
+  arbiter_feedback: string | null
+  arbiter_score: number | null
+  status: ChallengeStatus
+  created_at: string
+}
+
 export interface TaskDetail extends Task {
   submissions: Submission[]
 }
@@ -60,6 +79,14 @@ export function useTask(id: string | null) {
   return useSWR<TaskDetail>(id ? `/api/tasks/${id}` : null, fetcher, {
     refreshInterval: 30_000,
   })
+}
+
+export function useChallenges(taskId: string | null) {
+  return useSWR<Challenge[]>(
+    taskId ? `/api/tasks/${taskId}/challenges` : null,
+    fetcher,
+    { refreshInterval: 10_000 },
+  )
 }
 
 export async function createTask(
@@ -108,6 +135,38 @@ export async function createSubmission(
   data: { worker_id: string; content: string }
 ): Promise<Submission> {
   const resp = await fetch(`/api/tasks/${taskId}/submissions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(text)
+  }
+  return resp.json()
+}
+
+export async function createChallenge(
+  taskId: string,
+  data: { challenger_submission_id: string; reason: string },
+): Promise<Challenge> {
+  const resp = await fetch(`/api/tasks/${taskId}/challenges`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(text)
+  }
+  return resp.json()
+}
+
+export async function judgeChallenge(
+  challengeId: string,
+  data: { verdict: ChallengeVerdict; score: number; feedback?: string },
+): Promise<Challenge> {
+  const resp = await fetch(`/api/internal/challenges/${challengeId}/judge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),

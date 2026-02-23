@@ -35,8 +35,25 @@ def test_settle_picks_highest_score():
     db.add_all([s1, s2, s3])
     db.commit()
 
-    from app.scheduler import settle_expired_quality_first
-    settle_expired_quality_first(db=db)
+    from app.scheduler import quality_first_lifecycle
+
+    # Phase 1: open → scoring
+    quality_first_lifecycle(db=db)
+    db.refresh(task)
+    assert task.status == TaskStatus.scoring
+
+    # Phase 2: scoring → challenge_window (picks highest score)
+    quality_first_lifecycle(db=db)
+    db.refresh(task)
+    assert task.status == TaskStatus.challenge_window
+    assert task.winner_submission_id == s2.id
+
+    # Phase 3: expire challenge window → closed (no challenges)
+    task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+
+    with patch("app.scheduler.pay_winner"):
+        quality_first_lifecycle(db=db)
 
     db.refresh(task)
     assert task.status == TaskStatus.closed
@@ -54,9 +71,15 @@ def test_settle_closes_with_no_scored_submissions():
     db.add(task)
     db.commit()
 
-    from app.scheduler import settle_expired_quality_first
-    settle_expired_quality_first(db=db)
+    from app.scheduler import quality_first_lifecycle
 
+    # Phase 1: open → scoring
+    quality_first_lifecycle(db=db)
+    db.refresh(task)
+    assert task.status == TaskStatus.scoring
+
+    # Phase 2: scoring → closed (no submissions)
+    quality_first_lifecycle(db=db)
     db.refresh(task)
     assert task.status == TaskStatus.closed
     assert task.winner_submission_id is None
@@ -115,7 +138,19 @@ def test_settle_triggers_payout():
     db.add(s1)
     db.commit()
 
+    from app.scheduler import quality_first_lifecycle
+
+    # Phase 1: open → scoring
+    quality_first_lifecycle(db=db)
+
+    # Phase 2: scoring → challenge_window
+    quality_first_lifecycle(db=db)
+
+    # Phase 3: expire challenge window → closed with payout
+    db.refresh(task)
+    task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+
     with patch("app.scheduler.pay_winner") as mock_payout:
-        from app.scheduler import settle_expired_quality_first
-        settle_expired_quality_first(db=db)
+        quality_first_lifecycle(db=db)
         mock_payout.assert_called_once_with(db, task.id)

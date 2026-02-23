@@ -44,6 +44,9 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="scoring">Scoring</SelectItem>
+            <SelectItem value="challenge_window">Challenge</SelectItem>
+            <SelectItem value="arbitrating">Arbitrating</SelectItem>
             <SelectItem value="closed">Closed</SelectItem>
           </SelectContent>
         </Select>
