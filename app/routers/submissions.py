@@ -9,6 +9,17 @@ from ..services.oracle import invoke_oracle
 
 router = APIRouter(tags=["submissions"])
 
+
+def _maybe_hide_score(submission: Submission, task: Task, db: Session = None) -> Submission:
+    """Null out score for quality_first tasks that haven't reached challenge_window yet."""
+    if task.type == TaskType.quality_first and task.status in (
+        TaskStatus.open, TaskStatus.scoring
+    ):
+        if db:
+            db.expunge(submission)
+        submission.score = None
+    return submission
+
 DEFAULT_DEPOSIT_RATE = 0.10
 
 
@@ -63,9 +74,11 @@ def create_submission(
 
 @router.get("/tasks/{task_id}/submissions", response_model=List[SubmissionOut])
 def list_submissions(task_id: str, db: Session = Depends(get_db)):
-    if not db.query(Task).filter(Task.id == task_id).first():
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return db.query(Submission).filter(Submission.task_id == task_id).all()
+    subs = db.query(Submission).filter(Submission.task_id == task_id).all()
+    return [_maybe_hide_score(s, task) for s in subs]
 
 
 @router.get("/tasks/{task_id}/submissions/{sub_id}", response_model=SubmissionOut)
@@ -75,4 +88,5 @@ def get_submission(task_id: str, sub_id: str, db: Session = Depends(get_db)):
     ).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
-    return sub
+    task = db.query(Task).filter(Task.id == task_id).first()
+    return _maybe_hide_score(sub, task)

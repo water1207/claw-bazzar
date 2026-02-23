@@ -108,6 +108,51 @@ def test_get_single_submission(client):
     assert resp.json()["id"] == sub["id"]
 
 
+def make_quality_task(client):
+    body = {"title": "T", "description": "d", "type": "quality_first",
+            "max_revisions": 3, "deadline": future(),
+            "publisher_id": "test-pub", "bounty": 1.0}
+    with PAYMENT_MOCK:
+        return client.post("/tasks", json=body, headers=PAYMENT_HEADERS).json()
+
+
+def test_quality_first_score_hidden_when_open(client):
+    task = make_quality_task(client)
+    with patch("app.routers.submissions.invoke_oracle"):
+        sub = client.post(f"/tasks/{task['id']}/submissions",
+                          json={"worker_id": "w1", "content": "a"}).json()
+
+    # Manually set score in DB to simulate oracle having run
+    from app.database import get_db
+    db = next(client.app.dependency_overrides[get_db]())
+    from app.models import Submission
+    s = db.query(Submission).filter(Submission.id == sub["id"]).first()
+    s.score = 0.88
+    db.commit()
+
+    resp = client.get(f"/tasks/{task['id']}/submissions/{sub['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["score"] is None  # hidden because task is open
+
+
+def test_fastest_first_score_always_visible(client):
+    task = make_task(client, type="fastest_first")
+    with patch("app.routers.submissions.invoke_oracle"):
+        sub = client.post(f"/tasks/{task['id']}/submissions",
+                          json={"worker_id": "w1", "content": "a"}).json()
+
+    from app.database import get_db
+    db = next(client.app.dependency_overrides[get_db]())
+    from app.models import Submission
+    s = db.query(Submission).filter(Submission.id == sub["id"]).first()
+    s.score = 0.88
+    db.commit()
+
+    resp = client.get(f"/tasks/{task['id']}/submissions/{sub['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["score"] == 0.88  # always visible for fastest_first
+
+
 def test_submit_after_deadline(client):
     body = {"title": "T", "description": "d", "type": "fastest_first",
             "threshold": 0.8, "deadline": past(),
