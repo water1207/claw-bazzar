@@ -736,10 +736,10 @@ export function DevPanel() {
                 {polledSub.status === 'pending' ? (
                   <>
                     <span className="inline-block w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-yellow-400 font-medium">Scoring…</span>
+                    <span className="text-yellow-400 font-medium">等待反馈…</span>
                   </>
                 ) : (
-                  <span className="text-green-400 font-medium">Scored</span>
+                  <span className="text-green-400 font-medium">已评分</span>
                 )}
               </div>
               <p className="text-muted-foreground">
@@ -753,11 +753,24 @@ export function DevPanel() {
                   Score: <span className="text-white font-mono">{polledSub.score.toFixed(2)}</span>
                 </p>
               )}
-              {polledSub.oracle_feedback && (
-                <p className="text-muted-foreground">
-                  Feedback: <span className="text-white">{polledSub.oracle_feedback}</span>
-                </p>
-              )}
+              {polledSub.oracle_feedback && (() => {
+                let suggestions: string[] = []
+                try { suggestions = JSON.parse(polledSub.oracle_feedback) } catch { /* plain string */ }
+                return suggestions.length > 0 ? (
+                  <div>
+                    <p className="text-muted-foreground mb-1">修订建议：</p>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {suggestions.map((s, i) => (
+                        <li key={i} className="text-white">{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground">
+                    Feedback: <span className="text-white">{polledSub.oracle_feedback}</span>
+                  </p>
+                )
+              })()}
             </div>
           )}
         </form>
