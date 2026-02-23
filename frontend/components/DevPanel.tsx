@@ -38,6 +38,32 @@ const PRESETS = [
   { label: '7d', value: '7', unit: 'days' },
 ] as const
 
+function useCountdown(target: string | null | undefined): string {
+  const [display, setDisplay] = useState('')
+
+  useEffect(() => {
+    if (!target) return
+    const update = () => {
+      const diff = new Date(target).getTime() - Date.now()
+      if (diff <= 0) {
+        setDisplay('已截止')
+        return
+      }
+      const h = Math.floor(diff / 3_600_000)
+      const m = Math.floor((diff % 3_600_000) / 60_000)
+      const s = Math.floor((diff % 60_000) / 1_000)
+      if (h > 0) setDisplay(`${h}小时${m}分钟后到期`)
+      else if (m > 0) setDisplay(`${m}分${s}秒后到期`)
+      else setDisplay(`${s}秒后到期`)
+    }
+    update()
+    const id = setInterval(update, 1000)
+    return () => clearInterval(id)
+  }, [target])
+
+  return display
+}
+
 function WalletCard({
   label, address, id, balance, onRefresh, refreshing, showFundLink,
 }: {
@@ -148,6 +174,10 @@ export function DevPanel() {
 
   // Worker IDs (one per worker)
   const [workerIds, setWorkerIds] = useState<string[]>(() => DEV_WORKERS.map(() => ''))
+
+  // Countdowns
+  const deadlineCountdown = useCountdown(publishedTask?.deadline)
+  const challengeCountdown = useCountdown(publishedTask?.challenge_window_end)
 
   async function refreshPubBalance() {
     if (!publisherAddress) return
@@ -602,6 +632,14 @@ export function DevPanel() {
                   {publishedTask.id}
                 </span>
               </p>
+              <p className="text-muted-foreground">
+                Deadline: <span className="text-white">{deadlineCountdown || '—'}</span>
+              </p>
+              {publishedTask.status === 'challenge_window' && publishedTask.challenge_window_end && (
+                <p className="text-muted-foreground">
+                  挑战期剩余: <span className="text-yellow-400">{challengeCountdown}</span>
+                </p>
+              )}
               {publishedTask.payment_tx_hash && (
                 <p className="text-muted-foreground">
                   Tx:{' '}
