@@ -9,9 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pip install -e ".[dev]"                          # Install deps
 uvicorn app.main:app --reload --port 8000        # Dev server
-pytest -v                                        # All tests (53)
+pytest -v                                        # All tests
 pytest tests/test_tasks.py::test_create_task -v  # Single test
 pytest -k "test_submission" -v                   # Pattern match
+pytest tests/test_challenge_api.py -v            # Challenge API tests
 ```
 
 ### Frontend (Next.js + Vitest)
