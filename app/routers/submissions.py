@@ -78,7 +78,7 @@ def list_submissions(task_id: str, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     subs = db.query(Submission).filter(Submission.task_id == task_id).all()
-    return [_maybe_hide_score(s, task) for s in subs]
+    return [_maybe_hide_score(s, task, db) for s in subs]
 
 
 @router.get("/tasks/{task_id}/submissions/{sub_id}", response_model=SubmissionOut)
@@ -89,4 +89,4 @@ def get_submission(task_id: str, sub_id: str, db: Session = Depends(get_db)):
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
     task = db.query(Task).filter(Task.id == task_id).first()
-    return _maybe_hide_score(sub, task)
+    return _maybe_hide_score(sub, task, db)
