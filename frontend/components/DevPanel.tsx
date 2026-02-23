@@ -156,6 +156,7 @@ export function DevPanel() {
   const [submitting, setSubmitting] = useState(false)
   const [trackedSub, setTrackedSub] = useState<Submission | null>(null)
   const [polledSub, setPolledSub] = useState<Submission | null>(null)
+  const [polledTask, setPolledTask] = useState<TaskDetail | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -264,17 +265,20 @@ export function DevPanel() {
   // Poll submission status after submit
   useEffect(() => {
     if (!trackedSub) return
-    if (polledSub?.status === 'scored') return
+    const feedbackReceived = polledSub?.status === 'pending' && !!polledSub?.oracle_feedback
+    if (polledSub?.status === 'scored' || feedbackReceived) return
 
     pollRef.current = setInterval(async () => {
       try {
         const resp = await fetch(`/api/tasks/${trackedSub.task_id}`)
         if (!resp.ok) return
         const task: TaskDetail = await resp.json()
+        setPolledTask(task)
         const found = task.submissions.find((s) => s.id === trackedSub.id)
         if (found) {
           setPolledSub(found)
-          if (found.status === 'scored') {
+          const done = found.status === 'scored' || (found.status === 'pending' && !!found.oracle_feedback)
+          if (done) {
             clearInterval(pollRef.current!)
             pollRef.current = null
           }
@@ -734,17 +738,24 @@ export function DevPanel() {
           {polledSub && (
             <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1">
               <div className="flex items-center gap-2">
-                {polledSub.status === 'pending' ? (
+                {polledSub.status === 'pending' && !polledSub.oracle_feedback ? (
                   <>
                     <span className="inline-block w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
                     <span className="text-yellow-400 font-medium">等待反馈…</span>
                   </>
+                ) : polledSub.status === 'pending' && polledSub.oracle_feedback ? (
+                  <span className="text-blue-400 font-medium">已收到反馈</span>
                 ) : (
                   <span className="text-green-400 font-medium">已评分</span>
                 )}
               </div>
               <p className="text-muted-foreground">
-                Revision: <span className="text-white">{polledSub.revision}</span>
+                {(() => {
+                  const maxRev = polledTask?.max_revisions ?? publishedTask?.max_revisions
+                  return maxRev
+                    ? <>Revision: <span className="text-white">第{polledSub.revision}次 ({polledSub.revision}/{maxRev})</span></>
+                    : <>Revision: <span className="text-white">{polledSub.revision}</span></>
+                })()}
               </p>
               <p className="text-muted-foreground">
                 ID: <span className="font-mono text-white break-all">{polledSub.id}</span>
