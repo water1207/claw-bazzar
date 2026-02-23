@@ -44,7 +44,8 @@ function useCountdown(target: string | null | undefined): string {
   useEffect(() => {
     if (!target) return
     const update = () => {
-      const diff = new Date(target).getTime() - Date.now()
+      const utc = target.endsWith('Z') || target.includes('+') ? target : target + 'Z'
+      const diff = new Date(utc).getTime() - Date.now()
       if (diff <= 0) {
         setDisplay('已截止')
         return
