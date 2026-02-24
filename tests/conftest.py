@@ -28,7 +28,7 @@ def client():
 
     # Prevent lifespan from touching the real DB or starting scheduler
     with patch("app.main.create_scheduler", return_value=MagicMock()), \
-         patch("app.database.Base.metadata.create_all"):
+         patch("app.main.run_migrations"):
         with TestClient(app) as c:
             yield c
 
