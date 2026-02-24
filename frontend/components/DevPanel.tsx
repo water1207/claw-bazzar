@@ -145,6 +145,7 @@ export function DevPanel() {
   const [maxRevisions, setMaxRevisions] = useState('')
   const [deadlineDuration, setDeadlineDuration] = useState('5')
   const [deadlineUnit, setDeadlineUnit] = useState<'minutes' | 'hours' | 'days'>('minutes')
+  const [challengeDuration, setChallengeDuration] = useState('')
   const [bounty, setBounty] = useState('0.01')
   const [publishing, setPublishing] = useState(false)
   const [publishedTask, setPublishedTask] = useState<Task | null>(null)
@@ -351,6 +352,7 @@ export function DevPanel() {
           deadline: computeDeadlineISO(),
           publisher_id: publisherId || null,
           bounty: bountyAmount,
+          challenge_duration: challengeDuration ? parseInt(challengeDuration, 10) : null,
         },
         paymentHeader,
       )
@@ -360,6 +362,7 @@ export function DevPanel() {
       setDescription('')
       setThreshold('0.8')
       setMaxRevisions('')
+      setChallengeDuration('')
       setBounty('')
     } catch (err) {
       setPublishError((err as Error).message)
@@ -592,6 +595,20 @@ export function DevPanel() {
               placeholder="3"
               value={maxRevisions}
               onChange={(e) => setMaxRevisions(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>
+              Challenge Duration{' '}
+              <span className="text-muted-foreground text-xs">(quality_first, 秒, 默认7200)</span>
+            </Label>
+            <Input
+              type="number"
+              min="60"
+              placeholder="7200"
+              value={challengeDuration}
+              onChange={(e) => setChallengeDuration(e.target.value)}
             />
           </div>
 
