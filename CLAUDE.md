@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pip install -e ".[dev]"                          # Install deps
 uvicorn app.main:app --reload --port 8000        # Dev server
-pytest -v                                        # All tests (91)
+pytest -v                                        # All tests (101)
 pytest tests/test_tasks.py::test_create_task -v  # Single test
 pytest -k "test_submission" -v                   # Pattern match
 pytest tests/test_challenge_api.py -v            # Challenge API tests
@@ -21,7 +21,7 @@ pytest tests/test_challenge_api.py -v            # Challenge API tests
 cd frontend
 npm install                                # Install deps
 npm run dev                                # Dev server (port 3000)
-npm test                                   # All tests (19)
+npm test                                   # All tests (20)
 npx vitest lib/x402.test.ts               # Single file
 npx vitest -t "formatDeadline"            # Pattern match
 npm run lint                               # ESLint
@@ -49,6 +49,16 @@ oracle/oracle.py  → Oracle stub (subprocess, stdin/stdout JSON)
 
 - **fastest_first**: Oracle scores submission → score ≥ threshold → close task → `pay_winner()`
 - **quality_first**: Submission → oracle gives 3 revision suggestions (no score) → deadline expires → scheduler batch-scores all pending submissions → picks highest score → `pay_winner()`
+
+### Challenge escrow (ChallengeEscrow contract)
+
+When challengers provide `challenger_wallet` + EIP-2612 Permit signature, the challenge flow uses on-chain escrow:
+1. `createChallenge()` — platform locks bounty (80%) into contract
+2. `joinChallenge()` — Relayer uses Permit to pull deposit (10%) + service fee (0.01 USDC) from challenger
+3. `resolveChallenge()` — Oracle settles: upheld=100% deposit back, rejected=70% back, malicious=0%
+4. No challengers → legacy `pay_winner()` (no contract interaction)
+
+Contract: `contracts/src/ChallengeEscrow.sol` (Foundry, Solidity 0.8.20+, OpenZeppelin Ownable)
 
 ### quality_first lifecycle phases
 
@@ -107,6 +117,8 @@ Blockchain calls (web3.py payout) are always mocked — no real chain interactio
 | `FACILITATOR_URL` | `https://x402.org/facilitator` | x402 verification endpoint |
 | `X402_NETWORK` | `eip155:84532` | CAIP-2 chain identifier |
 | `NEXT_PUBLIC_DEV_WALLET_KEY` | (in `.env.local`) | DevPanel signing key |
+| `ESCROW_CONTRACT_ADDRESS` | (none) | Deployed ChallengeEscrow contract |
+| `NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS` | (in `.env.local`) | Frontend escrow address |
 
 ## Conventions
 
