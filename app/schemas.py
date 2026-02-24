@@ -71,6 +71,8 @@ class TaskOut(BaseModel):
     submission_deposit: Optional[float] = None
     challenge_duration: Optional[int] = None
     challenge_window_end: Optional[UTCDatetime] = None
+    refund_amount: Optional[float] = None
+    refund_tx_hash: Optional[str] = None
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}

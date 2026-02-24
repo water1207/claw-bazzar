@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from web3 import Web3
 from sqlalchemy.orm import Session
 from ..models import Task, Submission, User, PayoutStatus
@@ -45,6 +46,32 @@ def _send_usdc_transfer(to_address: str, amount: float) -> str:
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
     return tx_hash.hex()
+
+
+def refund_publisher(db: Session, task_id: str, rate: float = 1.0) -> None:
+    """Refund the publisher. rate=1.0 for full refund, 0.95 for 95% refund."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task or not task.bounty or task.bounty <= 0:
+        return
+    if task.payout_status in (PayoutStatus.paid, PayoutStatus.refunded):
+        return
+
+    publisher = db.query(User).filter(User.id == task.publisher_id).first()
+    if not publisher:
+        return
+
+    refund_amount = round(task.bounty * rate, 6)
+
+    try:
+        tx_hash = _send_usdc_transfer(publisher.wallet, refund_amount)
+        task.payout_status = PayoutStatus.refunded
+        task.refund_amount = refund_amount
+        task.refund_tx_hash = tx_hash
+    except Exception as e:
+        task.payout_status = PayoutStatus.failed
+        print(f"[payout] Refund failed for task {task_id}: {e}", flush=True)
+
+    db.commit()
 
 
 def pay_winner(db: Session, task_id: str) -> None:

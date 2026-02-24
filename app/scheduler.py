@@ -10,6 +10,7 @@ from .models import (
 from .services.arbiter import run_arbitration
 from .services.oracle import batch_score_submissions
 from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
+from .services.payout import refund_publisher
 
 
 def _resolve_via_contract(
@@ -91,14 +92,24 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             .all()
         )
         for task in expired_open:
-            task.status = TaskStatus.scoring
+            sub_count = db.query(Submission).filter(
+                Submission.task_id == task.id
+            ).count()
+            if sub_count == 0:
+                # No submissions → full refund, close immediately
+                task.status = TaskStatus.closed
+                if task.bounty and task.bounty > 0:
+                    refund_publisher(db, task.id, rate=1.0)
+            else:
+                task.status = TaskStatus.scoring
         if expired_open:
             db.commit()
             for task in expired_open:
-                try:
-                    batch_score_submissions(db, task.id)
-                except Exception as e:
-                    print(f"[scheduler] batch_score error for {task.id}: {e}", flush=True)
+                if task.status == TaskStatus.scoring:
+                    try:
+                        batch_score_submissions(db, task.id)
+                    except Exception as e:
+                        print(f"[scheduler] batch_score error for {task.id}: {e}", flush=True)
 
         # Phase 2: scoring -> challenge_window (all submissions scored)
         scoring_tasks = (
@@ -114,9 +125,13 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             if pending_count > 0:
                 continue  # Still waiting for Oracle
 
+            # Find best submission; apply threshold filter if set
+            score_filter = [Submission.task_id == task.id, Submission.score.isnot(None)]
+            if task.threshold is not None:
+                score_filter.append(Submission.score >= task.threshold)
             best = (
                 db.query(Submission)
-                .filter(Submission.task_id == task.id, Submission.score.isnot(None))
+                .filter(*score_filter)
                 .order_by(Submission.score.desc())
                 .first()
             )
@@ -146,7 +161,13 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     except Exception as e:
                         print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
             else:
+                # No qualifying submissions → 95% refund if there were submissions, close
                 task.status = TaskStatus.closed
+                has_subs = db.query(Submission).filter(
+                    Submission.task_id == task.id
+                ).count() > 0
+                if task.bounty and task.bounty > 0 and has_subs:
+                    refund_publisher(db, task.id, rate=0.95)
         if scoring_tasks:
             db.commit()
 
@@ -266,6 +287,40 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     db.commit()
 
 
+def fastest_first_refund(db: Optional[Session] = None) -> None:
+    """Refund fastest_first tasks that expired without a winner."""
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        expired = (
+            db.query(Task)
+            .filter(
+                Task.type == TaskType.fastest_first,
+                Task.status == TaskStatus.open,
+                Task.deadline <= now,
+            )
+            .all()
+        )
+        for task in expired:
+            sub_count = db.query(Submission).filter(
+                Submission.task_id == task.id
+            ).count()
+            task.status = TaskStatus.closed
+            if task.bounty and task.bounty > 0:
+                if sub_count == 0:
+                    refund_publisher(db, task.id, rate=1.0)
+                else:
+                    # Submissions exist but none passed threshold → 95% refund
+                    refund_publisher(db, task.id, rate=0.95)
+        if expired:
+            db.commit()
+    finally:
+        if own_session:
+            db.close()
+
+
 def settle_expired_quality_first(db: Optional[Session] = None) -> None:
     """Legacy wrapper -- now calls quality_first_lifecycle."""
     quality_first_lifecycle(db=db)
@@ -274,4 +329,5 @@ def settle_expired_quality_first(db: Optional[Session] = None) -> None:
 def create_scheduler() -> BackgroundScheduler:
     scheduler = BackgroundScheduler()
     scheduler.add_job(quality_first_lifecycle, "interval", minutes=1)
+    scheduler.add_job(fastest_first_refund, "interval", minutes=1)
     return scheduler

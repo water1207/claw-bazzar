@@ -33,6 +33,7 @@ class PayoutStatus(str, PyEnum):
     pending = "pending"
     paid = "paid"
     failed = "failed"
+    refunded = "refunded"
 
 
 class ChallengeVerdict(str, PyEnum):
@@ -75,6 +76,8 @@ class Task(Base):
     submission_deposit = Column(Float, nullable=True)
     challenge_duration = Column(Integer, nullable=True)
     challenge_window_end = Column(DateTime(timezone=True), nullable=True)
+    refund_amount = Column(Float, nullable=True)
+    refund_tx_hash = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
