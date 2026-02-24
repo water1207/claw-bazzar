@@ -120,6 +120,19 @@ Blockchain calls (web3.py payout) are always mocked — no real chain interactio
 | `ESCROW_CONTRACT_ADDRESS` | (none) | Deployed ChallengeEscrow contract |
 | `NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS` | (in `.env.local`) | Frontend escrow address |
 
+## Database migrations (Alembic)
+
+**IMPORTANT: Whenever `app/models.py` is modified, a migration script MUST be generated before committing.**
+
+```bash
+alembic revision --autogenerate -m "describe what changed"  # Generate migration script
+alembic upgrade head                                         # Apply to local DB
+```
+
+The migration script under `alembic/versions/` must be committed together with the `models.py` change. Colleagues get the schema update automatically when they restart the server (Alembic runs `upgrade head` on every startup via `lifespan`).
+
+Never use `Base.metadata.create_all()` to apply schema changes — Alembic owns the schema.
+
 ## Conventions
 
 - Documentation is in Chinese (`docs/project-overview.md` is the authoritative spec)
