@@ -57,4 +57,32 @@ contract ChallengeEscrow is Ownable {
 
         emit ChallengeCreated(taskId, winner_, bounty);
     }
+
+    function joinChallenge(
+        bytes32 taskId,
+        address challenger,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external onlyOwner {
+        ChallengeInfo storage info = challenges[taskId];
+        require(info.bounty > 0, "Challenge not found");
+        require(!info.resolved, "Already resolved");
+        require(!challengers[taskId][challenger], "Already joined");
+
+        uint256 totalAmount = info.depositAmount + info.serviceFee;
+
+        // Use EIP-2612 permit to approve escrow, then transferFrom
+        usdcPermit.permit(challenger, address(this), totalAmount, deadline, v, r, s);
+        require(
+            usdc.transferFrom(challenger, address(this), totalAmount),
+            "Deposit transfer failed"
+        );
+
+        challengers[taskId][challenger] = true;
+        info.challengerCount++;
+
+        emit ChallengerJoined(taskId, challenger);
+    }
 }

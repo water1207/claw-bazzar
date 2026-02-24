@@ -93,4 +93,50 @@ contract ChallengeEscrowTest is Test {
         vm.expectRevert();
         escrow.createChallenge(taskId, winner, 8 * 1e6, 1 * 1e6);
     }
+
+    function test_joinChallenge() public {
+        bytes32 taskId = keccak256("task-1");
+        uint256 bounty = 8 * 1e6;
+        uint256 deposit = 1 * 1e6;
+        address challenger = address(0x2);
+
+        // Setup: create challenge and fund challenger
+        usdc.approve(address(escrow), bounty);
+        escrow.createChallenge(taskId, winner, bounty, deposit);
+        usdc.mint(challenger, 10 * 1e6);
+
+        uint256 totalRequired = deposit + escrow.SERVICE_FEE();
+
+        // joinChallenge with permit params (mock permit doesn't verify sig)
+        escrow.joinChallenge(
+            taskId, challenger,
+            block.timestamp + 1 hours,
+            0, bytes32(0), bytes32(0)
+        );
+
+        (, , , , uint8 count, ) = escrow.challenges(taskId);
+        assertEq(count, 1);
+        assertTrue(escrow.challengers(taskId, challenger));
+        assertEq(usdc.balanceOf(address(escrow)), bounty + totalRequired);
+    }
+
+    function test_joinChallenge_reverts_duplicate() public {
+        bytes32 taskId = keccak256("task-1");
+        address challenger = address(0x2);
+
+        usdc.approve(address(escrow), 8 * 1e6);
+        escrow.createChallenge(taskId, winner, 8 * 1e6, 1 * 1e6);
+        usdc.mint(challenger, 10 * 1e6);
+
+        escrow.joinChallenge(taskId, challenger, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+
+        vm.expectRevert("Already joined");
+        escrow.joinChallenge(taskId, challenger, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    }
+
+    function test_joinChallenge_reverts_no_challenge() public {
+        bytes32 taskId = keccak256("nonexistent");
+        vm.expectRevert("Challenge not found");
+        escrow.joinChallenge(taskId, address(0x2), block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    }
 }
