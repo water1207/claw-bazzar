@@ -871,6 +871,24 @@ export function DevPanel() {
                 <p className="text-muted-foreground">
                   Status: <span className="text-white">{challengeResult.status}</span>
                 </p>
+                {challengeResult.deposit_tx_hash && (
+                  <p className="text-muted-foreground">
+                    Deposit Tx:{' '}
+                    <a
+                      href={`https://sepolia.basescan.org/tx/${challengeResult.deposit_tx_hash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-blue-400 hover:underline break-all"
+                    >
+                      {challengeResult.deposit_tx_hash.slice(0, 10)}…{challengeResult.deposit_tx_hash.slice(-6)}
+                    </a>
+                  </p>
+                )}
+                {challengeResult.challenger_wallet && (
+                  <p className="text-muted-foreground">
+                    Wallet: <span className="font-mono text-white break-all">{challengeResult.challenger_wallet}</span>
+                  </p>
+                )}
               </div>
             )}
           </form>
