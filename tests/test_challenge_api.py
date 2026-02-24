@@ -172,15 +172,97 @@ def test_create_challenge_with_wallet_and_permit(client):
     s2 = submit(client, task["id"], "w2", "challenger")
     setup_challenge_window(client, task["id"], s1["id"])
 
-    resp = client.post(f"/tasks/{task['id']}/challenges", json={
-        "challenger_submission_id": s2["id"],
-        "reason": "better solution",
-        "challenger_wallet": "0x1234567890abcdef1234567890abcdef12345678",
-        "permit_deadline": 9999999999,
-        "permit_v": 27,
-        "permit_r": "0x" + "ab" * 32,
-        "permit_s": "0x" + "cd" * 32,
-    })
+    with patch("app.routers.challenges.check_usdc_balance", return_value=100.0), \
+         patch("app.routers.challenges.join_challenge_onchain", return_value="0xtx"):
+        resp = client.post(f"/tasks/{task['id']}/challenges", json={
+            "challenger_submission_id": s2["id"],
+            "reason": "better solution",
+            "challenger_wallet": "0x1234567890abcdef1234567890abcdef12345678",
+            "permit_deadline": 9999999999,
+            "permit_v": 27,
+            "permit_r": "0x" + "ab" * 32,
+            "permit_s": "0x" + "cd" * 32,
+        })
     assert resp.status_code == 201
     data = resp.json()
     assert data["challenger_wallet"] == "0x1234567890abcdef1234567890abcdef12345678"
+
+
+def test_challenge_rejected_insufficient_balance(client):
+    """Reject if challenger's USDC balance is too low."""
+    task = make_quality_task(client, bounty=10.0)
+    s1 = submit(client, task["id"], "w1")
+    s2 = submit(client, task["id"], "w2")
+    setup_challenge_window(client, task["id"], s1["id"])
+
+    with patch("app.routers.challenges.check_usdc_balance", return_value=0.5):
+        resp = client.post(f"/tasks/{task['id']}/challenges", json={
+            "challenger_submission_id": s2["id"],
+            "reason": "test",
+            "challenger_wallet": "0x" + "ab" * 20,
+            "permit_deadline": 9999999999,
+            "permit_v": 27,
+            "permit_r": "0x" + "ab" * 32,
+            "permit_s": "0x" + "cd" * 32,
+        })
+    assert resp.status_code == 400
+    assert "余额不足" in resp.json()["detail"] or "balance" in resp.json()["detail"].lower()
+
+
+def test_challenge_rejected_rate_limit(client):
+    """Reject if same wallet challenged within 1 minute."""
+    task = make_quality_task(client, bounty=10.0)
+    s1 = submit(client, task["id"], "w1")
+    s2 = submit(client, task["id"], "w2")
+    s3 = submit(client, task["id"], "w3")
+    setup_challenge_window(client, task["id"], s1["id"])
+
+    wallet = "0x" + "ab" * 20
+
+    with patch("app.routers.challenges.check_usdc_balance", return_value=100.0), \
+         patch("app.routers.challenges.join_challenge_onchain", return_value="0xtx1"):
+        resp1 = client.post(f"/tasks/{task['id']}/challenges", json={
+            "challenger_submission_id": s2["id"],
+            "reason": "first",
+            "challenger_wallet": wallet,
+            "permit_deadline": 9999999999,
+            "permit_v": 27,
+            "permit_r": "0x" + "ab" * 32,
+            "permit_s": "0x" + "cd" * 32,
+        })
+        assert resp1.status_code == 201
+
+        # Second challenge from same wallet within 1 minute
+        resp2 = client.post(f"/tasks/{task['id']}/challenges", json={
+            "challenger_submission_id": s3["id"],
+            "reason": "second",
+            "challenger_wallet": wallet,
+            "permit_deadline": 9999999999,
+            "permit_v": 27,
+            "permit_r": "0x" + "ab" * 32,
+            "permit_s": "0x" + "cd" * 32,
+        })
+    assert resp2.status_code == 429
+
+
+def test_challenge_with_escrow_happy_path(client):
+    """Full happy path: balance check -> rate limit -> join_challenge_onchain."""
+    task = make_quality_task(client, bounty=10.0)
+    s1 = submit(client, task["id"], "w1")
+    s2 = submit(client, task["id"], "w2")
+    setup_challenge_window(client, task["id"], s1["id"])
+
+    with patch("app.routers.challenges.check_usdc_balance", return_value=100.0), \
+         patch("app.routers.challenges.join_challenge_onchain", return_value="0xescrow_tx"):
+        resp = client.post(f"/tasks/{task['id']}/challenges", json={
+            "challenger_submission_id": s2["id"],
+            "reason": "my answer is better",
+            "challenger_wallet": "0x" + "ab" * 20,
+            "permit_deadline": 9999999999,
+            "permit_v": 27,
+            "permit_r": "0x" + "ab" * 32,
+            "permit_s": "0x" + "cd" * 32,
+        })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["deposit_tx_hash"] == "0xescrow_tx"
