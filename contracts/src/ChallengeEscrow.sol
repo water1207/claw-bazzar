@@ -9,8 +9,52 @@ contract ChallengeEscrow is Ownable {
     IERC20 public immutable usdc;
     IERC20Permit public immutable usdcPermit;
 
+    uint256 public constant SERVICE_FEE = 10_000; // 0.01 USDC = 10000 wei (6 decimals)
+
+    struct ChallengeInfo {
+        address winner;
+        uint256 bounty;
+        uint256 depositAmount;
+        uint256 serviceFee;
+        uint8   challengerCount;
+        bool    resolved;
+    }
+
+    mapping(bytes32 => ChallengeInfo) public challenges;
+    mapping(bytes32 => mapping(address => bool)) public challengers;
+
+    event ChallengeCreated(bytes32 indexed taskId, address winner, uint256 bounty);
+    event ChallengerJoined(bytes32 indexed taskId, address challenger);
+    event ChallengeResolved(bytes32 indexed taskId, address finalWinner);
+
     constructor(address _usdc) Ownable(msg.sender) {
         usdc = IERC20(_usdc);
         usdcPermit = IERC20Permit(_usdc);
+    }
+
+    function createChallenge(
+        bytes32 taskId,
+        address winner_,
+        uint256 bounty,
+        uint256 depositAmount
+    ) external onlyOwner {
+        require(challenges[taskId].bounty == 0, "Challenge already exists");
+        require(bounty > 0, "Bounty must be positive");
+
+        challenges[taskId] = ChallengeInfo({
+            winner: winner_,
+            bounty: bounty,
+            depositAmount: depositAmount,
+            serviceFee: SERVICE_FEE,
+            challengerCount: 0,
+            resolved: false
+        });
+
+        require(
+            usdc.transferFrom(msg.sender, address(this), bounty),
+            "Bounty transfer failed"
+        );
+
+        emit ChallengeCreated(taskId, winner_, bounty);
     }
 }
