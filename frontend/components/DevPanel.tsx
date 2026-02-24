@@ -11,11 +11,13 @@ import {
 import { createTask, createSubmission, registerUser, createChallenge } from '@/lib/api'
 import type { UserRole, Task, Submission, TaskDetail, Challenge } from '@/lib/api'
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
+import { signChallengePermit } from '@/lib/permit'
 import { fetchUsdcBalance } from '@/lib/utils'
 import type { Hex } from 'viem'
 
 const DEV_PUBLISHER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY as Hex | undefined
 const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET as Hex | undefined
+const ESCROW_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || ''
 
 interface WorkerDef {
   key: Hex
@@ -393,11 +395,35 @@ export function DevPanel() {
     setChallengeResult(null)
     setChallenging(true)
     try {
-      const result = await createChallenge(challengeTaskId, {
-        challenger_submission_id: challengeSubId,
-        reason: challengeReason,
-      })
-      setChallengeResult(result)
+      const workerKey = activeWorker?.key
+      if (ESCROW_ADDRESS && workerKey) {
+        const bountyAmount = publishedTask?.bounty ?? 0
+        const depositAmount = publishedTask?.submission_deposit ?? bountyAmount * 0.1
+        const totalAmount = depositAmount + 0.01 // + service fee
+
+        const permit = await signChallengePermit({
+          privateKey: workerKey,
+          spender: ESCROW_ADDRESS,
+          amount: totalAmount,
+        })
+
+        const result = await createChallenge(challengeTaskId, {
+          challenger_submission_id: challengeSubId,
+          reason: challengeReason,
+          challenger_wallet: getDevWalletAddress(workerKey),
+          permit_deadline: permit.deadline,
+          permit_v: permit.v,
+          permit_r: permit.r,
+          permit_s: permit.s,
+        })
+        setChallengeResult(result)
+      } else {
+        const result = await createChallenge(challengeTaskId, {
+          challenger_submission_id: challengeSubId,
+          reason: challengeReason,
+        })
+        setChallengeResult(result)
+      }
       setChallengeReason('')
     } catch (err) {
       setChallengeError((err as Error).message)

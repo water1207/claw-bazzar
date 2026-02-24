@@ -205,6 +205,21 @@ function ChallengeCard({ challenge, task, onJudged }: {
         <span>{challenge.reason}</span>
       </div>
 
+      {challenge.deposit_tx_hash && (
+        <div className="text-xs">
+          <span className="text-muted-foreground">Deposit Tx: </span>
+          <a
+            href={`https://sepolia.basescan.org/tx/${challenge.deposit_tx_hash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-blue-400 hover:underline break-all"
+            title={challenge.deposit_tx_hash}
+          >
+            {challenge.deposit_tx_hash.slice(0, 10)}...{challenge.deposit_tx_hash.slice(-6)}
+          </a>
+        </div>
+      )}
+
       {challenge.status === 'judged' && (
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs border-t border-zinc-700 pt-2 mt-2">
           {challenge.arbiter_score !== null && (
