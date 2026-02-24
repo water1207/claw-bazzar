@@ -112,3 +112,19 @@
 - [x] **Revision 进度显示**：提交状态卡片显示"第 N 次 (N/max_revisions)"
 - [x] **Task ID 显示**：已发布任务卡片中显示可点击复制的 Task ID
 - [x] **API datetime 时区**：所有输出 schema 的 datetime 字段统一序列化为带 `Z` 后缀的 UTC ISO 8601 字符串（`UTCDatetime` 类型）
+
+## V9: ChallengeEscrow 智能合约
+
+- [x] **ChallengeEscrow.sol**：Solidity 0.8.20 + OpenZeppelin Ownable，Foundry 编译部署
+- [x] **createChallenge**：平台锁定赏金 90%（含 10% 挑战激励）到合约
+- [x] **joinChallenge**：EIP-2612 Permit + Relayer 代付 Gas，从挑战者钱包收取押金 + 0.01 USDC 服务费
+- [x] **resolveChallenge**：根据 verdicts 数组分配赏金、押金和仲裁者报酬
+- [x] **emergencyWithdraw**：30 天超时安全提取机制
+- [x] **Permit try/catch**：兼容不支持 EIP-2612 的代币或签名被前运行的情况
+- [x] **挑战激励**：无人挑战/挑战失败 → 激励 10% 退回平台；挑战成功 → 全额 90% 给挑战者
+- [x] **仲裁者报酬**：所有挑战者押金的 30% 均分给仲裁者（含 upheld 的挑战者）
+- [x] **Foundry 测试**：15 个测试覆盖全部场景（创建、加入、各类裁决、仲裁者分配、紧急提取）
+- [x] **后端集成**：`app/services/escrow.py` 封装合约调用，`scheduler.py` quality_first 全程走合约结算
+- [x] **余额校验 + 限速**：挑战前链上余额校验，每钱包每分钟限 1 次挑战（防空头支票 + 防 Gas 滥用）
+- [x] **E2E 链上验证**：Base Sepolia 全流程测试通过（createChallenge → joinChallenge → resolveChallenge）
+- [x] **合约地址**：`0x0b256635519Db6B13AE9c423d18a3c3A6e888b99`（Base Sepolia）

@@ -37,7 +37,7 @@ Both servers must run simultaneously. Frontend proxies `/api/*` → `http://loca
 
 ```
 routers/          → HTTP handlers (tasks, submissions, users, internal)
-services/         → Business logic (oracle, x402 payment, payout)
+services/         → Business logic (oracle, x402 payment, payout, escrow)
 models.py         → SQLAlchemy ORM (Task, User, Submission)
 schemas.py        → Pydantic request/response validation
 scheduler.py      → APScheduler (quality_first deadline settlement, every 1 min)
@@ -48,17 +48,20 @@ oracle/oracle.py  → Oracle stub (subprocess, stdin/stdout JSON)
 ### Two settlement paths
 
 - **fastest_first**: Oracle scores submission → score ≥ threshold → close task → `pay_winner()`
-- **quality_first**: Submission → oracle gives 3 revision suggestions (no score) → deadline expires → scheduler batch-scores all pending submissions → picks highest score → `pay_winner()`
+- **quality_first**: Submission → oracle feedback → deadline → batch score → `createChallenge()` locks 90% bounty → challenge window → arbitration → `resolveChallenge()` settles via contract
 
 ### Challenge escrow (ChallengeEscrow contract)
 
-When challengers provide `challenger_wallet` + EIP-2612 Permit signature, the challenge flow uses on-chain escrow:
-1. `createChallenge()` — platform locks bounty (80%) into contract
-2. `joinChallenge()` — Relayer uses Permit to pull deposit (10%) + service fee (0.01 USDC) from challenger
-3. `resolveChallenge()` — Oracle settles: upheld=100% deposit back, rejected=70% back, malicious=0%
-4. No challengers → legacy `pay_winner()` (no contract interaction)
+quality_first 赏金全程通过 ChallengeEscrow 智能合约结算：
+1. `createChallenge()` — Phase 2 结束时，平台锁定 bounty×90% 到合约（含 10% 挑战激励）
+2. `joinChallenge()` — 挑战期内，Relayer 用 try/catch Permit + transferFrom 收取押金 + 0.01 USDC 服务费
+3. `resolveChallenge(verdicts, arbiters)` — 仲裁完成后分配：
+   - 赏金：upheld → 90% 给挑战者；否则 → 80% 给原 winner + 10% 退回平台
+   - 押金：30% 给仲裁者（平分），upheld → 70% 退回挑战者，rejected/malicious → 70% 归平台
+4. No challengers → `resolveChallenge([], [])` 空裁决释放赏金
 
-Contract: `contracts/src/ChallengeEscrow.sol` (Foundry, Solidity 0.8.20+, OpenZeppelin Ownable)
+Contract: `contracts/src/ChallengeEscrow.sol` (Foundry, Solidity 0.8.20, OpenZeppelin Ownable)
+Address: `0x0b256635519Db6B13AE9c423d18a3c3A6e888b99` (Base Sepolia)
 
 ### quality_first lifecycle phases
 
