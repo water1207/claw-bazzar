@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI
-from .database import engine, Base
 from .routers import tasks as tasks_router
 from .routers import submissions as submissions_router
 from .routers import internal as internal_router
@@ -11,9 +10,16 @@ from .routers import challenges as challenges_router
 from .scheduler import create_scheduler
 
 
+def run_migrations():
+    from alembic.config import Config
+    from alembic import command
+    cfg = Config("alembic.ini")
+    command.upgrade(cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    run_migrations()
     scheduler = create_scheduler()
     scheduler.start()
     yield
