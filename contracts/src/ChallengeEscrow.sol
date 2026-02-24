@@ -88,7 +88,9 @@ contract ChallengeEscrow is Ownable {
 
         uint256 totalAmount = info.depositAmount + info.serviceFee;
 
-        usdcPermit.permit(challenger, address(this), totalAmount, deadline, v, r, s);
+        // try/catch: permit may fail if token doesn't support EIP-2612,
+        // or signature was frontrun, or user pre-approved via approve().
+        try usdcPermit.permit(challenger, address(this), totalAmount, deadline, v, r, s) {} catch {}
         require(
             usdc.transferFrom(challenger, address(this), totalAmount),
             "Deposit transfer failed"
