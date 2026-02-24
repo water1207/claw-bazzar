@@ -52,6 +52,7 @@ def create_challenge(
         challenger_submission_id=data.challenger_submission_id,
         target_submission_id=task.winner_submission_id,
         reason=data.reason,
+        challenger_wallet=data.challenger_wallet,
     )
     db.add(challenge)
     db.commit()

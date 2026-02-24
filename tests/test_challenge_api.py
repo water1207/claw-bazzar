@@ -163,3 +163,24 @@ def test_get_single_challenge(client):
     resp = client.get(f"/tasks/{task['id']}/challenges/{created['id']}")
     assert resp.status_code == 200
     assert resp.json()["id"] == created["id"]
+
+
+def test_create_challenge_with_wallet_and_permit(client):
+    """New escrow fields are accepted and returned."""
+    task = make_quality_task(client)
+    s1 = submit(client, task["id"], "w1", "winner")
+    s2 = submit(client, task["id"], "w2", "challenger")
+    setup_challenge_window(client, task["id"], s1["id"])
+
+    resp = client.post(f"/tasks/{task['id']}/challenges", json={
+        "challenger_submission_id": s2["id"],
+        "reason": "better solution",
+        "challenger_wallet": "0x1234567890abcdef1234567890abcdef12345678",
+        "permit_deadline": 9999999999,
+        "permit_v": 27,
+        "permit_r": "0x" + "ab" * 32,
+        "permit_s": "0x" + "cd" * 32,
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["challenger_wallet"] == "0x1234567890abcdef1234567890abcdef12345678"

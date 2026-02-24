@@ -104,6 +104,11 @@ class SubmissionOut(BaseModel):
 class ChallengeCreate(BaseModel):
     challenger_submission_id: str
     reason: str
+    challenger_wallet: Optional[str] = None
+    permit_deadline: Optional[int] = None
+    permit_v: Optional[int] = None
+    permit_r: Optional[str] = None
+    permit_s: Optional[str] = None
 
 
 class ChallengeOut(BaseModel):
@@ -116,6 +121,8 @@ class ChallengeOut(BaseModel):
     arbiter_feedback: Optional[str] = None
     arbiter_score: Optional[float] = None
     status: ChallengeStatus
+    challenger_wallet: Optional[str] = None
+    deposit_tx_hash: Optional[str] = None
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}

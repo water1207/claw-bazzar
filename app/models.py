@@ -117,4 +117,6 @@ class Challenge(Base):
     arbiter_feedback = Column(Text, nullable=True)
     arbiter_score = Column(Float, nullable=True)
     status = Column(Enum(ChallengeStatus), nullable=False, default=ChallengeStatus.pending)
+    challenger_wallet = Column(String, nullable=True)
+    deposit_tx_hash = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
