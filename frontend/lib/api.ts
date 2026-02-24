@@ -64,6 +64,8 @@ export interface Challenge {
   arbiter_feedback: string | null
   arbiter_score: number | null
   status: ChallengeStatus
+  challenger_wallet: string | null
+  deposit_tx_hash: string | null
   created_at: string
 }
 
@@ -148,7 +150,15 @@ export async function createSubmission(
 
 export async function createChallenge(
   taskId: string,
-  data: { challenger_submission_id: string; reason: string },
+  data: {
+    challenger_submission_id: string
+    reason: string
+    challenger_wallet?: string
+    permit_deadline?: number
+    permit_v?: number
+    permit_r?: string
+    permit_s?: string
+  },
 ): Promise<Challenge> {
   const resp = await fetch(`/api/tasks/${taskId}/challenges`, {
     method: 'POST',
