@@ -11,9 +11,11 @@ from .scheduler import create_scheduler
 
 
 def run_migrations():
+    import os
     from alembic.config import Config
     from alembic import command
-    cfg = Config("alembic.ini")
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = Config(os.path.join(base_dir, "alembic.ini"))
     command.upgrade(cfg, "head")
 
 
