@@ -20,6 +20,11 @@ contract ChallengeEscrow is Ownable {
         bool    resolved;
     }
 
+    struct Verdict {
+        address challenger;
+        uint8   result;      // 0=upheld, 1=rejected, 2=malicious
+    }
+
     mapping(bytes32 => ChallengeInfo) public challenges;
     mapping(bytes32 => mapping(address => bool)) public challengers;
 
@@ -84,5 +89,52 @@ contract ChallengeEscrow is Ownable {
         info.challengerCount++;
 
         emit ChallengerJoined(taskId, challenger);
+    }
+
+    function resolveChallenge(
+        bytes32 taskId,
+        address finalWinner,
+        Verdict[] calldata verdicts
+    ) external onlyOwner {
+        ChallengeInfo storage info = challenges[taskId];
+        require(info.bounty > 0, "Challenge not found");
+        require(!info.resolved, "Already resolved");
+
+        // 1. Bounty -> final winner
+        require(usdc.transfer(finalWinner, info.bounty), "Bounty transfer failed");
+
+        // 2. Process each challenger's deposit
+        uint256 platformTotal = 0;
+        for (uint256 i = 0; i < verdicts.length; i++) {
+            require(challengers[taskId][verdicts[i].challenger], "Not a challenger");
+
+            if (verdicts[i].result == 0) {
+                // upheld: 100% deposit back
+                require(
+                    usdc.transfer(verdicts[i].challenger, info.depositAmount),
+                    "Deposit refund failed"
+                );
+            } else if (verdicts[i].result == 1) {
+                // rejected: 70% back, 30% to platform
+                uint256 refund = info.depositAmount * 70 / 100;
+                require(
+                    usdc.transfer(verdicts[i].challenger, refund),
+                    "Partial refund failed"
+                );
+                platformTotal += info.depositAmount - refund;
+            } else {
+                // malicious: 0% back, all to platform
+                platformTotal += info.depositAmount;
+            }
+        }
+
+        // 3. Service fees + forfeited deposits -> platform
+        platformTotal += info.serviceFee * info.challengerCount;
+        if (platformTotal > 0) {
+            require(usdc.transfer(owner(), platformTotal), "Platform transfer failed");
+        }
+
+        info.resolved = true;
+        emit ChallengeResolved(taskId, finalWinner);
     }
 }
