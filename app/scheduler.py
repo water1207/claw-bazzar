@@ -10,6 +10,7 @@ from .models import (
 from .services.payout import pay_winner
 from .services.arbiter import run_arbitration
 from .services.oracle import batch_score_submissions
+from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
 
 
 def _refund_all_deposits(db: Session, task_id: str) -> None:
@@ -146,7 +147,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
 
 def _settle_after_arbitration(db: Session, task: Task) -> None:
     """Settle a task after all challenges are judged."""
-    from .models import ChallengeVerdict, User
+    from .models import ChallengeVerdict, PayoutStatus, User
     challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
 
     # Process deposits and credit scores
@@ -192,8 +193,61 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
         sub.deposit_returned = sub.deposit
 
     task.status = TaskStatus.closed
-    db.commit()
-    pay_winner(db, task.id)
+
+    # --- Escrow settlement (new) ---
+    has_escrow = any(c.challenger_wallet for c in challenges)
+    if has_escrow:
+        try:
+            winner_sub = db.query(Submission).filter(
+                Submission.id == task.winner_submission_id
+            ).first()
+            winner_user = db.query(User).filter(
+                User.id == winner_sub.worker_id
+            ).first() if winner_sub else None
+
+            if winner_user:
+                payout_amount = round(task.bounty * 0.80, 6)
+                deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
+
+                # 1. Lock bounty into escrow
+                create_challenge_onchain(
+                    task.id, winner_user.wallet, payout_amount, deposit_amount
+                )
+
+                # 2. Build verdict array
+                verdicts = []
+                for c in challenges:
+                    if c.challenger_wallet:
+                        result_map = {
+                            ChallengeVerdict.upheld: 0,
+                            ChallengeVerdict.rejected: 1,
+                            ChallengeVerdict.malicious: 2,
+                        }
+                        verdicts.append({
+                            "challenger": c.challenger_wallet,
+                            "result": result_map.get(c.verdict, 1),
+                        })
+
+                # 3. Determine final winner wallet
+                final_winner_wallet = winner_user.wallet
+
+                # 4. Resolve on-chain
+                tx_hash = resolve_challenge_onchain(
+                    task.id, final_winner_wallet, verdicts
+                )
+                task.payout_status = PayoutStatus.paid
+                task.payout_tx_hash = tx_hash
+                task.payout_amount = payout_amount
+
+        except Exception as e:
+            task.payout_status = PayoutStatus.failed
+            print(f"[scheduler] escrow settlement failed for {task.id}: {e}", flush=True)
+
+        db.commit()
+    else:
+        # Legacy path: no escrow, direct pay_winner
+        db.commit()
+        pay_winner(db, task.id)
 
 
 def settle_expired_quality_first(db: Optional[Session] = None) -> None:
