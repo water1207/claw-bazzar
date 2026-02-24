@@ -10,6 +10,7 @@ contract ChallengeEscrow is Ownable {
     IERC20Permit public immutable usdcPermit;
 
     uint256 public constant SERVICE_FEE = 10_000; // 0.01 USDC = 10000 wei (6 decimals)
+    uint256 public constant EMERGENCY_TIMEOUT = 30 days;
 
     struct ChallengeInfo {
         address winner;
@@ -18,6 +19,7 @@ contract ChallengeEscrow is Ownable {
         uint256 serviceFee;
         uint8   challengerCount;
         bool    resolved;
+        uint256 createdAt;
     }
 
     struct Verdict {
@@ -52,7 +54,8 @@ contract ChallengeEscrow is Ownable {
             depositAmount: depositAmount,
             serviceFee: SERVICE_FEE,
             challengerCount: 0,
-            resolved: false
+            resolved: false,
+            createdAt: block.timestamp
         });
 
         require(
@@ -136,5 +139,26 @@ contract ChallengeEscrow is Ownable {
 
         info.resolved = true;
         emit ChallengeResolved(taskId, finalWinner);
+    }
+
+    function emergencyWithdraw(bytes32 taskId) external onlyOwner {
+        ChallengeInfo storage info = challenges[taskId];
+        require(info.bounty > 0, "Challenge not found");
+        require(!info.resolved, "Already resolved");
+        require(
+            block.timestamp >= info.createdAt + EMERGENCY_TIMEOUT,
+            "Too early for emergency withdrawal"
+        );
+
+        // Transfer all remaining USDC back to platform
+        uint256 balance = usdc.balanceOf(address(this));
+        // Only transfer what belongs to this task: bounty + (deposit+fee)*challengerCount
+        uint256 taskFunds = info.bounty +
+            (info.depositAmount + info.serviceFee) * info.challengerCount;
+        // Cap at contract balance in case of rounding
+        uint256 amount = taskFunds > balance ? balance : taskFunds;
+
+        require(usdc.transfer(owner(), amount), "Emergency transfer failed");
+        info.resolved = true;
     }
 }

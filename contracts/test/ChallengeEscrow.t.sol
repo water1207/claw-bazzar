@@ -66,7 +66,7 @@ contract ChallengeEscrowTest is Test {
 
         (
             address w, uint256 b, uint256 d, uint256 sf,
-            uint8 cc, bool resolved
+            uint8 cc, bool resolved,
         ) = escrow.challenges(taskId);
 
         assertEq(w, winner);
@@ -114,7 +114,7 @@ contract ChallengeEscrowTest is Test {
             0, bytes32(0), bytes32(0)
         );
 
-        (, , , , uint8 count, ) = escrow.challenges(taskId);
+        (, , , , uint8 count, ,) = escrow.challenges(taskId);
         assertEq(count, 1);
         assertTrue(escrow.challengers(taskId, challenger));
         assertEq(usdc.balanceOf(address(escrow)), bounty + totalRequired);
@@ -170,7 +170,7 @@ contract ChallengeEscrowTest is Test {
         uint256 platformExpected = deposit * 30 / 100 + escrow.SERVICE_FEE();
         assertEq(usdc.balanceOf(platform) - platformBefore, platformExpected);
 
-        (, , , , , bool resolved) = escrow.challenges(taskId);
+        (, , , , , bool resolved,) = escrow.challenges(taskId);
         assertTrue(resolved);
     }
 
@@ -268,5 +268,32 @@ contract ChallengeEscrowTest is Test {
 
         vm.expectRevert("Already resolved");
         escrow.resolveChallenge(taskId, winner, verdicts);
+    }
+
+    function test_emergencyWithdraw() public {
+        bytes32 taskId = keccak256("task-1");
+        uint256 bounty = 8 * 1e6;
+
+        usdc.approve(address(escrow), bounty);
+        escrow.createChallenge(taskId, winner, bounty, 1 * 1e6);
+
+        // Warp forward 31 days
+        vm.warp(block.timestamp + 31 days);
+
+        uint256 platformBefore = usdc.balanceOf(platform);
+        escrow.emergencyWithdraw(taskId);
+
+        assertEq(usdc.balanceOf(platform) - platformBefore, bounty);
+        (, , , , , bool resolved,) = escrow.challenges(taskId);
+        assertTrue(resolved);
+    }
+
+    function test_emergencyWithdraw_reverts_too_early() public {
+        bytes32 taskId = keccak256("task-1");
+        usdc.approve(address(escrow), 8 * 1e6);
+        escrow.createChallenge(taskId, winner, 8 * 1e6, 1 * 1e6);
+
+        vm.expectRevert("Too early for emergency withdrawal");
+        escrow.emergencyWithdraw(taskId);
     }
 }
