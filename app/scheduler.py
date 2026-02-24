@@ -7,10 +7,32 @@ from .models import (
     Task, Submission, Challenge,
     TaskType, TaskStatus, SubmissionStatus, ChallengeStatus,
 )
-from .services.payout import pay_winner
 from .services.arbiter import run_arbitration
 from .services.oracle import batch_score_submissions
 from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
+
+
+def _resolve_via_contract(db: Session, task: Task, verdicts: list) -> None:
+    """Call resolveChallenge on-chain to distribute bounty."""
+    from .models import User, PayoutStatus
+    try:
+        winner_sub = db.query(Submission).filter(
+            Submission.id == task.winner_submission_id
+        ).first()
+        winner_user = db.query(User).filter(
+            User.id == winner_sub.worker_id
+        ).first() if winner_sub else None
+        if winner_user:
+            payout_amount = round(task.bounty * 0.80, 6)
+            tx_hash = resolve_challenge_onchain(
+                task.id, winner_user.wallet, verdicts
+            )
+            task.payout_status = PayoutStatus.paid
+            task.payout_tx_hash = tx_hash
+            task.payout_amount = payout_amount
+    except Exception as e:
+        task.payout_status = PayoutStatus.failed
+        print(f"[scheduler] resolveChallenge failed for {task.id}: {e}", flush=True)
 
 
 def _refund_all_deposits(db: Session, task_id: str) -> None:
@@ -99,6 +121,25 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 duration = task.challenge_duration or 7200
                 task.challenge_window_end = now + timedelta(seconds=duration)
                 task.status = TaskStatus.challenge_window
+
+                # Lock bounty into escrow contract at start of challenge window
+                if task.bounty and task.bounty > 0:
+                    try:
+                        from .models import User
+                        winner_sub = db.query(Submission).filter(
+                            Submission.id == best.id
+                        ).first()
+                        winner_user = db.query(User).filter(
+                            User.id == winner_sub.worker_id
+                        ).first() if winner_sub else None
+                        if winner_user:
+                            payout_amount = round(task.bounty * 0.80, 6)
+                            deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
+                            create_challenge_onchain(
+                                task.id, winner_user.wallet, payout_amount, deposit_amount
+                            )
+                    except Exception as e:
+                        print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
             else:
                 task.status = TaskStatus.closed
         if scoring_tasks:
@@ -117,8 +158,10 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             if challenge_count == 0:
                 _refund_all_deposits(db, task.id)
                 task.status = TaskStatus.closed
+                # Release bounty via contract (no challengers, empty verdicts)
+                if task.bounty and task.bounty > 0:
+                    _resolve_via_contract(db, task, verdicts=[])
                 db.commit()
-                pay_winner(db, task.id)
             else:
                 task.status = TaskStatus.arbitrating
                 db.commit()
@@ -194,60 +237,23 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
 
     task.status = TaskStatus.closed
 
-    # --- Escrow settlement (new) ---
-    has_escrow = any(c.challenger_wallet for c in challenges)
-    if has_escrow:
-        try:
-            winner_sub = db.query(Submission).filter(
-                Submission.id == task.winner_submission_id
-            ).first()
-            winner_user = db.query(User).filter(
-                User.id == winner_sub.worker_id
-            ).first() if winner_sub else None
+    # Resolve on-chain: distribute bounty + deposits
+    if task.bounty and task.bounty > 0:
+        verdicts = []
+        for c in challenges:
+            if c.challenger_wallet:
+                result_map = {
+                    ChallengeVerdict.upheld: 0,
+                    ChallengeVerdict.rejected: 1,
+                    ChallengeVerdict.malicious: 2,
+                }
+                verdicts.append({
+                    "challenger": c.challenger_wallet,
+                    "result": result_map.get(c.verdict, 1),
+                })
+        _resolve_via_contract(db, task, verdicts)
 
-            if winner_user:
-                payout_amount = round(task.bounty * 0.80, 6)
-                deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
-
-                # 1. Lock bounty into escrow
-                create_challenge_onchain(
-                    task.id, winner_user.wallet, payout_amount, deposit_amount
-                )
-
-                # 2. Build verdict array
-                verdicts = []
-                for c in challenges:
-                    if c.challenger_wallet:
-                        result_map = {
-                            ChallengeVerdict.upheld: 0,
-                            ChallengeVerdict.rejected: 1,
-                            ChallengeVerdict.malicious: 2,
-                        }
-                        verdicts.append({
-                            "challenger": c.challenger_wallet,
-                            "result": result_map.get(c.verdict, 1),
-                        })
-
-                # 3. Determine final winner wallet
-                final_winner_wallet = winner_user.wallet
-
-                # 4. Resolve on-chain
-                tx_hash = resolve_challenge_onchain(
-                    task.id, final_winner_wallet, verdicts
-                )
-                task.payout_status = PayoutStatus.paid
-                task.payout_tx_hash = tx_hash
-                task.payout_amount = payout_amount
-
-        except Exception as e:
-            task.payout_status = PayoutStatus.failed
-            print(f"[scheduler] escrow settlement failed for {task.id}: {e}", flush=True)
-
-        db.commit()
-    else:
-        # Legacy path: no escrow, direct pay_winner
-        db.commit()
-        pay_winner(db, task.id)
+    db.commit()
 
 
 def settle_expired_quality_first(db: Optional[Session] = None) -> None:
