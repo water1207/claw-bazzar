@@ -9,13 +9,15 @@ contract ChallengeEscrow is Ownable {
     IERC20 public immutable usdc;
     IERC20Permit public immutable usdcPermit;
 
-    uint256 public constant SERVICE_FEE = 10_000; // 0.01 USDC = 10000 wei (6 decimals)
+    uint256 public constant SERVICE_FEE = 10_000; // 0.01 USDC (6 decimals)
     uint256 public constant EMERGENCY_TIMEOUT = 30 days;
+    uint256 public constant ARBITER_DEPOSIT_BPS = 3000; // 30% of each deposit → arbiters
 
     struct ChallengeInfo {
         address winner;
-        uint256 bounty;
-        uint256 depositAmount;
+        uint256 bounty;           // Total locked (90% of task bounty)
+        uint256 incentive;        // Challenge incentive (10% of task bounty)
+        uint256 depositAmount;    // Per-challenger deposit
         uint256 serviceFee;
         uint8   challengerCount;
         bool    resolved;
@@ -39,18 +41,23 @@ contract ChallengeEscrow is Ownable {
         usdcPermit = IERC20Permit(_usdc);
     }
 
+    /// @notice Lock bounty (90%) into escrow at start of challenge window.
+    /// @param incentive The 10% challenge incentive portion (included in bounty).
     function createChallenge(
         bytes32 taskId,
         address winner_,
         uint256 bounty,
+        uint256 incentive,
         uint256 depositAmount
     ) external onlyOwner {
         require(challenges[taskId].bounty == 0, "Challenge already exists");
         require(bounty > 0, "Bounty must be positive");
+        require(incentive <= bounty, "Incentive exceeds bounty");
 
         challenges[taskId] = ChallengeInfo({
             winner: winner_,
             bounty: bounty,
+            incentive: incentive,
             depositAmount: depositAmount,
             serviceFee: SERVICE_FEE,
             challengerCount: 0,
@@ -81,7 +88,6 @@ contract ChallengeEscrow is Ownable {
 
         uint256 totalAmount = info.depositAmount + info.serviceFee;
 
-        // Use EIP-2612 permit to approve escrow, then transferFrom
         usdcPermit.permit(challenger, address(this), totalAmount, deadline, v, r, s);
         require(
             usdc.transferFrom(challenger, address(this), totalAmount),
@@ -94,44 +100,71 @@ contract ChallengeEscrow is Ownable {
         emit ChallengerJoined(taskId, challenger);
     }
 
+    /// @notice Resolve challenge: distribute bounty + deposits + arbiter rewards.
+    /// @param arbiters Addresses that judged this challenge (receive deposit share).
     function resolveChallenge(
         bytes32 taskId,
         address finalWinner,
-        Verdict[] calldata verdicts
+        Verdict[] calldata verdicts,
+        address[] calldata arbiters
     ) external onlyOwner {
         ChallengeInfo storage info = challenges[taskId];
         require(info.bounty > 0, "Challenge not found");
         require(!info.resolved, "Already resolved");
 
-        // 1. Bounty -> final winner
-        require(usdc.transfer(finalWinner, info.bounty), "Bounty transfer failed");
-
-        // 2. Process each challenger's deposit
         uint256 platformTotal = 0;
+
+        // 1. Bounty distribution
+        bool hasUpheld = false;
+        for (uint256 i = 0; i < verdicts.length; i++) {
+            if (verdicts[i].result == 0) { hasUpheld = true; break; }
+        }
+
+        if (hasUpheld) {
+            // Challenger won: full bounty (90%) to challenger
+            require(usdc.transfer(finalWinner, info.bounty), "Bounty transfer failed");
+        } else {
+            // No challenger won: base payout to original winner, incentive back to platform
+            uint256 basePayout = info.bounty - info.incentive;
+            require(usdc.transfer(finalWinner, basePayout), "Bounty transfer failed");
+            platformTotal += info.incentive;
+        }
+
+        // 2. Deposit distribution: 30% of each deposit → arbiters, rest by verdict
+        uint256 arbiterPool = 0;
         for (uint256 i = 0; i < verdicts.length; i++) {
             require(challengers[taskId][verdicts[i].challenger], "Not a challenger");
 
+            uint256 arbiterShare = info.depositAmount * ARBITER_DEPOSIT_BPS / 10000;
+            arbiterPool += arbiterShare;
+            uint256 remaining = info.depositAmount - arbiterShare;
+
             if (verdicts[i].result == 0) {
-                // upheld: 100% deposit back
+                // upheld: remaining 70% back to challenger
                 require(
-                    usdc.transfer(verdicts[i].challenger, info.depositAmount),
+                    usdc.transfer(verdicts[i].challenger, remaining),
                     "Deposit refund failed"
                 );
-            } else if (verdicts[i].result == 1) {
-                // rejected: 70% back, 30% to platform
-                uint256 refund = info.depositAmount * 70 / 100;
-                require(
-                    usdc.transfer(verdicts[i].challenger, refund),
-                    "Partial refund failed"
-                );
-                platformTotal += info.depositAmount - refund;
             } else {
-                // malicious: 0% back, all to platform
-                platformTotal += info.depositAmount;
+                // rejected / malicious: remaining 70% to platform
+                platformTotal += remaining;
             }
         }
 
-        // 3. Service fees + forfeited deposits -> platform
+        // 3. Split arbiter pool equally among arbiters
+        if (arbiters.length > 0 && arbiterPool > 0) {
+            uint256 perArbiter = arbiterPool / arbiters.length;
+            for (uint256 i = 0; i < arbiters.length; i++) {
+                require(usdc.transfer(arbiters[i], perArbiter), "Arbiter transfer failed");
+            }
+            // Rounding remainder → platform
+            platformTotal += arbiterPool - perArbiter * arbiters.length;
+        } else {
+            // No arbiters specified → pool goes to platform
+            platformTotal += arbiterPool;
+        }
+
+        // 4. Service fees + forfeited amounts → platform
         platformTotal += info.serviceFee * info.challengerCount;
         if (platformTotal > 0) {
             require(usdc.transfer(owner(), platformTotal), "Platform transfer failed");
@@ -150,12 +183,9 @@ contract ChallengeEscrow is Ownable {
             "Too early for emergency withdrawal"
         );
 
-        // Transfer all remaining USDC back to platform
         uint256 balance = usdc.balanceOf(address(this));
-        // Only transfer what belongs to this task: bounty + (deposit+fee)*challengerCount
         uint256 taskFunds = info.bounty +
             (info.depositAmount + info.serviceFee) * info.challengerCount;
-        // Cap at contract balance in case of rounding
         uint256 amount = taskFunds > balance ? balance : taskFunds;
 
         require(usdc.transfer(owner(), amount), "Emergency transfer failed");

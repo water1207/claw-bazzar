@@ -38,6 +38,7 @@ _MINIMAL_ESCROW_ABI = [
             {"name": "taskId", "type": "bytes32"},
             {"name": "winner_", "type": "address"},
             {"name": "bounty", "type": "uint256"},
+            {"name": "incentive", "type": "uint256"},
             {"name": "depositAmount", "type": "uint256"},
         ],
         "name": "createChallenge",
@@ -69,6 +70,7 @@ _MINIMAL_ESCROW_ABI = [
                     {"name": "result", "type": "uint8"},
                 ],
             },
+            {"name": "arbiters", "type": "address[]"},
         ],
         "name": "resolveChallenge",
         "outputs": [],
@@ -127,19 +129,22 @@ def check_usdc_balance(wallet_address: str) -> float:
 
 
 def create_challenge_onchain(
-    task_id: str, winner_wallet: str, bounty: float, deposit_amount: float
+    task_id: str, winner_wallet: str, bounty: float, incentive: float, deposit_amount: float
 ) -> str:
-    """Call ChallengeEscrow.createChallenge(). Platform must have approved USDC.
+    """Call ChallengeEscrow.createChallenge(). Locks bounty (90%) into escrow.
+    bounty = task.bounty * 0.90, incentive = task.bounty * 0.10.
     Returns tx hash."""
     w3, contract = _get_w3_and_contract()
     task_bytes = _task_id_to_bytes32(task_id)
     bounty_wei = int(bounty * 10**6)
+    incentive_wei = int(incentive * 10**6)
     deposit_wei = int(deposit_amount * 10**6)
 
     fn = contract.functions.createChallenge(
         task_bytes,
         Web3.to_checksum_address(winner_wallet),
         bounty_wei,
+        incentive_wei,
         deposit_wei,
     )
     return _send_tx(w3, fn, f"createChallenge({task_id})")
@@ -173,9 +178,11 @@ def resolve_challenge_onchain(
     task_id: str,
     final_winner_wallet: str,
     verdicts: list[dict],
+    arbiter_wallets: list[str] | None = None,
 ) -> str:
-    """Call ChallengeEscrow.resolveChallenge() with verdict array.
+    """Call ChallengeEscrow.resolveChallenge() with verdicts and arbiter addresses.
     verdicts: [{"challenger": "0x...", "result": 0|1|2}, ...]
+    arbiter_wallets: list of arbiter addresses to split deposit rewards.
     Returns tx hash."""
     w3, contract = _get_w3_and_contract()
     task_bytes = _task_id_to_bytes32(task_id)
@@ -184,10 +191,14 @@ def resolve_challenge_onchain(
         (Web3.to_checksum_address(v["challenger"]), v["result"])
         for v in verdicts
     ]
+    arbiter_addresses = [
+        Web3.to_checksum_address(a) for a in (arbiter_wallets or [])
+    ]
 
     fn = contract.functions.resolveChallenge(
         task_bytes,
         Web3.to_checksum_address(final_winner_wallet),
         verdict_tuples,
+        arbiter_addresses,
     )
     return _send_tx(w3, fn, f"resolveChallenge({task_id})")

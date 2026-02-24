@@ -12,8 +12,10 @@ from .services.oracle import batch_score_submissions
 from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
 
 
-def _resolve_via_contract(db: Session, task: Task, verdicts: list) -> None:
-    """Call resolveChallenge on-chain to distribute bounty."""
+def _resolve_via_contract(
+    db: Session, task: Task, verdicts: list, arbiter_wallets: list[str] | None = None
+) -> None:
+    """Call resolveChallenge on-chain to distribute bounty + deposits."""
     from .models import User, PayoutStatus
     try:
         winner_sub = db.query(Submission).filter(
@@ -23,9 +25,11 @@ def _resolve_via_contract(db: Session, task: Task, verdicts: list) -> None:
             User.id == winner_sub.worker_id
         ).first() if winner_sub else None
         if winner_user:
-            payout_amount = round(task.bounty * 0.80, 6)
+            # Payout is 90% if challenger won, 80% if original winner kept
+            has_upheld = any(v.get("result") == 0 for v in verdicts)
+            payout_amount = round(task.bounty * 0.90, 6) if has_upheld else round(task.bounty * 0.80, 6)
             tx_hash = resolve_challenge_onchain(
-                task.id, winner_user.wallet, verdicts
+                task.id, winner_user.wallet, verdicts, arbiter_wallets
             )
             task.payout_status = PayoutStatus.paid
             task.payout_tx_hash = tx_hash
@@ -122,7 +126,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 task.challenge_window_end = now + timedelta(seconds=duration)
                 task.status = TaskStatus.challenge_window
 
-                # Lock bounty into escrow contract at start of challenge window
+                # Lock 90% bounty into escrow contract at start of challenge window
                 if task.bounty and task.bounty > 0:
                     try:
                         from .models import User
@@ -133,10 +137,11 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                             User.id == winner_sub.worker_id
                         ).first() if winner_sub else None
                         if winner_user:
-                            payout_amount = round(task.bounty * 0.80, 6)
+                            escrow_amount = round(task.bounty * 0.90, 6)
+                            incentive = round(task.bounty * 0.10, 6)
                             deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
                             create_challenge_onchain(
-                                task.id, winner_user.wallet, payout_amount, deposit_amount
+                                task.id, winner_user.wallet, escrow_amount, incentive, deposit_amount
                             )
                     except Exception as e:
                         print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
@@ -193,28 +198,29 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     from .models import ChallengeVerdict, PayoutStatus, User
     challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
 
-    # Process deposits and credit scores
+    # Process deposits (30% arbiter cut from ALL) and credit scores
     for c in challenges:
         challenger_sub = db.query(Submission).filter(
             Submission.id == c.challenger_submission_id
         ).first()
-        # Find the worker user for credit score updates
         worker = db.query(User).filter(
             User.id == challenger_sub.worker_id
         ).first() if challenger_sub else None
 
         if c.verdict == ChallengeVerdict.upheld:
-            if challenger_sub and challenger_sub.deposit_returned is None:
-                challenger_sub.deposit_returned = challenger_sub.deposit
+            # 30% to arbiters, remaining 70% back to challenger
+            if challenger_sub and challenger_sub.deposit is not None and challenger_sub.deposit_returned is None:
+                challenger_sub.deposit_returned = round(challenger_sub.deposit * 0.70, 6)
             if worker:
                 worker.credit_score = round(worker.credit_score + 5, 2)
 
         elif c.verdict == ChallengeVerdict.rejected:
-            if challenger_sub and challenger_sub.deposit is not None and challenger_sub.deposit_returned is None:
-                challenger_sub.deposit_returned = round(challenger_sub.deposit * 0.70, 6)
-            # credit_score unchanged
+            # 30% to arbiters, remaining 70% to platform — challenger gets nothing
+            if challenger_sub and challenger_sub.deposit_returned is None:
+                challenger_sub.deposit_returned = 0
 
         elif c.verdict == ChallengeVerdict.malicious:
+            # 30% to arbiters, remaining 70% to platform — challenger gets nothing
             if challenger_sub and challenger_sub.deposit_returned is None:
                 challenger_sub.deposit_returned = 0
             if worker:
@@ -237,7 +243,7 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
 
     task.status = TaskStatus.closed
 
-    # Resolve on-chain: distribute bounty + deposits
+    # Resolve on-chain: distribute bounty + deposits + arbiter rewards
     if task.bounty and task.bounty > 0:
         verdicts = []
         for c in challenges:
@@ -251,7 +257,11 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                     "challenger": c.challenger_wallet,
                     "result": result_map.get(c.verdict, 1),
                 })
-        _resolve_via_contract(db, task, verdicts)
+        # For now, platform is the sole arbiter; future: decentralized arbiter addresses
+        import os
+        platform_wallet = os.environ.get("PLATFORM_WALLET", "")
+        arbiter_wallets = [platform_wallet] if platform_wallet else []
+        _resolve_via_contract(db, task, verdicts, arbiter_wallets)
 
     db.commit()
 
