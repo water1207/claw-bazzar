@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
-from sqlalchemy import Column, String, Text, Float, Integer, DateTime, Enum
+from sqlalchemy import Column, String, Text, Float, Integer, DateTime, Enum, ForeignKey
+from sqlalchemy.orm import relationship
 from .database import Base
 
 
@@ -79,6 +80,21 @@ class Task(Base):
     challenge_window_end = Column(DateTime(timezone=True), nullable=True)
     acceptance_criteria = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class ScoringDimension(Base):
+    __tablename__ = "scoring_dimensions"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
+    dim_id = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    dim_type = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    weight = Column(Float, nullable=False)
+    scoring_guidance = Column(Text, nullable=False)
+
+    task = relationship("Task", backref="dimensions")
 
 
 class User(Base):
