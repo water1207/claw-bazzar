@@ -4,10 +4,11 @@ from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from .database import SessionLocal
 from .models import (
-    Task, Submission, Challenge,
+    Task, Submission, Challenge, ArbiterVote,
     TaskType, TaskStatus, SubmissionStatus, ChallengeStatus,
 )
 from .services.arbiter import run_arbitration
+from .services.arbiter_pool import select_jury, resolve_jury, check_jury_ready
 from .services.oracle import batch_score_submissions
 from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
 from .services.payout import refund_publisher
@@ -49,6 +50,63 @@ def _refund_all_deposits(db: Session, task_id: str) -> None:
     for sub in submissions:
         if sub.deposit_returned is None:
             sub.deposit_returned = sub.deposit
+
+
+JURY_VOTING_TIMEOUT = timedelta(hours=6)
+
+
+def _try_resolve_challenge_jury(
+    db: Session, challenge: Challenge, task: Task, now: datetime
+) -> None:
+    """Check jury votes for a challenge; resolve if ready or timed out."""
+    votes = db.query(ArbiterVote).filter_by(challenge_id=challenge.id).all()
+    if not votes:
+        # No jury was selected for this challenge (stub path) — skip
+        return
+
+    all_voted = check_jury_ready(db, challenge.id)
+    # Determine timeout from the earliest vote created_at
+    earliest = min(v.created_at for v in votes)
+    # Ensure timezone-aware comparison (SQLite may strip tzinfo)
+    if earliest.tzinfo is None:
+        earliest = earliest.replace(tzinfo=timezone.utc)
+    timed_out = (now - earliest) >= JURY_VOTING_TIMEOUT
+
+    if not all_voted and not timed_out:
+        return
+
+    # Apply timeout penalty to non-voters
+    if timed_out and not all_voted:
+        from .services.trust import apply_event, TrustEventType
+        for v in votes:
+            if v.vote is None:
+                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_timeout,
+                            task_id=task.id)
+
+    # Resolve jury vote
+    from .models import ChallengeVerdict
+    verdict = resolve_jury(db, challenge.id)
+    _apply_verdict_trust(db, challenge, verdict, task)
+
+
+def _apply_verdict_trust(
+    db: Session, challenge: Challenge, verdict, task: Task
+) -> None:
+    """Apply trust score changes based on jury verdict."""
+    from .services.trust import apply_event, TrustEventType
+    from .models import ChallengeVerdict, ChallengeStatus as CS
+    votes = db.query(ArbiterVote).filter_by(challenge_id=challenge.id).all()
+    for v in votes:
+        if v.vote is not None:
+            if v.is_majority:
+                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_majority,
+                            task_id=task.id)
+            else:
+                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_minority,
+                            task_id=task.id)
+    challenge.verdict = verdict
+    challenge.status = CS.judged
+    db.commit()
 
 
 def quality_first_lifecycle(db: Optional[Session] = None) -> None:
@@ -189,9 +247,15 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     _resolve_via_contract(db, task, verdicts=[])
                 db.commit()
             else:
-                task.status = TaskStatus.arbitrating
-                db.commit()
-                run_arbitration(db, task.id)
+                # Try jury-based arbitration first; fall back to stub
+                jury_votes = select_jury(db, task.id)
+                if jury_votes:
+                    task.status = TaskStatus.arbitrating
+                    db.commit()
+                else:
+                    task.status = TaskStatus.arbitrating
+                    db.commit()
+                    run_arbitration(db, task.id)
 
         # Phase 4: arbitrating -> closed (all challenges judged)
         arbitrating_tasks = (
@@ -203,8 +267,18 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             pending_challenges = db.query(Challenge).filter(
                 Challenge.task_id == task.id,
                 Challenge.status == ChallengeStatus.pending,
+            ).all()
+
+            # Try to resolve pending challenges via jury voting
+            for challenge in pending_challenges:
+                _try_resolve_challenge_jury(db, challenge, task, now)
+
+            # Re-check: if still pending challenges remain, wait
+            still_pending = db.query(Challenge).filter(
+                Challenge.task_id == task.id,
+                Challenge.status == ChallengeStatus.pending,
             ).count()
-            if pending_challenges > 0:
+            if still_pending > 0:
                 continue
 
             _settle_after_arbitration(db, task)
@@ -278,10 +352,21 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                     "challenger": c.challenger_wallet,
                     "result": result_map.get(c.verdict, 1),
                 })
-        # For now, platform is the sole arbiter; future: decentralized arbiter addresses
-        import os
-        platform_wallet = os.environ.get("PLATFORM_WALLET", "")
-        arbiter_wallets = [platform_wallet] if platform_wallet else []
+        # Collect arbiter wallets from jury votes; fall back to platform wallet
+        from .models import User
+        arbiter_user_ids = set()
+        for c in challenges:
+            jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
+            for v in jury_votes:
+                if v.vote is not None:
+                    arbiter_user_ids.add(v.arbiter_user_id)
+        if arbiter_user_ids:
+            arbiter_users = db.query(User).filter(User.id.in_(arbiter_user_ids)).all()
+            arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
+        else:
+            import os
+            platform_wallet = os.environ.get("PLATFORM_WALLET", "")
+            arbiter_wallets = [platform_wallet] if platform_wallet else []
         _resolve_via_contract(db, task, verdicts, arbiter_wallets)
 
     db.commit()
