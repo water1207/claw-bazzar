@@ -3,8 +3,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from ..database import get_db
-from ..models import Task, TaskStatus, TaskType, Submission
-from ..schemas import TaskCreate, TaskOut, TaskDetail, SubmissionOut
+from ..models import Task, TaskStatus, TaskType, Submission, ScoringDimension
+from ..schemas import TaskCreate, TaskOut, TaskDetail, SubmissionOut, ScoringDimensionPublic
+from ..services.oracle import generate_dimensions
 from ..services.x402 import build_payment_requirements, verify_payment
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -31,7 +32,21 @@ def create_task(data: TaskCreate, request: Request, db: Session = Depends(get_db
     db.add(task)
     db.commit()
     db.refresh(task)
-    return task
+
+    # Generate scoring dimensions if acceptance_criteria provided
+    if task.acceptance_criteria:
+        try:
+            generate_dimensions(db, task)
+        except Exception as e:
+            print(f"[tasks] dimension generation failed: {e}", flush=True)
+
+    # Attach dimensions to response
+    dims = db.query(ScoringDimension).filter(ScoringDimension.task_id == task.id).all()
+    result = TaskOut.model_validate(task)
+    result.scoring_dimensions = [
+        ScoringDimensionPublic(name=d.name, description=d.description) for d in dims
+    ]
+    return result
 
 
 @router.get("", response_model=List[TaskOut])
@@ -54,7 +69,11 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     subs = db.query(Submission).filter(Submission.task_id == task_id).all()
+    dims = db.query(ScoringDimension).filter(ScoringDimension.task_id == task_id).all()
     result = TaskDetail.model_validate(task)
+    result.scoring_dimensions = [
+        ScoringDimensionPublic(name=d.name, description=d.description) for d in dims
+    ]
 
     hide_content = task.status in (
         TaskStatus.challenge_window,
