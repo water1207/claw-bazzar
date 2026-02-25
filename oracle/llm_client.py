@@ -1,4 +1,4 @@
-"""LLM API client wrapper. Default: Anthropic Claude. Configurable via env vars."""
+"""LLM API client wrapper. Supports Anthropic and OpenAI-compatible APIs (e.g. SiliconFlow)."""
 import json
 import os
 
@@ -7,18 +7,37 @@ def call_llm(prompt: str, system: str = None) -> str:
     """Call LLM API and return raw text response.
 
     Env vars:
-        ORACLE_LLM_PROVIDER: "anthropic" (default)
-        ORACLE_LLM_MODEL: model name (default "claude-sonnet-4-20250514")
-        ANTHROPIC_API_KEY: API key for Anthropic
+        ORACLE_LLM_PROVIDER: "anthropic" or "openai" (default "openai")
+        ORACLE_LLM_MODEL: model name
+        ORACLE_LLM_BASE_URL: base URL for OpenAI-compatible APIs (e.g. SiliconFlow)
+        ANTHROPIC_API_KEY: API key for Anthropic provider
+        OPENAI_API_KEY: API key for OpenAI-compatible provider
     """
-    provider = os.environ.get("ORACLE_LLM_PROVIDER", "anthropic")
-    model = os.environ.get("ORACLE_LLM_MODEL", "claude-sonnet-4-20250514")
+    provider = os.environ.get("ORACLE_LLM_PROVIDER", "openai")
+    model = os.environ.get("ORACLE_LLM_MODEL", "")
+    base_url = os.environ.get("ORACLE_LLM_BASE_URL", "")
 
-    if provider == "anthropic":
+    if provider == "openai":
+        import openai
+        kwargs = {}
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = openai.OpenAI(**kwargs)
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        resp = client.chat.completions.create(
+            model=model,
+            max_tokens=4096,
+            messages=messages,
+        )
+        return resp.choices[0].message.content
+    elif provider == "anthropic":
         import anthropic
         client = anthropic.Anthropic()
         resp = client.messages.create(
-            model=model,
+            model=model or "claude-sonnet-4-20250514",
             max_tokens=4096,
             system=system or "",
             messages=[{"role": "user", "content": prompt}],
