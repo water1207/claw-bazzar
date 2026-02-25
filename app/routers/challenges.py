@@ -3,9 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
-from ..models import Task, Submission, Challenge, TaskStatus
+from ..models import Task, Submission, Challenge, User, TaskStatus
 from ..schemas import ChallengeCreate, ChallengeOut
 from ..services.escrow import check_usdc_balance, join_challenge_onchain
+from ..services.trust import check_permissions, get_challenge_deposit_rate
 
 SERVICE_FEE = 0.01  # 0.01 USDC
 
@@ -38,6 +39,13 @@ def create_challenge(
     if not challenger_sub:
         raise HTTPException(status_code=400, detail="Challenger submission not found in this task")
 
+    # Trust-based permission check for challenger
+    challenger_user = db.query(User).filter_by(id=challenger_sub.worker_id).first()
+    if challenger_user:
+        perms = check_permissions(challenger_user)
+        if not perms["can_challenge"]:
+            raise HTTPException(status_code=403, detail="Your trust level does not allow challenging")
+
     # Cannot challenge yourself
     if data.challenger_submission_id == task.winner_submission_id:
         raise HTTPException(status_code=400, detail="Winner cannot challenge themselves")
@@ -53,7 +61,14 @@ def create_challenge(
     # --- Escrow integration (only when permit params provided) ---
     deposit_tx_hash = None
     if data.challenger_wallet and data.permit_v is not None:
-        deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
+        # Dynamic deposit rate based on trust tier (fallback to 10%)
+        deposit_rate = 0.10
+        if challenger_user:
+            try:
+                deposit_rate = get_challenge_deposit_rate(challenger_user.trust_tier)
+            except ValueError:
+                pass  # C-level already blocked above
+        deposit_amount = task.submission_deposit or round(task.bounty * deposit_rate, 6)
         required = deposit_amount + SERVICE_FEE
 
         # 1. Balance check

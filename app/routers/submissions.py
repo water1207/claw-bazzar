@@ -3,9 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
-from ..models import Task, Submission, TaskStatus, TaskType
+from ..models import Task, Submission, User, TaskStatus, TaskType
 from ..schemas import SubmissionCreate, SubmissionOut
 from ..services.oracle import invoke_oracle
+from ..services.trust import check_permissions
 
 router = APIRouter(tags=["submissions"])
 
@@ -38,6 +39,15 @@ def create_submission(
     deadline = task.deadline if task.deadline.tzinfo else task.deadline.replace(tzinfo=timezone.utc)
     if datetime.now(timezone.utc) > deadline:
         raise HTTPException(status_code=400, detail="Task deadline has passed")
+
+    # Trust-based permission checks
+    worker = db.query(User).filter_by(id=data.worker_id).first()
+    if worker:
+        perms = check_permissions(worker)
+        if not perms["can_accept_tasks"]:
+            raise HTTPException(status_code=403, detail="Your trust level does not allow accepting tasks")
+        if perms["max_task_amount"] and task.bounty and task.bounty > perms["max_task_amount"]:
+            raise HTTPException(status_code=403, detail=f"Your trust level limits tasks to {perms['max_task_amount']} USDC")
 
     existing = db.query(Submission).filter(
         Submission.task_id == task_id,
