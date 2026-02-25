@@ -245,3 +245,120 @@ def test_give_feedback_gate_pass_then_individual_score(db):
     assert feedback["type"] == "individual_scoring"
     assert "revision_suggestions" in feedback
     assert len(feedback["revision_suggestions"]) == 2
+
+
+# --- batch_score_submissions tests ---
+
+MOCK_CONSTRAINT_QF_CLEAN = json.dumps({
+    "submission_label": "Submission_A",
+    "task_relevance": {"passed": True, "analysis": "ok", "score_cap": None},
+    "authenticity": {"passed": True, "analysis": "ok", "flagged_issues": [], "score_cap": None},
+    "effective_cap": None,
+})
+
+MOCK_DIM_SCORE_SUB = json.dumps({
+    "dimension_id": "substantiveness",
+    "dimension_name": "实质性",
+    "evaluation_focus": "focus",
+    "comparative_analysis": "A > B",
+    "scores": [
+        {"submission": "Submission_A", "raw_score": 85, "cap_applied": False,
+         "final_score": 85, "evidence": "good"},
+        {"submission": "Submission_B", "raw_score": 70, "cap_applied": False,
+         "final_score": 70, "evidence": "ok"},
+    ]
+})
+
+MOCK_DIM_SCORE_COMP = json.dumps({
+    "dimension_id": "completeness",
+    "dimension_name": "完整性",
+    "evaluation_focus": "focus",
+    "comparative_analysis": "A > B",
+    "scores": [
+        {"submission": "Submission_A", "raw_score": 80, "cap_applied": False,
+         "final_score": 80, "evidence": "good"},
+        {"submission": "Submission_B", "raw_score": 60, "cap_applied": False,
+         "final_score": 60, "evidence": "ok"},
+    ]
+})
+
+
+def test_batch_score_submissions_horizontal(db):
+    """After deadline: top 3 → constraint check → horizontal scoring → ranking."""
+    from app.services.oracle import batch_score_submissions
+
+    task = Task(
+        title="调研", description="调研竞品", type=TaskType.quality_first,
+        deadline=datetime(2026, 1, 1, tzinfo=timezone.utc), bounty=10.0,
+        acceptance_criteria="至少10个产品",
+    )
+    db.add(task)
+    db.commit()
+
+    dim1 = ScoringDimension(
+        task_id=task.id, dim_id="substantiveness", name="实质性",
+        dim_type="fixed", description="内容质量", weight=0.5, scoring_guidance="guide"
+    )
+    dim2 = ScoringDimension(
+        task_id=task.id, dim_id="completeness", name="完整性",
+        dim_type="fixed", description="覆盖度", weight=0.5, scoring_guidance="guide"
+    )
+    db.add_all([dim1, dim2])
+    db.commit()
+
+    # Create 2 gate_passed submissions with individual scores
+    sub1 = Submission(
+        task_id=task.id, worker_id="w1", content="content A",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"score": 80, "feedback": "good"},
+                "completeness": {"score": 75, "feedback": "ok"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    sub2 = Submission(
+        task_id=task.id, worker_id="w2", content="content B",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"score": 60, "feedback": "basic"},
+                "completeness": {"score": 55, "feedback": "incomplete"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    db.add_all([sub1, sub2])
+    db.commit()
+
+    # Mock: constraint_check for each sub, then dimension_score for each dim
+    responses = [
+        type("R", (), {"stdout": MOCK_CONSTRAINT_QF_CLEAN, "returncode": 0})(),
+        type("R", (), {"stdout": MOCK_CONSTRAINT_QF_CLEAN, "returncode": 0})(),
+        type("R", (), {"stdout": MOCK_DIM_SCORE_SUB, "returncode": 0})(),
+        type("R", (), {"stdout": MOCK_DIM_SCORE_COMP, "returncode": 0})(),
+    ]
+    call_idx = 0
+    def mock_subprocess(*args, **kwargs):
+        nonlocal call_idx
+        result = responses[call_idx]
+        call_idx += 1
+        return result
+
+    with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess):
+        batch_score_submissions(db, task.id)
+
+    db.refresh(sub1)
+    db.refresh(sub2)
+    assert sub1.status == SubmissionStatus.scored
+    assert sub2.status == SubmissionStatus.scored
+
+    feedback1 = json.loads(sub1.oracle_feedback)
+    feedback2 = json.loads(sub2.oracle_feedback)
+    assert feedback1["type"] == "scoring"
+    assert feedback1["rank"] == 1
+    assert feedback2["rank"] == 2
+    assert feedback1["weighted_total"] > feedback2["weighted_total"]
