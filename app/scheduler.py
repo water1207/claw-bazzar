@@ -372,6 +372,59 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     db.commit()
 
 
+LEADERBOARD_TIERS = [
+    (3, 30),    # Top 1-3: +30
+    (10, 20),   # Top 4-10: +20
+    (30, 15),   # Top 11-30: +15
+    (100, 10),  # Top 31-100: +10
+]
+
+
+def run_weekly_leaderboard(db: Optional[Session] = None) -> None:
+    """Weekly leaderboard: award trust points to top workers."""
+    from sqlalchemy import func
+    from app.models import User
+    from app.services.trust import apply_event, TrustEventType
+
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+
+        results = (
+            db.query(
+                Submission.worker_id,
+                func.sum(Task.payout_amount).label("total"),
+            )
+            .join(Task, Task.winner_submission_id == Submission.id)
+            .filter(Task.status == TaskStatus.closed)
+            .filter(Task.created_at >= week_ago)
+            .filter(Task.payout_amount.isnot(None))
+            .group_by(Submission.worker_id)
+            .order_by(func.sum(Task.payout_amount).desc())
+            .limit(100)
+            .all()
+        )
+
+        rank = 0
+        for worker_id, total in results:
+            rank += 1
+            bonus = 0
+            for threshold, points in LEADERBOARD_TIERS:
+                if rank <= threshold:
+                    bonus = points
+                    break
+            if bonus > 0:
+                apply_event(
+                    db, worker_id, TrustEventType.weekly_leaderboard,
+                    leaderboard_bonus=bonus,
+                )
+    finally:
+        if own_session:
+            db.close()
+
+
 def fastest_first_refund(db: Optional[Session] = None) -> None:
     """Refund fastest_first tasks that expired without a winner."""
     own_session = db is None
@@ -415,4 +468,9 @@ def create_scheduler() -> BackgroundScheduler:
     scheduler = BackgroundScheduler()
     scheduler.add_job(quality_first_lifecycle, "interval", minutes=1)
     scheduler.add_job(fastest_first_refund, "interval", minutes=1)
+    scheduler.add_job(
+        run_weekly_leaderboard, "cron",
+        day_of_week="sun", hour=0, minute=0,
+        id="weekly_leaderboard",
+    )
     return scheduler
