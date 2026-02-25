@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle stub — V1. Supports feedback and score modes."""
+"""Oracle V2 — mode router. Dispatches to sub-modules or falls back to V1 stub."""
 import json
 import random
 import sys
@@ -17,20 +17,55 @@ FEEDBACK_SUGGESTIONS = [
     "文档注释缺失，建议补全",
 ]
 
+V2_MODES = {}
+
+def _register_v2_modules():
+    """Lazy-import V2 modules. Only loaded when needed."""
+    global V2_MODES
+    if V2_MODES:
+        return
+    try:
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from dimension_gen import run as dimension_gen_run
+        from gate_check import run as gate_check_run
+        from constraint_check import run as constraint_check_run
+        from score_individual import run as score_individual_run
+        from dimension_score import run as dimension_score_run
+        V2_MODES = {
+            "dimension_gen": dimension_gen_run,
+            "gate_check": gate_check_run,
+            "constraint_check": constraint_check_run,
+            "score_individual": score_individual_run,
+            "dimension_score": dimension_score_run,
+        }
+    except ImportError:
+        pass  # V2 modules not yet available, fall back to legacy
+
+
+def _legacy_handler(payload: dict) -> dict:
+    """V1 stub behavior: feedback or score mode."""
+    mode = payload.get("mode", "score")
+    if mode == "feedback":
+        suggestions = random.sample(FEEDBACK_SUGGESTIONS, 3)
+        return {"suggestions": suggestions}
+    else:
+        score = round(random.uniform(0.5, 1.0), 2)
+        return {"score": score, "feedback": f"Stub oracle: random score {score}"}
+
 
 def main():
     payload = json.loads(sys.stdin.read())
     mode = payload.get("mode", "score")
 
-    if mode == "feedback":
-        suggestions = random.sample(FEEDBACK_SUGGESTIONS, 3)
-        print(json.dumps({"suggestions": suggestions}))
+    _register_v2_modules()
+
+    if mode in V2_MODES:
+        result = V2_MODES[mode](payload)
     else:
-        score = round(random.uniform(0.5, 1.0), 2)
-        print(json.dumps({
-            "score": score,
-            "feedback": f"Stub oracle: random score {score}",
-        }))
+        result = _legacy_handler(payload)
+
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
