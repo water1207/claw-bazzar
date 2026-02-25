@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, TrustEvent
-from app.schemas import TrustProfile, TrustQuote, TrustEventOut
+from app.models import User, TrustEvent, ArbiterVote, Challenge, ChallengeVerdict
+from app.schemas import TrustProfile, TrustQuote, TrustEventOut, ArbiterVoteOut
 from app.services.trust import (
     get_challenge_deposit_rate, get_platform_fee_rate, check_permissions,
 )
@@ -82,3 +82,42 @@ def get_trust_events(user_id: str, db: Session = Depends(get_db)):
         .all()
     )
     return events
+
+
+@router.get("/challenges/{challenge_id}/votes", response_model=list[ArbiterVoteOut])
+def get_challenge_votes(challenge_id: str, db: Session = Depends(get_db)):
+    challenge = db.query(Challenge).filter_by(id=challenge_id).first()
+    if not challenge:
+        raise HTTPException(404, "Challenge not found")
+    votes = db.query(ArbiterVote).filter_by(challenge_id=challenge_id).all()
+    return votes
+
+
+@router.post("/challenges/{challenge_id}/vote", response_model=ArbiterVoteOut)
+def submit_arbiter_vote(
+    challenge_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+):
+    arbiter_user_id = body.get("arbiter_user_id")
+    verdict_str = body.get("verdict")
+    feedback = body.get("feedback")
+
+    if not feedback:
+        raise HTTPException(400, "Feedback is required")
+
+    vote = (
+        db.query(ArbiterVote)
+        .filter_by(challenge_id=challenge_id, arbiter_user_id=arbiter_user_id)
+        .first()
+    )
+    if not vote:
+        raise HTTPException(404, "Vote record not found for this arbiter")
+    if vote.vote is not None:
+        raise HTTPException(400, "Already voted")
+
+    vote.vote = ChallengeVerdict(verdict_str)
+    vote.feedback = feedback
+    db.commit()
+    db.refresh(vote)
+    return vote
