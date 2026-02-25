@@ -115,6 +115,10 @@ interface OracleLog {
   timestamp: string
   mode: string
   task_id: string
+  task_title: string
+  submission_id: string
+  worker_id: string
+  worker_nickname: string
   model: string
   prompt_tokens: number
   completion_tokens: number
@@ -122,14 +126,68 @@ interface OracleLog {
   duration_ms: number
 }
 
+interface TaskGroup {
+  task_id: string
+  task_title: string
+  model: string
+  total_tokens: number
+  total_duration_ms: number
+  entries: OracleLog[]
+  /** Grouped by worker_id ('' key = task-level calls) */
+  byWorker: Map<string, { nickname: string; submission_id: string; logs: OracleLog[]; tokens: number }>
+}
+
+function groupByTask(logs: OracleLog[]): TaskGroup[] {
+  const map = new Map<string, TaskGroup>()
+  // logs are already newest-first; reverse to build groups chronologically then reverse groups
+  const chronological = [...logs].reverse()
+  for (const log of chronological) {
+    const key = log.task_id || '__no_task__'
+    if (!map.has(key)) {
+      map.set(key, {
+        task_id: log.task_id,
+        task_title: log.task_title,
+        model: log.model,
+        total_tokens: 0,
+        total_duration_ms: 0,
+        entries: [],
+        byWorker: new Map(),
+      })
+    }
+    const g = map.get(key)!
+    g.total_tokens += log.total_tokens
+    g.total_duration_ms += log.duration_ms
+    g.entries.push(log)
+
+    const wk = log.worker_id || ''
+    if (!g.byWorker.has(wk)) {
+      g.byWorker.set(wk, {
+        nickname: log.worker_nickname || '',
+        submission_id: log.submission_id || '',
+        logs: [],
+        tokens: 0,
+      })
+    }
+    const w = g.byWorker.get(wk)!
+    w.logs.push(log)
+    w.tokens += log.total_tokens
+  }
+  return Array.from(map.values()).reverse()
+}
+
+function formatDuration(ms: number) {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+}
+
 function OracleLogsPanel() {
   const [logs, setLogs] = useState<OracleLog[]>([])
   const [collapsed, setCollapsed] = useState(false)
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const resp = await fetch('/api/internal/oracle-logs?limit=50')
+        const resp = await fetch('/api/internal/oracle-logs?limit=100')
         if (resp.ok) setLogs(await resp.json())
       } catch {}
     }
@@ -137,6 +195,18 @@ function OracleLogsPanel() {
     const id = setInterval(fetchLogs, 5000)
     return () => clearInterval(id)
   }, [])
+
+  const groups = useMemo(() => groupByTask(logs), [logs])
+  const globalTotal = logs.reduce((s, l) => s + l.total_tokens, 0)
+
+  function toggleTask(taskId: string) {
+    setExpandedTasks(prev => {
+      const next = new Set(prev)
+      if (next.has(taskId)) next.delete(taskId)
+      else next.add(taskId)
+      return next
+    })
+  }
 
   return (
     <div className="col-span-3 mt-6 border-t border-zinc-700 pt-6">
@@ -146,58 +216,94 @@ function OracleLogsPanel() {
       >
         <span className="text-xs">{collapsed ? '▶' : '▼'}</span>
         Oracle Logs
-        <span className="text-xs text-muted-foreground font-normal">({logs.length})</span>
+        <span className="text-xs text-muted-foreground font-normal ml-1">
+          {logs.length} calls · {globalTotal.toLocaleString()} tokens
+        </span>
       </button>
       {!collapsed && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="text-left text-muted-foreground border-b border-zinc-700">
-                <th className="pb-2 pr-4">Time</th>
-                <th className="pb-2 pr-4">Mode</th>
-                <th className="pb-2 pr-4">Task ID</th>
-                <th className="pb-2 pr-4">Model</th>
-                <th className="pb-2 pr-4 text-right">Prompt</th>
-                <th className="pb-2 pr-4 text-right">Completion</th>
-                <th className="pb-2 pr-4 text-right">Total</th>
-                <th className="pb-2 text-right">Duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-4 text-center text-muted-foreground">
-                    No oracle logs yet
-                  </td>
-                </tr>
-              ) : (
-                logs.map((log, i) => (
-                  <tr key={i} className="border-b border-zinc-800 hover:bg-zinc-900">
-                    <td className="py-1.5 pr-4 font-mono whitespace-nowrap">
-                      {new Date(log.timestamp).toLocaleTimeString()}
-                    </td>
-                    <td className="py-1.5 pr-4">
-                      <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-white">
-                        {log.mode}
-                      </span>
-                    </td>
-                    <td className="py-1.5 pr-4 font-mono max-w-[120px] truncate" title={log.task_id}>
-                      {log.task_id ? (log.task_id.length > 12 ? log.task_id.slice(0, 12) + '...' : log.task_id) : '-'}
-                    </td>
-                    <td className="py-1.5 pr-4 text-muted-foreground max-w-[150px] truncate" title={log.model}>
-                      {log.model || '-'}
-                    </td>
-                    <td className="py-1.5 pr-4 text-right font-mono">{log.prompt_tokens.toLocaleString()}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono">{log.completion_tokens.toLocaleString()}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono text-white">{log.total_tokens.toLocaleString()}</td>
-                    <td className="py-1.5 text-right font-mono text-muted-foreground">
-                      {log.duration_ms >= 1000 ? `${(log.duration_ms / 1000).toFixed(1)}s` : `${log.duration_ms}ms`}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div className="space-y-3">
+          {groups.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">No oracle logs yet</p>
+          ) : groups.map((g) => {
+            const key = g.task_id || '__no_task__'
+            const expanded = expandedTasks.has(key)
+            return (
+              <div key={key} className="border border-zinc-700 rounded overflow-hidden">
+                {/* Task header */}
+                <button
+                  onClick={() => toggleTask(key)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-left text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] text-muted-foreground">{expanded ? '▼' : '▶'}</span>
+                    <span className="text-white font-medium truncate">{g.task_title || g.task_id || 'Unknown task'}</span>
+                    <span className="text-muted-foreground shrink-0">({g.entries.length} calls)</span>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0 ml-4">
+                    <span className="text-muted-foreground">{g.model}</span>
+                    <span className="font-mono text-white">{g.total_tokens.toLocaleString()} tok</span>
+                    <span className="font-mono text-muted-foreground">{formatDuration(g.total_duration_ms)}</span>
+                  </div>
+                </button>
+
+                {/* Expanded: group by worker */}
+                {expanded && (
+                  <div className="divide-y divide-zinc-800">
+                    {Array.from(g.byWorker.entries()).map(([wk, wInfo]) => (
+                      <div key={wk || '__task__'} className="px-3 py-2">
+                        {/* Worker/submission header */}
+                        {wk ? (
+                          <div className="flex items-center gap-2 mb-1.5 text-xs">
+                            <span className="px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-300 font-medium">
+                              {wInfo.nickname || wk.slice(0, 8)}
+                            </span>
+                            {wInfo.submission_id && (
+                              <span className="text-muted-foreground font-mono" title={wInfo.submission_id}>
+                                Sub: {wInfo.submission_id.slice(0, 8)}...
+                              </span>
+                            )}
+                            <span className="text-muted-foreground ml-auto font-mono">
+                              {wInfo.tokens.toLocaleString()} tok
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 mb-1.5 text-xs">
+                            <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">Task-level</span>
+                            <span className="text-muted-foreground ml-auto font-mono">
+                              {wInfo.tokens.toLocaleString()} tok
+                            </span>
+                          </div>
+                        )}
+                        {/* Individual log rows */}
+                        <div className="space-y-0.5">
+                          {wInfo.logs.map((log, i) => (
+                            <div key={i} className="flex items-center gap-3 text-[11px] pl-2 py-0.5 hover:bg-zinc-900/50 rounded">
+                              <span className="font-mono text-muted-foreground w-16 shrink-0">
+                                {new Date(log.timestamp).toLocaleTimeString()}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-white shrink-0">
+                                {log.mode}
+                              </span>
+                              <span className="text-muted-foreground ml-auto tabular-nums">
+                                {log.prompt_tokens.toLocaleString()}
+                                <span className="text-zinc-600 mx-0.5">/</span>
+                                {log.completion_tokens.toLocaleString()}
+                                <span className="text-zinc-600 mx-0.5">/</span>
+                                <span className="text-white">{log.total_tokens.toLocaleString()}</span>
+                              </span>
+                              <span className="font-mono text-muted-foreground w-14 text-right shrink-0">
+                                {formatDuration(log.duration_ms)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

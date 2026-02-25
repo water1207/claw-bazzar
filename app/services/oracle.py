@@ -22,7 +22,9 @@ def get_oracle_logs(limit: int = 50) -> list[dict]:
     return list(reversed(_oracle_logs))[:limit]
 
 
-def _call_oracle(payload: dict) -> dict:
+def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
+    """Call oracle subprocess. meta provides context for logging:
+    task_id, task_title, submission_id, worker_id."""
     start = time.monotonic()
     result = subprocess.run(
         [sys.executable, str(ORACLE_SCRIPT)],
@@ -36,10 +38,14 @@ def _call_oracle(payload: dict) -> dict:
     # Extract and log token usage
     token_usage = output.pop("_token_usage", None)
     if token_usage:
+        m = meta or {}
         log_entry = {
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "mode": payload.get("mode", "unknown"),
-            "task_id": payload.get("task_title") or payload.get("task", {}).get("id", ""),
+            "task_id": m.get("task_id", ""),
+            "task_title": m.get("task_title", ""),
+            "submission_id": m.get("submission_id", ""),
+            "worker_id": m.get("worker_id", ""),
             "model": os.environ.get("ORACLE_LLM_MODEL", ""),
             "prompt_tokens": token_usage.get("prompt_tokens", 0),
             "completion_tokens": token_usage.get("completion_tokens", 0),
@@ -75,7 +81,8 @@ def generate_dimensions(db: Session, task: Task) -> list:
         "task_description": task.description,
         "acceptance_criteria": task.acceptance_criteria or "",
     }
-    output = _call_oracle(payload)
+    meta = {"task_id": task.id, "task_title": task.title}
+    output = _call_oracle(payload, meta=meta)
     dimensions = output.get("dimensions", [])
 
     for dim_data in dimensions:
@@ -101,13 +108,15 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
         return
 
     # Step 1: Gate Check
+    sub_meta = {"task_id": task.id, "task_title": task.title,
+                "submission_id": submission.id, "worker_id": submission.worker_id}
     gate_payload = {
         "mode": "gate_check",
         "task_description": task.description,
         "acceptance_criteria": task.acceptance_criteria or "",
         "submission_payload": submission.content,
     }
-    gate_result = _call_oracle(gate_payload)
+    gate_result = _call_oracle(gate_payload, meta=sub_meta)
 
     if not gate_result.get("overall_passed", False):
         submission.oracle_feedback = json.dumps({
@@ -135,7 +144,7 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
         "dimensions": dims_data,
         "submission_payload": submission.content,
     }
-    score_result = _call_oracle(score_payload)
+    score_result = _call_oracle(score_payload, meta=sub_meta)
 
     submission.oracle_feedback = json.dumps({
         "type": "individual_scoring",
@@ -153,13 +162,15 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
         return
 
     # Step 1: Gate Check
+    sub_meta = {"task_id": task.id, "task_title": task.title,
+                "submission_id": submission.id, "worker_id": submission.worker_id}
     gate_payload = {
         "mode": "gate_check",
         "task_description": task.description,
         "acceptance_criteria": task.acceptance_criteria or "",
         "submission_payload": submission.content,
     }
-    gate_result = _call_oracle(gate_payload)
+    gate_result = _call_oracle(gate_payload, meta=sub_meta)
 
     if not gate_result.get("overall_passed", False):
         submission.oracle_feedback = json.dumps({
@@ -182,7 +193,7 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
         "acceptance_criteria": task.acceptance_criteria or "",
         "submission_payload": submission.content,
     }
-    constraint_result = _call_oracle(constraint_payload)
+    constraint_result = _call_oracle(constraint_payload, meta=sub_meta)
 
     passed = constraint_result.get("overall_passed", False)
     submission.oracle_feedback = json.dumps({
@@ -243,10 +254,13 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
         ScoringDimension.task_id == task_id
     ).all()
 
+    task_meta = {"task_id": task.id, "task_title": task.title}
+
     # If no dimensions (V1 mode / backward compat), fall back to legacy scoring
     if not dimensions:
         for submission in passed:
-            output = _call_oracle(_build_payload(task, submission, "score"))
+            m = {**task_meta, "submission_id": submission.id, "worker_id": submission.worker_id}
+            output = _call_oracle(_build_payload(task, submission, "score"), meta=m)
             submission.score = output.get("score", 0.0)
             submission.oracle_feedback = output.get("feedback", submission.oracle_feedback)
             submission.status = SubmissionStatus.scored
@@ -271,6 +285,8 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
     # Step 1: Constraint check for each submission
     caps = {}
     for anon in anonymized:
+        sub = label_map[anon["label"]]
+        constraint_meta = {**task_meta, "submission_id": sub.id, "worker_id": sub.worker_id}
         constraint_payload = {
             "mode": "constraint_check",
             "task_type": "quality_first",
@@ -280,7 +296,7 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
             "submission_payload": anon["payload"],
             "submission_label": anon["label"],
         }
-        result = _call_oracle(constraint_payload)
+        result = _call_oracle(constraint_payload, meta=constraint_meta)
         caps[anon["label"]] = result.get("effective_cap")
 
     # Step 2: Horizontal scoring per dimension
@@ -299,7 +315,7 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
             "constraint_caps": caps,
             "submissions": anonymized,
         }
-        result = _call_oracle(dim_payload)
+        result = _call_oracle(dim_payload, meta=task_meta)
         all_scores[dim_data["id"]] = result
 
     # Step 3: Compute ranking

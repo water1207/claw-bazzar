@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import (
-    Submission, Task, Challenge,
+    Submission, Task, Challenge, User,
     SubmissionStatus, TaskStatus, PayoutStatus, ChallengeStatus,
 )
 from ..schemas import ScoreInput, ManualJudgeInput, ChallengeOut
@@ -82,5 +82,14 @@ def judge_challenge(challenge_id: str, data: ManualJudgeInput, db: Session = Dep
 
 
 @router.get("/oracle-logs")
-def oracle_logs(limit: int = Query(default=50, ge=1, le=200)):
-    return get_oracle_logs(limit=limit)
+def oracle_logs(limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db)):
+    logs = get_oracle_logs(limit=limit)
+    # Resolve worker nicknames
+    worker_ids = {log["worker_id"] for log in logs if log.get("worker_id")}
+    nickname_map: dict[str, str] = {}
+    if worker_ids:
+        users = db.query(User.id, User.nickname).filter(User.id.in_(worker_ids)).all()
+        nickname_map = {u.id: u.nickname for u in users}
+    for log in logs:
+        log["worker_nickname"] = nickname_map.get(log.get("worker_id", ""), "")
+    return logs
