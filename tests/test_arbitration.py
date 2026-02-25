@@ -66,7 +66,7 @@ def test_settle_upheld_changes_winner():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner") as mock_pay:
+    with patch("app.scheduler._resolve_via_contract") as mock_pay:
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
         mock_pay.assert_called_once()
@@ -76,7 +76,7 @@ def test_settle_upheld_changes_winner():
     assert task.winner_submission_id == s2.id  # Challenger took over
 
     db.refresh(s2)
-    assert s2.deposit_returned == s2.deposit  # Full refund
+    assert s2.deposit_returned == round(s2.deposit * 0.70, 6)  # 70% returned (30% to arbiters)
 
     db.refresh(w2)
     assert w2.credit_score == 105.0  # +5
@@ -90,7 +90,7 @@ def test_settle_rejected_deducts_deposit():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -99,7 +99,7 @@ def test_settle_rejected_deducts_deposit():
     assert task.winner_submission_id == s1.id  # Original winner stays
 
     db.refresh(s2)
-    assert s2.deposit_returned == 0.70  # 70% returned
+    assert s2.deposit_returned == 0  # Rejected: challenger gets nothing
 
     db.refresh(w2)
     assert w2.credit_score == 100.0  # unchanged
@@ -113,7 +113,7 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -166,7 +166,7 @@ def test_settle_multiple_upheld_picks_highest():
     db.add_all([c1, c2])
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -190,7 +190,7 @@ def test_non_challengers_get_full_refund():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 

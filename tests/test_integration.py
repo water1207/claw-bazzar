@@ -217,22 +217,23 @@ def test_bounty_lifecycle_quality_first(client):
     t.deadline = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    # Phase 1: open → scoring
-    quality_first_lifecycle(db=db)
-    # Phase 2: scoring → challenge_window
-    quality_first_lifecycle(db=db)
-
-    # Expire challenge window
-    db.refresh(t)
-    t.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
-    db.commit()
-
-    # Phase 3: challenge_window → closed (with payout)
-    with patch("app.services.payout._send_usdc_transfer", return_value="0xQPAYOUT") as mock_tx:
+    with patch("app.scheduler.create_challenge_onchain"), \
+         patch("app.scheduler.resolve_challenge_onchain", return_value="0xQPAYOUT"):
+        # Phase 1: open → scoring
         quality_first_lifecycle(db=db)
-        mock_tx.assert_called_once_with("0xWORKERQ", 16.0)  # 20.0 * 0.80
+        # Phase 2: scoring → challenge_window (calls create_challenge_onchain)
+        quality_first_lifecycle(db=db)
+
+        # Expire challenge window
+        db.refresh(t)
+        t.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+
+        # Phase 3: challenge_window → closed (calls resolve_challenge_onchain)
+        quality_first_lifecycle(db=db)
 
     detail = client.get(f"/tasks/{task['id']}").json()
     assert detail["status"] == "closed"
     assert detail["payout_status"] == "paid"
-    assert detail["payout_amount"] == 16.0
+    assert detail["payout_amount"] == 16.0  # 20.0 * 0.80
+    assert detail["payout_tx_hash"] == "0xQPAYOUT"

@@ -102,10 +102,10 @@ def test_phase3_no_challenges_closes():
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    with patch("app.scheduler.pay_winner") as mock_pay:
+    with patch("app.scheduler._resolve_via_contract") as mock_pay:
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
-        mock_pay.assert_called_once_with(db, task.id)
+        mock_pay.assert_called_once()
 
     db.refresh(task)
     assert task.status == TaskStatus.closed
@@ -148,7 +148,7 @@ def test_phase3_no_challenge_refunds_all_deposits():
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 

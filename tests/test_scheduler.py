@@ -52,7 +52,7 @@ def test_settle_picks_highest_score():
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler._resolve_via_contract"):
         quality_first_lifecycle(db=db)
 
     db.refresh(task)
@@ -151,6 +151,6 @@ def test_settle_triggers_payout():
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    with patch("app.scheduler.pay_winner") as mock_payout:
+    with patch("app.scheduler._resolve_via_contract") as mock_resolve:
         quality_first_lifecycle(db=db)
-        mock_payout.assert_called_once_with(db, task.id)
+        mock_resolve.assert_called_once()

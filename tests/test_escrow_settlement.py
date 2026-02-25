@@ -49,12 +49,10 @@ def test_settle_calls_escrow_when_challengers_have_wallets(client):
 
     task = _setup_arbitrated_task(db)
 
-    with patch("app.scheduler.create_challenge_onchain", return_value="0xcreate") as mock_create, \
-         patch("app.scheduler.resolve_challenge_onchain", return_value="0xresolve") as mock_resolve:
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0xresolve") as mock_resolve:
         _settle_after_arbitration(db, task)
 
-    # Verify escrow was called
-    mock_create.assert_called_once()
+    # Verify escrow was called (createChallenge is Phase 2, not arbitration)
     mock_resolve.assert_called_once()
 
     # Verify task is closed and payout recorded
@@ -64,8 +62,8 @@ def test_settle_calls_escrow_when_challengers_have_wallets(client):
     assert task.payout_status == PayoutStatus.paid
 
 
-def test_settle_falls_back_to_pay_winner_without_wallets(client):
-    """When no challenger_wallet, uses legacy pay_winner()."""
+def test_settle_uses_escrow_without_challenger_wallets(client):
+    """When no challenger_wallet, escrow still resolves with empty verdicts for that challenger."""
     from app.database import get_db
     from app.main import app
     db = next(app.dependency_overrides[get_db]())
@@ -94,12 +92,12 @@ def test_settle_falls_back_to_pay_winner_without_wallets(client):
         challenger_submission_id="s2b", target_submission_id="s1b",
         reason="test", verdict=ChallengeVerdict.rejected,
         arbiter_score=0.6, status=ChallengeStatus.judged,
-        challenger_wallet=None,  # No wallet -> legacy path
+        challenger_wallet=None,  # No wallet -> excluded from verdicts, but escrow still called
     )
     db.add(challenge)
     db.commit()
 
-    with patch("app.scheduler.pay_winner") as mock_pay:
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0xresolve") as mock_resolve:
         _settle_after_arbitration(db, task)
 
-    mock_pay.assert_called_once()
+    mock_resolve.assert_called_once()
