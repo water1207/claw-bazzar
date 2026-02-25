@@ -44,12 +44,20 @@ class TaskCreate(BaseModel):
     bounty: float
     submission_deposit: Optional[float] = None
     challenge_duration: Optional[int] = None
+    acceptance_criteria: Optional[str] = None
 
     @model_validator(mode="after")
     def check_fastest_first_threshold(self) -> "TaskCreate":
         if self.type == TaskType.fastest_first and self.threshold is None:
             raise ValueError("fastest_first tasks require a threshold")
         return self
+
+
+class ScoringDimensionPublic(BaseModel):
+    name: str
+    description: str
+
+    model_config = {"from_attributes": True}
 
 
 class TaskOut(BaseModel):
@@ -71,6 +79,8 @@ class TaskOut(BaseModel):
     submission_deposit: Optional[float] = None
     challenge_duration: Optional[int] = None
     challenge_window_end: Optional[UTCDatetime] = None
+    acceptance_criteria: Optional[str] = None
+    scoring_dimensions: List["ScoringDimensionPublic"] = []
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
@@ -139,4 +149,5 @@ class ManualJudgeInput(BaseModel):
     feedback: Optional[str] = None
 
 
+TaskOut.model_rebuild()
 TaskDetail.model_rebuild()

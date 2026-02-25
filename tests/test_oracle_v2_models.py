@@ -92,3 +92,32 @@ def test_task_dimensions_relationship(db):
     db.refresh(task)
 
     assert len(task.dimensions) == 2
+
+
+# --- Schema tests ---
+
+from app.schemas import TaskCreate, TaskOut, ScoringDimensionPublic
+
+
+def test_task_create_accepts_acceptance_criteria():
+    data = TaskCreate(
+        title="Test", description="Desc", type="quality_first",
+        deadline="2026-12-31T00:00:00Z", publisher_id="p1", bounty=10.0,
+        acceptance_criteria="Must include 10 items"
+    )
+    assert data.acceptance_criteria == "Must include 10 items"
+
+
+def test_task_create_acceptance_criteria_optional():
+    data = TaskCreate(
+        title="Test", description="Desc", type="fastest_first",
+        threshold=0.8, deadline="2026-12-31T00:00:00Z",
+        publisher_id="p1", bounty=5.0,
+    )
+    assert data.acceptance_criteria is None
+
+
+def test_scoring_dimension_public_schema():
+    dim = ScoringDimensionPublic(name="实质性", description="评估内容质量")
+    assert dim.name == "实质性"
+    assert dim.description == "评估内容质量"
