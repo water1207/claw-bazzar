@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
-from ..models import Submission, Task, SubmissionStatus, TaskStatus, TaskType
+from ..models import Submission, Task, SubmissionStatus, TaskStatus, TaskType, ScoringDimension
 from .payout import pay_winner
 
 ORACLE_SCRIPT = Path(__file__).parent.parent.parent / "oracle" / "oracle.py"
@@ -30,6 +30,32 @@ def _build_payload(task: Task, submission: Submission, mode: str) -> dict:
             "revision": submission.revision, "worker_id": submission.worker_id,
         },
     }
+
+
+def generate_dimensions(db: Session, task: Task) -> list:
+    """Generate and lock scoring dimensions for a task via LLM."""
+    payload = {
+        "mode": "dimension_gen",
+        "task_title": task.title,
+        "task_description": task.description,
+        "acceptance_criteria": task.acceptance_criteria or "",
+    }
+    output = _call_oracle(payload)
+    dimensions = output.get("dimensions", [])
+
+    for dim_data in dimensions:
+        dim = ScoringDimension(
+            task_id=task.id,
+            dim_id=dim_data["id"],
+            name=dim_data["name"],
+            dim_type=dim_data["type"],
+            description=dim_data["description"],
+            weight=dim_data["weight"],
+            scoring_guidance=dim_data["scoring_guidance"],
+        )
+        db.add(dim)
+    db.commit()
+    return dimensions
 
 
 def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
