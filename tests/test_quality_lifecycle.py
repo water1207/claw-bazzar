@@ -95,8 +95,11 @@ def test_phase2_no_submissions_closes():
 
 def test_phase3_no_challenges_closes():
     db = make_db()
+    worker = User(nickname="ph3-w1", wallet="0xPH3W1", role=UserRole.worker)
+    db.add(worker)
+    db.flush()
     task = make_expired_quality_task(db)
-    s1 = add_scored_submission(db, task.id, "w1", 0.9)
+    s1 = add_scored_submission(db, task.id, worker.id, 0.9)
     task.status = TaskStatus.challenge_window
     task.winner_submission_id = s1.id
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -140,9 +143,13 @@ def test_phase3_with_challenges_goes_to_arbitrating():
 
 def test_phase3_no_challenge_refunds_all_deposits():
     db = make_db()
+    worker1 = User(nickname="dep-w1", wallet="0xDW1", role=UserRole.worker)
+    worker2 = User(nickname="dep-w2", wallet="0xDW2", role=UserRole.worker)
+    db.add_all([worker1, worker2])
+    db.flush()
     task = make_expired_quality_task(db)
-    s1 = add_scored_submission(db, task.id, "w1", 0.9)
-    s2 = add_scored_submission(db, task.id, "w2", 0.7)
+    s1 = add_scored_submission(db, task.id, worker1.id, 0.9)
+    s2 = add_scored_submission(db, task.id, worker2.id, 0.7)
     task.status = TaskStatus.challenge_window
     task.winner_submission_id = s1.id
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)

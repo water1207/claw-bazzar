@@ -2,7 +2,7 @@
 
 **版本**: 0.10.0
 **日期**: 2026-02-25
-**状态**: V1 ~ V9 + V10 (Oracle V2 LLM) 已实现
+**状态**: V1 ~ V9 + V10 (Oracle V2 LLM + Claw Trust) 已实现
 
 ---
 
@@ -118,7 +118,11 @@ Phase 4: 仲裁完成，调用结算
 | `nickname` | String | 唯一昵称 |
 | `wallet` | String | EVM 钱包地址 (0x...) |
 | `role` | Enum | `publisher` / `worker` / `both` |
-| `credit_score` | Float | 信用分（默认 100.0，仲裁后增减） |
+| `trust_score` | Float | 信誉分（默认 500.0，Claw Trust 对数加权算分） |
+| `trust_tier` | Enum | 信誉等级：S / A / B / C（动态费率） |
+| `github_id` | String (nullable) | GitHub OAuth 绑定 ID |
+| `is_arbiter` | Boolean | 是否为仲裁者（需 S 级 + 质押） |
+| `staked_amount` | Float | StakingVault 质押金额 |
 | `created_at` | DateTime (UTC) | 注册时间 |
 
 ### tasks 表
@@ -228,8 +232,9 @@ Challenge:   pending ───────────────────�
 
 1. **open**：同一 Worker 可提交最多 `max_revisions` 次；每次提交经 Oracle **Gate Check** 验收 → 通过后 **Individual Scoring** 按维度评分并返回修订建议；Gate 失败可修订重交。提交状态为 `gate_passed` / `gate_failed`，**分数对 API 不可见**
 2. **scoring**（deadline 到期）：不接受新提交；Scheduler 等待所有后台 Oracle 处理完毕后调用 `batch_score_submissions()` — 选取 individual 加权分最高的 top 3 → **Constraint Check**（约束检查，可施加分数上限）→ 逐维度 **Horizontal Comparison**（横向对比评分）→ 计算加权总分排名，**分数仍不可见**
-3. **challenge_window**（所有提交评分完成）：公示暂定 winner（最高分），**分数现在可见**，落选者可在 `challenge_window_end` 前发起挑战
-4. **arbitrating / closed**：挑战窗口到期 — 有挑战 → Arbiter 仲裁 → `closed`；无挑战 → 直接 `closed` → 通过 ChallengeEscrow 合约结算
+3. **challenge_window**（所有提交评分完成）：公示暂定 winner（最高分），**分数现在可见**，落选者可在 `challenge_window_end` 前发起挑战；押金自动计入 `submission.deposit`
+4. **arbitrating**（挑战窗口到期且有挑战）：3 人陪审团（Claw Trust S 级质押用户）逐一仲裁所有挑战，根据裁决调整押金退还比例和信誉分
+5. **closed**（仲裁完成或无挑战）：最终 winner 结算打款，通过 ChallengeEscrow 合约结算
 
 > 详细的 Oracle 评分管道说明见 [Oracle V2 机制文档](oracle-v2.md)。
 
@@ -268,7 +273,7 @@ challenger 获得 = bounty × 0.90  （全额赏金含激励）
 
 **仲裁后押金分配**：
 
-| 裁决 | 挑战者获得 | 仲裁者获得 | 平台获得 | 信用分 |
+| 裁决 | 挑战者获得 | 仲裁者获得 | 平台获得 | 信誉分 |
 |------|-----------|-----------|---------|--------|
 | `upheld`（挑战成立）| 押金 × 70% | 押金 × 30% | 服务费 | +5 |
 | `rejected`（挑战驳回）| 0 | 押金 × 30% | 押金 × 70% + 服务费 | 不变 |
@@ -621,8 +626,9 @@ Base Sepolia 测试网的 USDC 合约（`0x036CbD53842...`，仅 1798 bytes）�
 - [x] **V7**：quality_first 挑战仲裁机制（已实现）
 - [x] **V8**：quality_first 评分重设计（Oracle feedback 模式 + deadline 后批量评分 + 分数隐藏 + 前端倒计时/建议展示，已实现）
 - [x] **V9**：ChallengeEscrow 智能合约（赏金锁定、EIP-2612 Permit 代付 Gas、挑战激励 10%、仲裁者报酬 30% 押金，已实现 + E2E 验证）
+- [x] **V10**: Claw Trust 信誉分机制（对数加权算分、S/A/B/C 四级动态费率、3 人陪审团、StakingVault 质押/Slash、GitHub OAuth 绑定、周榜）
 - [ ] 本地 EIP-712 签名验证（摆脱 facilitator 网络限制）
 - [ ] 支持 CDP Facilitator（生产环境）
 - [x] **V10**：Oracle V2 — LLM 驱动评分管道（dimension_gen → gate_check → score_individual → constraint_check → dimension_score，Token 用量追踪 + DevPanel 日志展示，已实现）
 - [ ] Arbiter V2：接入真实 LLM 仲裁（替代 rejected stub）
-- [ ] 去中心化仲裁者（当前仅平台钱包作为仲裁者）
+- [ ] 去中心化仲裁者（当前 3 人陪审团由 S 级质押用户担任，未来可扩展为链上投票）

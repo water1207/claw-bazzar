@@ -42,7 +42,7 @@ def _setup_arbitrated_task(db):
 
 
 def test_settle_calls_escrow_when_challengers_have_wallets(client):
-    """When challenges have challenger_wallet, settlement should use escrow."""
+    """When challenges have challenger_wallet, settlement calls resolveChallenge."""
     from app.database import get_db
     from app.main import app
     db = next(app.dependency_overrides[get_db]())
@@ -52,7 +52,7 @@ def test_settle_calls_escrow_when_challengers_have_wallets(client):
     with patch("app.scheduler.resolve_challenge_onchain", return_value="0xresolve") as mock_resolve:
         _settle_after_arbitration(db, task)
 
-    # Verify escrow was called (createChallenge is Phase 2, not arbitration)
+    # Verify resolveChallenge was called via _resolve_via_contract
     mock_resolve.assert_called_once()
 
     # Verify task is closed and payout recorded
@@ -62,8 +62,8 @@ def test_settle_calls_escrow_when_challengers_have_wallets(client):
     assert task.payout_status == PayoutStatus.paid
 
 
-def test_settle_uses_escrow_without_challenger_wallets(client):
-    """When no challenger_wallet, escrow still resolves with empty verdicts for that challenger."""
+def test_settle_without_wallets_still_resolves(client):
+    """When no challenger_wallet, settlement still resolves via contract with empty verdicts."""
     from app.database import get_db
     from app.main import app
     db = next(app.dependency_overrides[get_db]())
@@ -92,7 +92,7 @@ def test_settle_uses_escrow_without_challenger_wallets(client):
         challenger_submission_id="s2b", target_submission_id="s1b",
         reason="test", verdict=ChallengeVerdict.rejected,
         arbiter_score=0.6, status=ChallengeStatus.judged,
-        challenger_wallet=None,  # No wallet -> excluded from verdicts, but escrow still called
+        challenger_wallet=None,  # No wallet -> no verdict entry, but escrow still called
     )
     db.add(challenge)
     db.commit()
@@ -100,4 +100,8 @@ def test_settle_uses_escrow_without_challenger_wallets(client):
     with patch("app.scheduler.resolve_challenge_onchain", return_value="0xresolve") as mock_resolve:
         _settle_after_arbitration(db, task)
 
+    # Still calls resolve with empty verdicts (no challenger_wallet)
     mock_resolve.assert_called_once()
+
+    db.refresh(task)
+    assert task.status == TaskStatus.closed

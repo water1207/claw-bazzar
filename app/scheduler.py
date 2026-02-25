@@ -4,12 +4,14 @@ from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from .database import SessionLocal
 from .models import (
-    Task, Submission, Challenge,
+    Task, Submission, Challenge, ArbiterVote,
     TaskType, TaskStatus, SubmissionStatus, ChallengeStatus,
 )
 from .services.arbiter import run_arbitration
+from .services.arbiter_pool import select_jury, resolve_jury, check_jury_ready
 from .services.oracle import batch_score_submissions
 from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
+from .services.payout import refund_publisher
 
 
 def _resolve_via_contract(
@@ -48,6 +50,63 @@ def _refund_all_deposits(db: Session, task_id: str) -> None:
     for sub in submissions:
         if sub.deposit_returned is None:
             sub.deposit_returned = sub.deposit
+
+
+JURY_VOTING_TIMEOUT = timedelta(hours=6)
+
+
+def _try_resolve_challenge_jury(
+    db: Session, challenge: Challenge, task: Task, now: datetime
+) -> None:
+    """Check jury votes for a challenge; resolve if ready or timed out."""
+    votes = db.query(ArbiterVote).filter_by(challenge_id=challenge.id).all()
+    if not votes:
+        # No jury was selected for this challenge (stub path) — skip
+        return
+
+    all_voted = check_jury_ready(db, challenge.id)
+    # Determine timeout from the earliest vote created_at
+    earliest = min(v.created_at for v in votes)
+    # Ensure timezone-aware comparison (SQLite may strip tzinfo)
+    if earliest.tzinfo is None:
+        earliest = earliest.replace(tzinfo=timezone.utc)
+    timed_out = (now - earliest) >= JURY_VOTING_TIMEOUT
+
+    if not all_voted and not timed_out:
+        return
+
+    # Apply timeout penalty to non-voters
+    if timed_out and not all_voted:
+        from .services.trust import apply_event, TrustEventType
+        for v in votes:
+            if v.vote is None:
+                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_timeout,
+                            task_id=task.id)
+
+    # Resolve jury vote
+    from .models import ChallengeVerdict
+    verdict = resolve_jury(db, challenge.id)
+    _apply_verdict_trust(db, challenge, verdict, task)
+
+
+def _apply_verdict_trust(
+    db: Session, challenge: Challenge, verdict, task: Task
+) -> None:
+    """Apply trust score changes based on jury verdict."""
+    from .services.trust import apply_event, TrustEventType
+    from .models import ChallengeVerdict, ChallengeStatus as CS
+    votes = db.query(ArbiterVote).filter_by(challenge_id=challenge.id).all()
+    for v in votes:
+        if v.vote is not None:
+            if v.is_majority:
+                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_majority,
+                            task_id=task.id)
+            else:
+                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_minority,
+                            task_id=task.id)
+    challenge.verdict = verdict
+    challenge.status = CS.judged
+    db.commit()
 
 
 def quality_first_lifecycle(db: Optional[Session] = None) -> None:
@@ -91,7 +150,16 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             .all()
         )
         for task in expired_open:
-            task.status = TaskStatus.scoring
+            sub_count = db.query(Submission).filter(
+                Submission.task_id == task.id
+            ).count()
+            if sub_count == 0:
+                # No submissions → full refund, close immediately
+                task.status = TaskStatus.closed
+                if task.bounty and task.bounty > 0:
+                    refund_publisher(db, task.id, rate=1.0)
+            else:
+                task.status = TaskStatus.scoring
         if expired_open:
             db.commit()
 
@@ -136,9 +204,13 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     print(f"[scheduler] batch_score error for {task.id}: {e}", flush=True)
                 continue  # Re-check next tick
 
+            # Find best submission; apply threshold filter if set
+            score_filter = [Submission.task_id == task.id, Submission.score.isnot(None)]
+            if task.threshold is not None:
+                score_filter.append(Submission.score >= task.threshold)
             best = (
                 db.query(Submission)
-                .filter(Submission.task_id == task.id, Submission.score.isnot(None))
+                .filter(*score_filter)
                 .order_by(Submission.score.desc())
                 .first()
             )
@@ -168,7 +240,13 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     except Exception as e:
                         print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
             else:
+                # No qualifying submissions → 95% refund if there were submissions, close
                 task.status = TaskStatus.closed
+                has_subs = db.query(Submission).filter(
+                    Submission.task_id == task.id
+                ).count() > 0
+                if task.bounty and task.bounty > 0 and has_subs:
+                    refund_publisher(db, task.id, rate=0.95)
         if scoring_tasks:
             db.commit()
 
@@ -190,9 +268,15 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     _resolve_via_contract(db, task, verdicts=[])
                 db.commit()
             else:
-                task.status = TaskStatus.arbitrating
-                db.commit()
-                run_arbitration(db, task.id)
+                # Try jury-based arbitration first; fall back to stub
+                jury_votes = select_jury(db, task.id)
+                if jury_votes:
+                    task.status = TaskStatus.arbitrating
+                    db.commit()
+                else:
+                    task.status = TaskStatus.arbitrating
+                    db.commit()
+                    run_arbitration(db, task.id)
 
         # Phase 4: arbitrating -> closed (all challenges judged)
         arbitrating_tasks = (
@@ -204,8 +288,18 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             pending_challenges = db.query(Challenge).filter(
                 Challenge.task_id == task.id,
                 Challenge.status == ChallengeStatus.pending,
+            ).all()
+
+            # Try to resolve pending challenges via jury voting
+            for challenge in pending_challenges:
+                _try_resolve_challenge_jury(db, challenge, task, now)
+
+            # Re-check: if still pending challenges remain, wait
+            still_pending = db.query(Challenge).filter(
+                Challenge.task_id == task.id,
+                Challenge.status == ChallengeStatus.pending,
             ).count()
-            if pending_challenges > 0:
+            if still_pending > 0:
                 continue
 
             _settle_after_arbitration(db, task)
@@ -218,9 +312,11 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
 def _settle_after_arbitration(db: Session, task: Task) -> None:
     """Settle a task after all challenges are judged."""
     from .models import ChallengeVerdict, PayoutStatus, User
+    from .services.trust import apply_event, TrustEventType
+    from .services.staking import check_and_slash
     challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
 
-    # Process deposits (30% arbiter cut from ALL) and credit scores
+    # Process deposits (30% arbiter cut from ALL) and trust events
     for c in challenges:
         challenger_sub = db.query(Submission).filter(
             Submission.id == c.challenger_submission_id
@@ -234,7 +330,8 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if challenger_sub and challenger_sub.deposit is not None and challenger_sub.deposit_returned is None:
                 challenger_sub.deposit_returned = round(challenger_sub.deposit * 0.70, 6)
             if worker:
-                worker.credit_score = round(worker.credit_score + 5, 2)
+                apply_event(db, worker.id, TrustEventType.challenger_won,
+                            task_bounty=task.bounty or 0.0, task_id=task.id)
 
         elif c.verdict == ChallengeVerdict.rejected:
             # 30% to arbiters, remaining 70% to platform — challenger gets nothing
@@ -246,13 +343,40 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if challenger_sub and challenger_sub.deposit_returned is None:
                 challenger_sub.deposit_returned = 0
             if worker:
-                worker.credit_score = round(worker.credit_score - 20, 2)
+                apply_event(db, worker.id, TrustEventType.challenger_malicious,
+                            task_id=task.id)
+                check_and_slash(db, worker.id)
 
     # Determine final winner
     upheld = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]
     if upheld:
         best = max(upheld, key=lambda c: c.arbiter_score or 0)
         task.winner_submission_id = best.challenger_submission_id
+
+    # Apply worker_won trust event to the final winner
+    winner_sub = db.query(Submission).filter(
+        Submission.id == task.winner_submission_id
+    ).first() if task.winner_submission_id else None
+    if winner_sub:
+        apply_event(db, winner_sub.worker_id, TrustEventType.worker_won,
+                    task_bounty=task.bounty or 0.0, task_id=task.id)
+
+    # Apply worker_consolation to non-winning submitters with scored submissions
+    if task.winner_submission_id:
+        consolation_subs = db.query(Submission).filter(
+            Submission.task_id == task.id,
+            Submission.id != task.winner_submission_id,
+            Submission.score.isnot(None),
+        ).all()
+        for sub in consolation_subs:
+            # Skip challengers who were found malicious
+            malicious_ids = {
+                c.challenger_submission_id for c in challenges
+                if c.verdict == ChallengeVerdict.malicious
+            }
+            if sub.id not in malicious_ids:
+                apply_event(db, sub.worker_id, TrustEventType.worker_consolation,
+                            task_id=task.id)
 
     # Refund non-challenger deposits
     all_subs = db.query(Submission).filter(
@@ -279,13 +403,111 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                     "challenger": c.challenger_wallet,
                     "result": result_map.get(c.verdict, 1),
                 })
-        # For now, platform is the sole arbiter; future: decentralized arbiter addresses
-        import os
-        platform_wallet = os.environ.get("PLATFORM_WALLET", "")
-        arbiter_wallets = [platform_wallet] if platform_wallet else []
+        # Collect arbiter wallets from jury votes; fall back to platform wallet
+        from .models import User
+        arbiter_user_ids = set()
+        for c in challenges:
+            jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
+            for v in jury_votes:
+                if v.vote is not None:
+                    arbiter_user_ids.add(v.arbiter_user_id)
+        if arbiter_user_ids:
+            arbiter_users = db.query(User).filter(User.id.in_(arbiter_user_ids)).all()
+            arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
+        else:
+            import os
+            platform_wallet = os.environ.get("PLATFORM_WALLET", "")
+            arbiter_wallets = [platform_wallet] if platform_wallet else []
         _resolve_via_contract(db, task, verdicts, arbiter_wallets)
 
     db.commit()
+
+
+LEADERBOARD_TIERS = [
+    (3, 30),    # Top 1-3: +30
+    (10, 20),   # Top 4-10: +20
+    (30, 15),   # Top 11-30: +15
+    (100, 10),  # Top 31-100: +10
+]
+
+
+def run_weekly_leaderboard(db: Optional[Session] = None) -> None:
+    """Weekly leaderboard: award trust points to top workers."""
+    from sqlalchemy import func
+    from app.models import User
+    from app.services.trust import apply_event, TrustEventType
+
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+
+        results = (
+            db.query(
+                Submission.worker_id,
+                func.sum(Task.payout_amount).label("total"),
+            )
+            .join(Task, Task.winner_submission_id == Submission.id)
+            .filter(Task.status == TaskStatus.closed)
+            .filter(Task.created_at >= week_ago)
+            .filter(Task.payout_amount.isnot(None))
+            .group_by(Submission.worker_id)
+            .order_by(func.sum(Task.payout_amount).desc())
+            .limit(100)
+            .all()
+        )
+
+        rank = 0
+        for worker_id, total in results:
+            rank += 1
+            bonus = 0
+            for threshold, points in LEADERBOARD_TIERS:
+                if rank <= threshold:
+                    bonus = points
+                    break
+            if bonus > 0:
+                apply_event(
+                    db, worker_id, TrustEventType.weekly_leaderboard,
+                    leaderboard_bonus=bonus,
+                )
+    finally:
+        if own_session:
+            db.close()
+
+
+def fastest_first_refund(db: Optional[Session] = None) -> None:
+    """Refund fastest_first tasks that expired without a winner."""
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        expired = (
+            db.query(Task)
+            .filter(
+                Task.type == TaskType.fastest_first,
+                Task.status == TaskStatus.open,
+                Task.deadline <= now,
+            )
+            .all()
+        )
+        for task in expired:
+            sub_count = db.query(Submission).filter(
+                Submission.task_id == task.id
+            ).count()
+            task.status = TaskStatus.closed
+            if task.bounty and task.bounty > 0:
+                if sub_count == 0:
+                    refund_publisher(db, task.id, rate=1.0)
+                else:
+                    # Submissions exist but none passed threshold → 95% refund
+                    refund_publisher(db, task.id, rate=0.95)
+        if expired:
+            db.commit()
+    finally:
+        if own_session:
+            db.close()
 
 
 def settle_expired_quality_first(db: Optional[Session] = None) -> None:
@@ -296,4 +518,10 @@ def settle_expired_quality_first(db: Optional[Session] = None) -> None:
 def create_scheduler() -> BackgroundScheduler:
     scheduler = BackgroundScheduler()
     scheduler.add_job(quality_first_lifecycle, "interval", minutes=1)
+    scheduler.add_job(fastest_first_refund, "interval", minutes=1)
+    scheduler.add_job(
+        run_weekly_leaderboard, "cron",
+        day_of_week="sun", hour=0, minute=0,
+        id="weekly_leaderboard",
+    )
     return scheduler

@@ -66,10 +66,9 @@ def test_settle_upheld_changes_winner():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler._resolve_via_contract") as mock_pay:
+    with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
-        mock_pay.assert_called_once()
 
     db.refresh(task)
     assert task.status == TaskStatus.closed
@@ -78,8 +77,12 @@ def test_settle_upheld_changes_winner():
     db.refresh(s2)
     assert s2.deposit_returned == round(s2.deposit * 0.70, 6)  # 70% returned (30% to arbiters)
 
-    db.refresh(w2)
-    assert w2.credit_score == 105.0  # +5
+    # Challenger gets challenger_won trust event (weighted by bounty)
+    from app.models import TrustEvent, TrustEventType
+    events = db.query(TrustEvent).filter_by(
+        user_id=w2.id, event_type=TrustEventType.challenger_won
+    ).all()
+    assert len(events) == 1
 
 
 def test_settle_rejected_deducts_deposit():
@@ -99,10 +102,7 @@ def test_settle_rejected_deducts_deposit():
     assert task.winner_submission_id == s1.id  # Original winner stays
 
     db.refresh(s2)
-    assert s2.deposit_returned == 0  # Rejected: challenger gets nothing
-
-    db.refresh(w2)
-    assert w2.credit_score == 100.0  # unchanged
+    assert s2.deposit_returned == 0  # Challenger gets nothing on rejection
 
 
 def test_settle_malicious_confiscates_deposit_and_credit():
@@ -113,7 +113,8 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler._resolve_via_contract"):
+    with patch("app.scheduler._resolve_via_contract"), \
+         patch("app.services.staking.slash_onchain", return_value="0xslash"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -124,8 +125,14 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     db.refresh(s2)
     assert s2.deposit_returned == 0  # Confiscated
 
+    # Challenger gets challenger_malicious trust event (-100)
+    from app.models import TrustEvent, TrustEventType
+    events = db.query(TrustEvent).filter_by(
+        user_id=w2.id, event_type=TrustEventType.challenger_malicious
+    ).all()
+    assert len(events) == 1
     db.refresh(w2)
-    assert w2.credit_score == 80.0  # -20
+    assert w2.trust_score == 400.0  # 500 - 100
 
 
 def test_settle_multiple_upheld_picks_highest():

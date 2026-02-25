@@ -64,13 +64,13 @@ def test_submission_deposit_fields():
     assert sub.deposit_returned is None
 
 
-def test_user_credit_score_default():
+def test_user_trust_score_default():
     db = make_db()
     user = User(nickname="test", wallet="0x123", role=UserRole.worker)
     db.add(user)
     db.commit()
     db.refresh(user)
-    assert user.credit_score == 100.0
+    assert user.trust_score == 500.0
 
 
 def test_challenge_create():
