@@ -13,8 +13,10 @@ ORACLE_SCRIPT = Path(__file__).parent.parent.parent / "oracle" / "oracle.py"
 def _call_oracle(payload: dict) -> dict:
     result = subprocess.run(
         [sys.executable, str(ORACLE_SCRIPT)],
-        input=json.dumps(payload), capture_output=True, text=True, timeout=30,
+        input=json.dumps(payload), capture_output=True, text=True, timeout=120,
     )
+    if result.returncode != 0:
+        print(f"[oracle] subprocess error: {result.stderr}", flush=True)
     return json.loads(result.stdout)
 
 
