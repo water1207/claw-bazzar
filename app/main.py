@@ -8,6 +8,8 @@ from .routers import submissions as submissions_router
 from .routers import internal as internal_router
 from .routers import users as users_router
 from .routers import challenges as challenges_router
+from .routers import trust as trust_router_module
+from .routers import auth as auth_router_module
 from .scheduler import create_scheduler
 
 
@@ -26,3 +28,5 @@ app.include_router(submissions_router.router)
 app.include_router(internal_router.router)
 app.include_router(users_router.router)
 app.include_router(challenges_router.router)
+app.include_router(trust_router_module.router)
+app.include_router(auth_router_module.router)
