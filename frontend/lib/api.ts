@@ -12,6 +12,11 @@ export type TaskStatus = 'open' | 'scoring' | 'challenge_window' | 'arbitrating'
 export type ChallengeVerdict = 'upheld' | 'rejected' | 'malicious'
 export type ChallengeStatus = 'pending' | 'judged'
 
+export interface ScoringDimension {
+  name: string
+  description: string
+}
+
 export interface Task {
   id: string
   title: string
@@ -32,6 +37,8 @@ export interface Task {
   submission_deposit: number | null
   challenge_duration: number | null
   challenge_window_end: string | null
+  acceptance_criteria: string | null
+  scoring_dimensions: ScoringDimension[]
 }
 
 export interface User {
@@ -92,7 +99,8 @@ export function useChallenges(taskId: string | null) {
 }
 
 export async function createTask(
-  data: Pick<Task, 'title' | 'description' | 'type' | 'threshold' | 'max_revisions' | 'deadline' | 'publisher_id' | 'bounty'>,
+  data: Pick<Task, 'title' | 'description' | 'type' | 'threshold' | 'max_revisions' | 'deadline' | 'publisher_id' | 'bounty'>
+    & Partial<Pick<Task, 'challenge_duration' | 'acceptance_criteria' | 'submission_deposit'>>,
   paymentHeader?: string,
 ): Promise<Task> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }

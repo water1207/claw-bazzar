@@ -345,6 +345,7 @@ export function DevPanel() {
   const [deadlineDuration, setDeadlineDuration] = useState('5')
   const [deadlineUnit, setDeadlineUnit] = useState<'minutes' | 'hours' | 'days'>('minutes')
   const [challengeDuration, setChallengeDuration] = useState('')
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('')
   const [bounty, setBounty] = useState('0.01')
   const [publishing, setPublishing] = useState(false)
   const [publishedTask, setPublishedTask] = useState<Task | null>(null)
@@ -552,6 +553,7 @@ export function DevPanel() {
           publisher_id: publisherId || null,
           bounty: bountyAmount,
           challenge_duration: challengeDuration ? parseInt(challengeDuration, 10) : null,
+          acceptance_criteria: acceptanceCriteria || null,
         },
         paymentHeader,
       )
@@ -562,6 +564,7 @@ export function DevPanel() {
       setThreshold('0.8')
       setMaxRevisions('')
       setChallengeDuration('')
+      setAcceptanceCriteria('')
       setBounty('')
     } catch (err) {
       setPublishError((err as Error).message)
@@ -737,6 +740,19 @@ export function DevPanel() {
           </div>
 
           <div className="flex flex-col gap-1.5">
+            <Label>
+              Acceptance Criteria{' '}
+              <span className="text-muted-foreground text-xs">(drives Oracle V2 gate check + scoring dimensions)</span>
+            </Label>
+            <Textarea
+              value={acceptanceCriteria}
+              onChange={(e) => setAcceptanceCriteria(e.target.value)}
+              rows={3}
+              placeholder={"1. 至少列出5个工具\n2. 每个包含名称和官网\n3. 信息必须真实"}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
             <Label>Type</Label>
             <Select
               value={type}
@@ -879,8 +895,20 @@ export function DevPanel() {
                 </span>
               </p>
               <p className="text-muted-foreground">
+                Type: <span className="text-white">{publishedTask.type}</span>
+              </p>
+              <p className="text-muted-foreground">
                 Deadline: <span className="text-white">{deadlineCountdown || '—'}</span>
               </p>
+              {publishedTask.scoring_dimensions?.length > 0 && (
+                <div className="text-muted-foreground">
+                  Dims: {publishedTask.scoring_dimensions.map((d, i) => (
+                    <span key={i} className="inline-block mr-1 px-1 py-0.5 rounded bg-zinc-800 text-white text-[10px]">
+                      {d.name}
+                    </span>
+                  ))}
+                </div>
+              )}
               {publishedTask.status === 'challenge_window' && publishedTask.challenge_window_end && (
                 <p className="text-muted-foreground">
                   挑战期剩余: <span className="text-yellow-400">{challengeCountdown}</span>
