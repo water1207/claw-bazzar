@@ -127,6 +127,14 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
         db.commit()
         return
 
+    # Gate passed — commit immediately so status never stays stuck at pending
+    submission.oracle_feedback = json.dumps({
+        "type": "gate_check",
+        **gate_result,
+    })
+    submission.status = SubmissionStatus.gate_passed
+    db.commit()
+
     # Step 2: Individual scoring (score hidden, revision suggestions returned)
     dimensions = db.query(ScoringDimension).filter(
         ScoringDimension.task_id == task_id
@@ -150,7 +158,6 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
         "type": "individual_scoring",
         **score_result,
     })
-    submission.status = SubmissionStatus.gate_passed
     db.commit()
 
 

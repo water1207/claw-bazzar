@@ -80,7 +80,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             ).all()
         ]
 
-        # Phase 1: open -> scoring (deadline expired)
+        # Phase 1: open -> scoring (deadline expired, transition only)
         expired_open = (
             db.query(Task)
             .filter(
@@ -94,13 +94,9 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             task.status = TaskStatus.scoring
         if expired_open:
             db.commit()
-            for task in expired_open:
-                try:
-                    batch_score_submissions(db, task.id)
-                except Exception as e:
-                    print(f"[scheduler] batch_score error for {task.id}: {e}", flush=True)
 
-        # Phase 2: scoring -> challenge_window (all submissions scored)
+        # Phase 2: scoring -> challenge_window
+        # Wait for all oracle background tasks to finish, then batch_score once.
         scoring_tasks = (
             db.query(Task)
             .filter(Task.id.in_(scoring_task_ids))
@@ -109,10 +105,36 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
         for task in scoring_tasks:
             pending_count = db.query(Submission).filter(
                 Submission.task_id == task.id,
-                Submission.status.in_([SubmissionStatus.pending, SubmissionStatus.gate_passed]),
+                Submission.status == SubmissionStatus.pending,
             ).count()
+
             if pending_count > 0:
-                continue  # Still waiting for Oracle
+                # V2 mode: if some submissions already went through gate check,
+                # remaining pending ones are still being processed — wait.
+                has_gated = db.query(Submission).filter(
+                    Submission.task_id == task.id,
+                    Submission.status.in_([
+                        SubmissionStatus.gate_passed,
+                        SubmissionStatus.gate_failed,
+                    ]),
+                ).count() > 0
+                if has_gated:
+                    continue
+
+            # All oracle processing done (or V1 mode). Batch score if needed.
+            unscored_count = db.query(Submission).filter(
+                Submission.task_id == task.id,
+                Submission.status.in_([
+                    SubmissionStatus.pending,
+                    SubmissionStatus.gate_passed,
+                ]),
+            ).count()
+            if unscored_count > 0:
+                try:
+                    batch_score_submissions(db, task.id)
+                except Exception as e:
+                    print(f"[scheduler] batch_score error for {task.id}: {e}", flush=True)
+                continue  # Re-check next tick
 
             best = (
                 db.query(Submission)

@@ -115,6 +115,9 @@ def test_quality_first_full_lifecycle():
 
     with patch("app.services.oracle.subprocess.run", side_effect=mock_batch), \
          patch("app.services.escrow.create_challenge_onchain", return_value="0xtx"):
+        # Tick 1: open -> scoring
+        quality_first_lifecycle(db=db)
+        # Tick 2: Phase 2 runs batch_score for gate_passed subs
         quality_first_lifecycle(db=db)
 
     db.refresh(task)

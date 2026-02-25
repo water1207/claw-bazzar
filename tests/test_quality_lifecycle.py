@@ -159,7 +159,7 @@ def test_phase3_no_challenge_refunds_all_deposits():
 
 
 def test_phase1_triggers_batch_scoring():
-    """After open->scoring transition, pending submissions get scored."""
+    """After open->scoring, batch_score runs on second tick (Phase 2)."""
     db = make_db()
     task = make_expired_quality_task(db)
     # Add pending submission (no score yet)
@@ -175,10 +175,14 @@ def test_phase1_triggers_batch_scoring():
 
     with patch("app.services.oracle.subprocess.run", return_value=mock_result):
         from app.scheduler import quality_first_lifecycle
+        # Tick 1: open -> scoring
+        quality_first_lifecycle(db=db)
+        db.refresh(task)
+        assert task.status == TaskStatus.scoring
+        # Tick 2: Phase 2 runs batch_score
         quality_first_lifecycle(db=db)
 
     db.refresh(task)
     db.refresh(sub)
-    assert task.status == TaskStatus.scoring
     assert sub.status == SubmissionStatus.scored
     assert sub.score == 0.88
