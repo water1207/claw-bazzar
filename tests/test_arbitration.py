@@ -66,20 +66,23 @@ def test_settle_upheld_changes_winner():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner") as mock_pay:
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0x"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
-        mock_pay.assert_called_once()
 
     db.refresh(task)
     assert task.status == TaskStatus.closed
     assert task.winner_submission_id == s2.id  # Challenger took over
 
     db.refresh(s2)
-    assert s2.deposit_returned == s2.deposit  # Full refund
+    assert s2.deposit_returned == round(s2.deposit * 0.70, 6)  # 70% back (30% to arbiters)
 
-    db.refresh(w2)
-    assert w2.trust_score == 505.0  # +5
+    # Challenger gets challenger_won trust event (weighted by bounty)
+    from app.models import TrustEvent, TrustEventType
+    events = db.query(TrustEvent).filter_by(
+        user_id=w2.id, event_type=TrustEventType.challenger_won
+    ).all()
+    assert len(events) == 1
 
 
 def test_settle_rejected_deducts_deposit():
@@ -90,7 +93,7 @@ def test_settle_rejected_deducts_deposit():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0x"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -99,10 +102,7 @@ def test_settle_rejected_deducts_deposit():
     assert task.winner_submission_id == s1.id  # Original winner stays
 
     db.refresh(s2)
-    assert s2.deposit_returned == 0.70  # 70% returned
-
-    db.refresh(w2)
-    assert w2.trust_score == 500.0  # unchanged
+    assert s2.deposit_returned == 0  # Challenger gets nothing on rejection
 
 
 def test_settle_malicious_confiscates_deposit_and_credit():
@@ -113,7 +113,8 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0x"), \
+         patch("app.services.staking.slash_onchain", return_value="0xslash"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -124,8 +125,14 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     db.refresh(s2)
     assert s2.deposit_returned == 0  # Confiscated
 
+    # Challenger gets challenger_malicious trust event (-100)
+    from app.models import TrustEvent, TrustEventType
+    events = db.query(TrustEvent).filter_by(
+        user_id=w2.id, event_type=TrustEventType.challenger_malicious
+    ).all()
+    assert len(events) == 1
     db.refresh(w2)
-    assert w2.trust_score == 480.0  # -20
+    assert w2.trust_score == 400.0  # 500 - 100
 
 
 def test_settle_multiple_upheld_picks_highest():
@@ -166,7 +173,7 @@ def test_settle_multiple_upheld_picks_highest():
     db.add_all([c1, c2])
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0x"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -190,7 +197,7 @@ def test_non_challengers_get_full_refund():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0x"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 

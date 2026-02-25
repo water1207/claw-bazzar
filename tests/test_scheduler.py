@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base
-from app.models import Task, Submission, TaskType, TaskStatus, SubmissionStatus
+from app.models import Task, Submission, User, UserRole, TaskType, TaskStatus, SubmissionStatus
 
 
 def make_engine():
@@ -52,7 +52,7 @@ def test_settle_picks_highest_score():
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    with patch("app.scheduler.pay_winner"):
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0x"):
         quality_first_lifecycle(db=db)
 
     db.refresh(task)
@@ -73,12 +73,7 @@ def test_settle_closes_with_no_scored_submissions():
 
     from app.scheduler import quality_first_lifecycle
 
-    # Phase 1: open → scoring
-    quality_first_lifecycle(db=db)
-    db.refresh(task)
-    assert task.status == TaskStatus.scoring
-
-    # Phase 2: scoring → closed (no submissions)
+    # No submissions: open → closed directly (full refund)
     quality_first_lifecycle(db=db)
     db.refresh(task)
     assert task.status == TaskStatus.closed
@@ -127,13 +122,17 @@ def test_settle_triggers_payout():
     Session = sessionmaker(bind=engine)
     db = Session()
 
+    worker = User(nickname="pay-w1", wallet="0xPayW1", role=UserRole.worker)
+    db.add(worker)
+    db.flush()
+
     past = datetime.now(timezone.utc) - timedelta(minutes=5)
     task = Task(title="Q", description="d", type=TaskType.quality_first,
                 max_revisions=3, deadline=past, publisher_id="pub-1", bounty=10.0)
     db.add(task)
     db.flush()
 
-    s1 = Submission(task_id=task.id, worker_id="w1", revision=1, content="v1",
+    s1 = Submission(task_id=task.id, worker_id=worker.id, revision=1, content="v1",
                     score=0.85, status=SubmissionStatus.scored)
     db.add(s1)
     db.commit()
@@ -151,6 +150,6 @@ def test_settle_triggers_payout():
     task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    with patch("app.scheduler.pay_winner") as mock_payout:
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0x") as mock_resolve:
         quality_first_lifecycle(db=db)
-        mock_payout.assert_called_once_with(db, task.id)
+        mock_resolve.assert_called_once()

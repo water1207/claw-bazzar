@@ -37,7 +37,7 @@ def test_create_challenge_onchain():
 
     with patch("app.services.escrow.Web3", return_value=mock_w3):
         with patch("app.services.escrow._get_w3_and_contract", return_value=(mock_w3, mock_contract)):
-            tx = create_challenge_onchain("task-1", "0xWinner", 8.0, 1.0)
+            tx = create_challenge_onchain("task-1", "0xWinner", 8.0, 1.0, 1.0)
     assert tx is not None
 
 

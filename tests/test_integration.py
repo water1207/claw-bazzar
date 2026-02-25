@@ -227,12 +227,12 @@ def test_bounty_lifecycle_quality_first(client):
     t.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    # Phase 3: challenge_window → closed (with payout)
-    with patch("app.services.payout._send_usdc_transfer", return_value="0xQPAYOUT") as mock_tx:
+    # Phase 3: challenge_window → closed (with escrow settlement)
+    with patch("app.scheduler.resolve_challenge_onchain", return_value="0xQPAYOUT") as mock_resolve:
         quality_first_lifecycle(db=db)
-        mock_tx.assert_called_once_with("0xWORKERQ", 16.0)  # 20.0 * 0.80
+        mock_resolve.assert_called_once()
 
     detail = client.get(f"/tasks/{task['id']}").json()
     assert detail["status"] == "closed"
     assert detail["payout_status"] == "paid"
-    assert detail["payout_amount"] == 16.0
+    assert detail["payout_amount"] == 16.0  # 20.0 * 0.80

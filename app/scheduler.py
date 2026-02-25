@@ -291,9 +291,11 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
 def _settle_after_arbitration(db: Session, task: Task) -> None:
     """Settle a task after all challenges are judged."""
     from .models import ChallengeVerdict, PayoutStatus, User
+    from .services.trust import apply_event, TrustEventType
+    from .services.staking import check_and_slash
     challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
 
-    # Process deposits (30% arbiter cut from ALL) and credit scores
+    # Process deposits (30% arbiter cut from ALL) and trust events
     for c in challenges:
         challenger_sub = db.query(Submission).filter(
             Submission.id == c.challenger_submission_id
@@ -307,7 +309,8 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if challenger_sub and challenger_sub.deposit is not None and challenger_sub.deposit_returned is None:
                 challenger_sub.deposit_returned = round(challenger_sub.deposit * 0.70, 6)
             if worker:
-                worker.trust_score = round(worker.trust_score + 5, 2)
+                apply_event(db, worker.id, TrustEventType.challenger_won,
+                            task_bounty=task.bounty or 0.0, task_id=task.id)
 
         elif c.verdict == ChallengeVerdict.rejected:
             # 30% to arbiters, remaining 70% to platform — challenger gets nothing
@@ -319,13 +322,40 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if challenger_sub and challenger_sub.deposit_returned is None:
                 challenger_sub.deposit_returned = 0
             if worker:
-                worker.trust_score = round(worker.trust_score - 20, 2)
+                apply_event(db, worker.id, TrustEventType.challenger_malicious,
+                            task_id=task.id)
+                check_and_slash(db, worker.id)
 
     # Determine final winner
     upheld = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]
     if upheld:
         best = max(upheld, key=lambda c: c.arbiter_score or 0)
         task.winner_submission_id = best.challenger_submission_id
+
+    # Apply worker_won trust event to the final winner
+    winner_sub = db.query(Submission).filter(
+        Submission.id == task.winner_submission_id
+    ).first() if task.winner_submission_id else None
+    if winner_sub:
+        apply_event(db, winner_sub.worker_id, TrustEventType.worker_won,
+                    task_bounty=task.bounty or 0.0, task_id=task.id)
+
+    # Apply worker_consolation to non-winning submitters with scored submissions
+    if task.winner_submission_id:
+        consolation_subs = db.query(Submission).filter(
+            Submission.task_id == task.id,
+            Submission.id != task.winner_submission_id,
+            Submission.score.isnot(None),
+        ).all()
+        for sub in consolation_subs:
+            # Skip challengers who were found malicious
+            malicious_ids = {
+                c.challenger_submission_id for c in challenges
+                if c.verdict == ChallengeVerdict.malicious
+            }
+            if sub.id not in malicious_ids:
+                apply_event(db, sub.worker_id, TrustEventType.worker_consolation,
+                            task_id=task.id)
 
     # Refund non-challenger deposits
     all_subs = db.query(Submission).filter(
