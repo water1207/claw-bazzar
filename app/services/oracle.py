@@ -59,45 +59,260 @@ def generate_dimensions(db: Session, task: Task) -> list:
 
 
 def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
-    """Call oracle in feedback mode. Stores 3 suggestions, keeps status pending."""
+    """quality_first submission: gate_check → score_individual (if pass)."""
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     task = db.query(Task).filter(Task.id == task_id).first()
     if not submission or not task:
         return
-    output = _call_oracle(_build_payload(task, submission, "feedback"))
-    submission.oracle_feedback = json.dumps(output.get("suggestions", []))
-    db.commit()
 
+    # Step 1: Gate Check
+    gate_payload = {
+        "mode": "gate_check",
+        "task_description": task.description,
+        "acceptance_criteria": task.acceptance_criteria or "",
+        "submission_payload": submission.content,
+    }
+    gate_result = _call_oracle(gate_payload)
 
-def batch_score_submissions(db: Session, task_id: str) -> None:
-    """Score all pending submissions for a task. Called by scheduler after deadline."""
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
+    if not gate_result.get("overall_passed", False):
+        submission.oracle_feedback = json.dumps({
+            "type": "gate_check",
+            **gate_result,
+        })
+        submission.status = SubmissionStatus.gate_failed
+        db.commit()
         return
-    pending = db.query(Submission).filter(
-        Submission.task_id == task_id,
-        Submission.status == SubmissionStatus.pending,
+
+    # Step 2: Individual scoring (score hidden, revision suggestions returned)
+    dimensions = db.query(ScoringDimension).filter(
+        ScoringDimension.task_id == task_id
     ).all()
-    for submission in pending:
-        output = _call_oracle(_build_payload(task, submission, "score"))
-        submission.score = output.get("score", 0.0)
-        submission.oracle_feedback = output.get("feedback", submission.oracle_feedback)
-        submission.status = SubmissionStatus.scored
+    dims_data = [
+        {"id": d.dim_id, "name": d.name, "description": d.description,
+         "weight": d.weight, "scoring_guidance": d.scoring_guidance}
+        for d in dimensions
+    ]
+
+    score_payload = {
+        "mode": "score_individual",
+        "task_title": task.title,
+        "task_description": task.description,
+        "dimensions": dims_data,
+        "submission_payload": submission.content,
+    }
+    score_result = _call_oracle(score_payload)
+
+    submission.oracle_feedback = json.dumps({
+        "type": "individual_scoring",
+        **score_result,
+    })
+    submission.status = SubmissionStatus.gate_passed
     db.commit()
 
 
 def score_submission(db: Session, submission_id: str, task_id: str) -> None:
-    """Score a single submission (fastest_first path). Uses provided db session."""
+    """Score a single submission (fastest_first path): gate_check + constraint_check."""
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     task = db.query(Task).filter(Task.id == task_id).first()
     if not submission or not task:
         return
-    output = _call_oracle(_build_payload(task, submission, "score"))
-    submission.score = output.get("score", 0.0)
-    submission.oracle_feedback = output.get("feedback")
+
+    # Step 1: Gate Check
+    gate_payload = {
+        "mode": "gate_check",
+        "task_description": task.description,
+        "acceptance_criteria": task.acceptance_criteria or "",
+        "submission_payload": submission.content,
+    }
+    gate_result = _call_oracle(gate_payload)
+
+    if not gate_result.get("overall_passed", False):
+        submission.oracle_feedback = json.dumps({
+            "type": "fastest_first_check",
+            "gate_check": gate_result,
+            "constraint_check": None,
+            "passed": False,
+        })
+        submission.score = 0.0
+        submission.status = SubmissionStatus.scored
+        db.commit()
+        return
+
+    # Step 2: Constraint Check
+    constraint_payload = {
+        "mode": "constraint_check",
+        "task_type": "fastest_first",
+        "task_title": task.title,
+        "task_description": task.description,
+        "acceptance_criteria": task.acceptance_criteria or "",
+        "submission_payload": submission.content,
+    }
+    constraint_result = _call_oracle(constraint_payload)
+
+    passed = constraint_result.get("overall_passed", False)
+    submission.oracle_feedback = json.dumps({
+        "type": "fastest_first_check",
+        "gate_check": gate_result,
+        "constraint_check": constraint_result,
+        "passed": passed,
+    })
+    submission.score = 1.0 if passed else 0.0
     submission.status = SubmissionStatus.scored
     db.commit()
-    _apply_fastest_first(db, task, submission)
+
+    if passed:
+        _apply_fastest_first(db, task, submission)
+
+
+def _get_individual_weighted_total(submission: Submission, dimensions: list) -> float:
+    """Calculate weighted total from individual scoring stored in oracle_feedback."""
+    if not submission.oracle_feedback:
+        return 0.0
+    try:
+        feedback = json.loads(submission.oracle_feedback)
+        if feedback.get("type") != "individual_scoring":
+            return 0.0
+        dim_scores = feedback.get("dimension_scores", {})
+        total = 0.0
+        for dim in dimensions:
+            score_entry = dim_scores.get(dim.dim_id, {})
+            total += score_entry.get("score", 0) * dim.weight
+        return total
+    except (json.JSONDecodeError, KeyError):
+        return 0.0
+
+
+def batch_score_submissions(db: Session, task_id: str) -> None:
+    """Score all gate_passed submissions after deadline: constraint check + horizontal comparison."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return
+
+    # Collect gate_passed submissions
+    passed = db.query(Submission).filter(
+        Submission.task_id == task_id,
+        Submission.status == SubmissionStatus.gate_passed,
+    ).all()
+
+    # Also check pending (backward compat with V1 tests)
+    if not passed:
+        passed = db.query(Submission).filter(
+            Submission.task_id == task_id,
+            Submission.status == SubmissionStatus.pending,
+        ).all()
+
+    if not passed:
+        return
+
+    dimensions = db.query(ScoringDimension).filter(
+        ScoringDimension.task_id == task_id
+    ).all()
+
+    # If no dimensions (V1 mode / backward compat), fall back to legacy scoring
+    if not dimensions:
+        for submission in passed:
+            output = _call_oracle(_build_payload(task, submission, "score"))
+            submission.score = output.get("score", 0.0)
+            submission.oracle_feedback = output.get("feedback", submission.oracle_feedback)
+            submission.status = SubmissionStatus.scored
+        db.commit()
+        return
+
+    # Select top 3 by individual score
+    scored_subs = sorted(
+        passed,
+        key=lambda s: _get_individual_weighted_total(s, dimensions),
+        reverse=True,
+    )[:3]
+
+    # Anonymize
+    label_map = {}
+    anonymized = []
+    for i, sub in enumerate(scored_subs):
+        label = f"Submission_{chr(65 + i)}"
+        label_map[label] = sub
+        anonymized.append({"label": label, "payload": sub.content})
+
+    # Step 1: Constraint check for each submission
+    caps = {}
+    for anon in anonymized:
+        constraint_payload = {
+            "mode": "constraint_check",
+            "task_type": "quality_first",
+            "task_title": task.title,
+            "task_description": task.description,
+            "acceptance_criteria": task.acceptance_criteria or "",
+            "submission_payload": anon["payload"],
+            "submission_label": anon["label"],
+        }
+        result = _call_oracle(constraint_payload)
+        caps[anon["label"]] = result.get("effective_cap")
+
+    # Step 2: Horizontal scoring per dimension
+    all_scores = {}
+    dims_data = [
+        {"id": d.dim_id, "name": d.name, "description": d.description,
+         "weight": d.weight, "scoring_guidance": d.scoring_guidance}
+        for d in dimensions
+    ]
+    for dim_data in dims_data:
+        dim_payload = {
+            "mode": "dimension_score",
+            "task_title": task.title,
+            "task_description": task.description,
+            "dimension": dim_data,
+            "constraint_caps": caps,
+            "submissions": anonymized,
+        }
+        result = _call_oracle(dim_payload)
+        all_scores[dim_data["id"]] = result
+
+    # Step 3: Compute ranking
+    ranking = []
+    for anon in anonymized:
+        label = anon["label"]
+        breakdown = {}
+        weighted_total = 0.0
+        for dim_data in dims_data:
+            dim_id = dim_data["id"]
+            scores_list = all_scores[dim_id].get("scores", [])
+            entry = next((s for s in scores_list if s["submission"] == label), None)
+            if entry:
+                breakdown[dim_id] = {
+                    "raw_score": entry["raw_score"],
+                    "final_score": entry["final_score"],
+                    "evidence": entry.get("evidence", ""),
+                }
+                weighted_total += entry["final_score"] * dim_data["weight"]
+        ranking.append({
+            "label": label,
+            "dimension_breakdown": breakdown,
+            "weighted_total": round(weighted_total, 2),
+        })
+
+    ranking.sort(key=lambda x: x["weighted_total"], reverse=True)
+
+    # Write back to submissions
+    for rank_idx, entry in enumerate(ranking):
+        sub = label_map[entry["label"]]
+        sub.oracle_feedback = json.dumps({
+            "type": "scoring",
+            "constraint_cap": caps.get(entry["label"]),
+            "dimension_scores": entry["dimension_breakdown"],
+            "weighted_total": entry["weighted_total"],
+            "rank": rank_idx + 1,
+        })
+        sub.score = entry["weighted_total"] / 100.0
+        sub.status = SubmissionStatus.scored
+
+    # Mark any remaining gate_passed subs (outside top 3) as scored without horizontal eval
+    for sub in passed:
+        if sub not in [label_map[a["label"]] for a in anonymized]:
+            sub.status = SubmissionStatus.scored
+            if not sub.score:
+                sub.score = _get_individual_weighted_total(sub, dimensions) / 100.0
+
+    db.commit()
 
 
 def _apply_fastest_first(db: Session, task: Task, submission: Submission) -> None:
