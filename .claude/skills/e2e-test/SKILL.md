@@ -18,15 +18,16 @@ description: 端到端集成测试。清理数据库，启动前后端服务，�
 ### 步骤一：环境准备
 
 1. 停止占用 8000/3000 端口的进程
-2. 删除数据库文件（`rm -f market.db`）
-3. 删除 Next.js 锁文件（`rm -f frontend/.next/dev/lock`）
+2. 删除 Next.js 锁文件（如有残留）
+3. **不要删除数据库** — 保留历史数据，oracle logs API 默认只返回最新 5 个任务的日志
 
 ```bash
 lsof -ti:8000 | xargs kill 2>/dev/null
 lsof -ti:3000 | xargs kill 2>/dev/null
-rm -f market.db
 rm -f frontend/.next/dev/lock
 ```
+
+> 如需全新环境，可手动 `rm -f market.db`，但通常不需要。
 
 ### 步骤二：启动服务
 
@@ -201,11 +202,15 @@ Deadline 过后 scheduler 每分钟运行一次。需等待两个 scheduler tick
 ### 步骤六：验证 Oracle Logs
 
 ```bash
-curl -s 'http://localhost:8000/internal/oracle-logs?limit=50'
+# 默认返回最新 5 个任务的日志（无需手动清理历史）
+curl -s 'http://localhost:8000/internal/oracle-logs'
+
+# 只看最近 1 个任务的日志
+curl -s 'http://localhost:8000/internal/oracle-logs?task_count=1'
 ```
 
 **验证点：**
-- 日志按时间倒序
+- 日志按时间倒序，自动过滤到最近 N 个任务
 - 每条包含：`timestamp`、`mode`、`task_id`、`submission_id`、`worker_id`、`worker_nickname`、`total_tokens`、`duration_ms`
 - quality_first 任务应有以下 mode 序列：
   1. `dimension_gen`（1次，任务创建时）
@@ -231,7 +236,7 @@ lsof -ti:3000 | xargs kill 2>/dev/null
 | `Unable to acquire lock` | Next.js 锁文件残留 | `rm -f frontend/.next/dev/lock` |
 | gate_check 判定不符预期 | LLM 判断有时有争议 | 属正常行为，可调整提交内容使结果更明确 |
 | batch scoring 不触发 | scheduler 1分钟间隔 | deadline 过后最多等 2 分钟 |
-| DB 未清空 | 删错文件（不是 tasks.db） | 正确路径是 `market.db` |
+| 需要全新环境 | 历史数据干扰测试 | 手动 `rm -f market.db` 后重启服务 |
 
 ## 测试报告模板
 

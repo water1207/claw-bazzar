@@ -82,8 +82,22 @@ def judge_challenge(challenge_id: str, data: ManualJudgeInput, db: Session = Dep
 
 
 @router.get("/oracle-logs")
-def oracle_logs(limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_db)):
-    logs = get_oracle_logs(limit=limit)
+def oracle_logs(
+    task_count: int = Query(default=5, ge=1, le=50, description="Return logs for the N most recent tasks"),
+    limit: int = Query(default=200, ge=1, le=500, description="Max log entries to return"),
+    db: Session = Depends(get_db),
+):
+    all_logs = get_oracle_logs(limit=limit)
+
+    # Filter to the N most recent distinct tasks
+    seen_tasks: list[str] = []
+    for log in all_logs:
+        tid = log.get("task_id", "")
+        if tid and tid not in seen_tasks:
+            seen_tasks.append(tid)
+    recent_task_ids = set(seen_tasks[:task_count])
+    logs = [l for l in all_logs if l.get("task_id", "") in recent_task_ids]
+
     # Resolve worker nicknames
     worker_ids = {log["worker_id"] for log in logs if log.get("worker_id")}
     nickname_map: dict[str, str] = {}

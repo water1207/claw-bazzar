@@ -187,7 +187,7 @@ function OracleLogsPanel() {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const resp = await fetch('/api/internal/oracle-logs?limit=100')
+        const resp = await fetch('/api/internal/oracle-logs')
         if (resp.ok) setLogs(await resp.json())
       } catch {}
     }
