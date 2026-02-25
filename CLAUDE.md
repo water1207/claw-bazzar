@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pip install -e ".[dev]"                          # Install deps
 uvicorn app.main:app --reload --port 8000        # Dev server
-pytest -v                                        # All tests (101)
+pytest -v                                        # All tests (132)
 pytest tests/test_tasks.py::test_create_task -v  # Single test
 pytest -k "test_submission" -v                   # Pattern match
 pytest tests/test_challenge_api.py -v            # Challenge API tests
@@ -38,17 +38,23 @@ Both servers must run simultaneously. Frontend proxies `/api/*` → `http://loca
 ```
 routers/          → HTTP handlers (tasks, submissions, users, internal)
 services/         → Business logic (oracle, x402 payment, payout, escrow)
-models.py         → SQLAlchemy ORM (Task, User, Submission)
+models.py         → SQLAlchemy ORM (Task, User, Submission, ScoringDimension)
 schemas.py        → Pydantic request/response validation
 scheduler.py      → APScheduler (quality_first deadline settlement, every 1 min)
 database.py       → SQLite + SQLAlchemy session
-oracle/oracle.py  → Oracle stub (subprocess, stdin/stdout JSON)
+oracle/oracle.py  → Oracle mode router (V2 LLM modules + V1 fallback)
+oracle/llm_client.py → LLM API wrapper (Anthropic Claude SDK)
+oracle/dimension_gen.py → Scoring dimension generation
+oracle/gate_check.py    → Acceptance criteria gate check
+oracle/constraint_check.py → Task relevance + authenticity check
+oracle/score_individual.py → Per-dimension individual scoring
+oracle/dimension_score.py  → Horizontal comparison scoring
 ```
 
 ### Two settlement paths
 
 - **fastest_first**: Oracle scores submission → score ≥ threshold → close task → `pay_winner()`
-- **quality_first**: Submission → oracle feedback → deadline → batch score → `createChallenge()` locks 90% bounty → challenge window → arbitration → `resolveChallenge()` settles via contract
+- **quality_first**: Submission → gate check → individual scoring (per-dimension) → deadline → horizontal comparison (top 3) → `createChallenge()` locks 90% bounty → challenge window → arbitration → `resolveChallenge()` settles via contract
 
 ### Challenge escrow (ChallengeEscrow contract)
 
@@ -65,17 +71,30 @@ Address: `0x0b256635519Db6B13AE9c423d18a3c3A6e888b99` (Base Sepolia)
 
 ### quality_first lifecycle phases
 
-1. **open**: Accepts submissions; oracle runs in `feedback` mode, stores suggestions in `oracle_feedback`, status stays `pending`. Scores hidden from API.
-2. **scoring**: Deadline passed; scheduler calls `batch_score_submissions()` to score all pending submissions. Scores still hidden.
+1. **open**: Accepts submissions; oracle runs gate check + individual scoring per-dimension. Gate pass → status `gate_passed` with revision suggestions; gate fail → status `gate_failed`. Scores hidden from API.
+2. **scoring**: Deadline passed; scheduler calls `batch_score_submissions()` which selects top 3 gate_passed submissions by individual weighted score, runs constraint checks, then horizontal comparison per-dimension. Scores still hidden.
 3. **challenge_window**: All scored; winner selected, `challenge_window_end` set. Scores now visible.
 4. **arbitrating / closed**: Challenge resolution or direct close.
 
-### Oracle modes (`oracle/oracle.py`)
+### Submission status flow
 
-- `mode = "feedback"` → `{"suggestions": ["...", "...", "..."]}` (3 random revision suggestions)
-- `mode = "score"` → `{"score": <random 0.5–1.0>, "feedback": "..."}` (existing scoring behavior)
+- `pending` → `gate_passed` (gate check passed, individual scores stored) or `gate_failed` (gate check failed)
+- `gate_passed` → `scored` (after horizontal comparison in batch_score)
+- `pending` → `scored` (fastest_first path, direct scoring)
 
-Entry point `invoke_oracle()` in `app/services/oracle.py` auto-selects mode based on task type.
+### Oracle V2 modes (`oracle/oracle.py`)
+
+Oracle V2 uses LLM-based scoring via Anthropic Claude API. The oracle process routes to V2 modules when available, falling back to V1 stub behavior.
+
+- `mode = "dimension_gen"` → Generates 2 fixed + 1-3 dynamic scoring dimensions for a task
+- `mode = "gate_check"` → Pass/fail verification against acceptance criteria
+- `mode = "constraint_check"` → Task relevance + authenticity check (with score caps for quality_first)
+- `mode = "score_individual"` → Per-dimension scoring of a single submission
+- `mode = "dimension_score"` → Horizontal comparison of top submissions on a single dimension
+- `mode = "feedback"` → V1 fallback: 3 random revision suggestions
+- `mode = "score"` → V1 fallback: random 0.5–1.0 score
+
+Entry point `invoke_oracle()` in `app/services/oracle.py` auto-selects mode. Service functions (`generate_dimensions`, `give_feedback`, `batch_score_submissions`) orchestrate the full pipeline.
 
 ### x402 payment flow
 
@@ -122,6 +141,9 @@ Blockchain calls (web3.py payout) are always mocked — no real chain interactio
 | `NEXT_PUBLIC_DEV_WALLET_KEY` | (in `.env.local`) | DevPanel signing key |
 | `ESCROW_CONTRACT_ADDRESS` | (none) | Deployed ChallengeEscrow contract |
 | `NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS` | (in `.env.local`) | Frontend escrow address |
+| `ORACLE_LLM_PROVIDER` | `anthropic` | LLM provider for Oracle V2 |
+| `ORACLE_LLM_MODEL` | `claude-sonnet-4-20250514` | LLM model for Oracle V2 |
+| `ANTHROPIC_API_KEY` | (none) | Anthropic API key for Oracle V2 |
 
 ## Database migrations (Alembic)
 
@@ -141,7 +163,9 @@ Never use `Base.metadata.create_all()` to apply schema changes — Alembic owns 
 - Documentation is in Chinese (`docs/project-overview.md` is the authoritative spec)
 - `bounty` field is required `float` (use 0 for free tasks, not null)
 - Payout = bounty × 0.80 (20% platform fee)
-- Oracle V1 is a stub (`oracle/oracle.py`) — feedback mode returns 3 random suggestions, score mode returns random 0.5–1.0
+- Oracle V2 uses LLM-based scoring via Anthropic Claude API; V1 stub (random scores) is preserved as fallback
+- `ScoringDimension` table stores LLM-generated scoring dimensions per task, locked at creation time
+- Task `acceptance_criteria` field drives gate checks and dimension generation
 - Double-payout protection exists at both endpoint and service level
 - All API datetime fields are serialized as UTC ISO 8601 with `Z` suffix (via `UTCDatetime` type in `schemas.py`) — no frontend timezone handling needed
 - Scores for `quality_first` tasks are hidden (`null`) in API responses while task status is `open` or `scoring`
