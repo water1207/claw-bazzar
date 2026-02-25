@@ -1,6 +1,9 @@
 import json
+import os
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
@@ -9,15 +12,45 @@ from .payout import pay_winner
 
 ORACLE_SCRIPT = Path(__file__).parent.parent.parent / "oracle" / "oracle.py"
 
+# In-memory oracle call logs
+_oracle_logs: list[dict] = []
+MAX_LOGS = 200
+
+
+def get_oracle_logs(limit: int = 50) -> list[dict]:
+    """Return recent oracle logs, newest first."""
+    return list(reversed(_oracle_logs))[:limit]
+
 
 def _call_oracle(payload: dict) -> dict:
+    start = time.monotonic()
     result = subprocess.run(
         [sys.executable, str(ORACLE_SCRIPT)],
         input=json.dumps(payload), capture_output=True, text=True, timeout=120,
     )
+    duration_ms = int((time.monotonic() - start) * 1000)
     if result.returncode != 0:
         print(f"[oracle] subprocess error: {result.stderr}", flush=True)
-    return json.loads(result.stdout)
+    output = json.loads(result.stdout)
+
+    # Extract and log token usage
+    token_usage = output.pop("_token_usage", None)
+    if token_usage:
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "mode": payload.get("mode", "unknown"),
+            "task_id": payload.get("task_title") or payload.get("task", {}).get("id", ""),
+            "model": os.environ.get("ORACLE_LLM_MODEL", ""),
+            "prompt_tokens": token_usage.get("prompt_tokens", 0),
+            "completion_tokens": token_usage.get("completion_tokens", 0),
+            "total_tokens": token_usage.get("total_tokens", 0),
+            "duration_ms": duration_ms,
+        }
+        _oracle_logs.append(log_entry)
+        if len(_oracle_logs) > MAX_LOGS:
+            _oracle_logs[:] = _oracle_logs[-MAX_LOGS:]
+
+    return output
 
 
 def _build_payload(task: Task, submission: Submission, mode: str) -> dict:

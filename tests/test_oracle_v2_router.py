@@ -7,6 +7,8 @@ from unittest.mock import patch
 # Add oracle/ to path for direct module imports
 sys.path.insert(0, "oracle")
 
+MOCK_USAGE = {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+
 
 # --- Legacy behavior tests (subprocess) ---
 
@@ -75,7 +77,7 @@ def test_dimension_gen_mode():
         "task_description": "调研竞品",
         "acceptance_criteria": "至少覆盖10个产品",
     }
-    with patch.object(dimension_gen, "call_llm_json", return_value=MOCK_DIMENSIONS):
+    with patch.object(dimension_gen, "call_llm_json", return_value=(MOCK_DIMENSIONS, MOCK_USAGE)):
         output = dimension_gen.run(input_data)
     assert "dimensions" in output
     assert len(output["dimensions"]) == 3
@@ -108,7 +110,7 @@ def test_gate_check_pass():
         "acceptance_criteria": "至少覆盖10个产品",
         "submission_payload": "共12个产品的调研报告...",
     }
-    with patch.object(gate_check, "call_llm_json", return_value=MOCK_GATE_PASS):
+    with patch.object(gate_check, "call_llm_json", return_value=(MOCK_GATE_PASS, MOCK_USAGE)):
         output = gate_check.run(input_data)
     assert output["overall_passed"] is True
 
@@ -121,7 +123,7 @@ def test_gate_check_fail():
         "acceptance_criteria": "至少覆盖10个产品",
         "submission_payload": "仅8个产品...",
     }
-    with patch.object(gate_check, "call_llm_json", return_value=MOCK_GATE_FAIL):
+    with patch.object(gate_check, "call_llm_json", return_value=(MOCK_GATE_FAIL, MOCK_USAGE)):
         output = gate_check.run(input_data)
     assert output["overall_passed"] is False
     assert output["criteria_checks"][0]["revision_hint"] is not None
@@ -152,7 +154,7 @@ def test_constraint_check_fastest_first():
         "acceptance_criteria": "AC",
         "submission_payload": "content",
     }
-    with patch.object(constraint_check, "call_llm_json", return_value=MOCK_CONSTRAINT_FF_PASS):
+    with patch.object(constraint_check, "call_llm_json", return_value=(MOCK_CONSTRAINT_FF_PASS, MOCK_USAGE)):
         output = constraint_check.run(input_data)
     assert output["overall_passed"] is True
 
@@ -167,7 +169,7 @@ def test_constraint_check_quality_first():
         "submission_payload": "content",
         "submission_label": "Submission_A",
     }
-    with patch.object(constraint_check, "call_llm_json", return_value=MOCK_CONSTRAINT_QF):
+    with patch.object(constraint_check, "call_llm_json", return_value=(MOCK_CONSTRAINT_QF, MOCK_USAGE)):
         output = constraint_check.run(input_data)
     assert output["effective_cap"] == 40
 
@@ -201,7 +203,7 @@ def test_score_individual():
         ],
         "submission_payload": "调研报告内容...",
     }
-    with patch.object(score_individual, "call_llm_json", return_value=MOCK_INDIVIDUAL_SCORE):
+    with patch.object(score_individual, "call_llm_json", return_value=(MOCK_INDIVIDUAL_SCORE, MOCK_USAGE)):
         output = score_individual.run(input_data)
     assert "dimension_scores" in output
     assert "revision_suggestions" in output
@@ -243,7 +245,7 @@ def test_dimension_score():
             {"label": "Submission_C", "payload": "content C"},
         ],
     }
-    with patch.object(dimension_score, "call_llm_json", return_value=MOCK_DIM_SCORE):
+    with patch.object(dimension_score, "call_llm_json", return_value=(MOCK_DIM_SCORE, MOCK_USAGE)):
         output = dimension_score.run(input_data)
     assert output["dimension_id"] == "substantiveness"
     assert len(output["scores"]) == 3

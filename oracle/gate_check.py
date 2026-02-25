@@ -56,4 +56,5 @@ def run(input_data: dict) -> dict:
         acceptance_criteria=input_data.get("acceptance_criteria", ""),
         submission_payload=input_data.get("submission_payload", ""),
     )
-    return call_llm_json(prompt, system=SYSTEM_PROMPT)
+    result, _usage = call_llm_json(prompt, system=SYSTEM_PROMPT)
+    return result

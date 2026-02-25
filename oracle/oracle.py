@@ -61,7 +61,11 @@ def main():
     _register_v2_modules()
 
     if mode in V2_MODES:
+        # Reset and track token usage for V2 LLM calls
+        from llm_client import reset_accumulated_usage, get_accumulated_usage
+        reset_accumulated_usage()
         result = V2_MODES[mode](payload)
+        result["_token_usage"] = get_accumulated_usage()
     else:
         result = _legacy_handler(payload)
 

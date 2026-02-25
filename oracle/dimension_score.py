@@ -105,4 +105,5 @@ def run(input_data: dict) -> dict:
         constraint_caps_text=_format_caps(input_data.get("constraint_caps", {})),
         submissions_text=_format_submissions(input_data.get("submissions", [])),
     )
-    return call_llm_json(prompt, system=SYSTEM_PROMPT)
+    result, _usage = call_llm_json(prompt, system=SYSTEM_PROMPT)
+    return result

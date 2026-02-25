@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import (
@@ -8,6 +8,7 @@ from ..models import (
 from ..schemas import ScoreInput, ManualJudgeInput, ChallengeOut
 from ..services.payout import pay_winner
 from ..services.arbiter import run_arbitration
+from ..services.oracle import get_oracle_logs
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -78,3 +79,8 @@ def judge_challenge(challenge_id: str, data: ManualJudgeInput, db: Session = Dep
     db.commit()
     db.refresh(challenge)
     return challenge
+
+
+@router.get("/oracle-logs")
+def oracle_logs(limit: int = Query(default=50, ge=1, le=200)):
+    return get_oracle_logs(limit=limit)

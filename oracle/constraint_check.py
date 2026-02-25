@@ -119,7 +119,8 @@ def run(input_data: dict) -> dict:
             submission_payload=input_data.get("submission_payload", ""),
             constraints=SHARED_CONSTRAINTS,
         )
-        return call_llm_json(prompt, system=FF_SYSTEM)
+        result, _usage = call_llm_json(prompt, system=FF_SYSTEM)
+        return result
     else:
         label = input_data.get("submission_label", "Submission_A")
         prompt = QF_PROMPT.format(
@@ -130,4 +131,5 @@ def run(input_data: dict) -> dict:
             submission_label=label,
             constraints=SHARED_CONSTRAINTS,
         )
-        return call_llm_json(prompt, system=QF_SYSTEM)
+        result, _usage = call_llm_json(prompt, system=QF_SYSTEM)
+        return result

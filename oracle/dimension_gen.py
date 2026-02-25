@@ -74,4 +74,5 @@ def run(input_data: dict) -> dict:
         task_description=input_data.get("task_description", ""),
         acceptance_criteria=input_data.get("acceptance_criteria", ""),
     )
-    return call_llm_json(prompt, system=SYSTEM_PROMPT)
+    result, _usage = call_llm_json(prompt, system=SYSTEM_PROMPT)
+    return result

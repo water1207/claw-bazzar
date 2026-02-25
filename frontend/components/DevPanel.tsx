@@ -111,6 +111,99 @@ function WalletCard({
   )
 }
 
+interface OracleLog {
+  timestamp: string
+  mode: string
+  task_id: string
+  model: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  duration_ms: number
+}
+
+function OracleLogsPanel() {
+  const [logs, setLogs] = useState<OracleLog[]>([])
+  const [collapsed, setCollapsed] = useState(false)
+
+  useEffect(() => {
+    const fetchLogs = async () => {
+      try {
+        const resp = await fetch('/api/internal/oracle-logs?limit=50')
+        if (resp.ok) setLogs(await resp.json())
+      } catch {}
+    }
+    fetchLogs()
+    const id = setInterval(fetchLogs, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <div className="col-span-3 mt-6 border-t border-zinc-700 pt-6">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex items-center gap-2 text-base font-semibold mb-4 hover:text-blue-400"
+      >
+        <span className="text-xs">{collapsed ? '▶' : '▼'}</span>
+        Oracle Logs
+        <span className="text-xs text-muted-foreground font-normal">({logs.length})</span>
+      </button>
+      {!collapsed && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="text-left text-muted-foreground border-b border-zinc-700">
+                <th className="pb-2 pr-4">Time</th>
+                <th className="pb-2 pr-4">Mode</th>
+                <th className="pb-2 pr-4">Task ID</th>
+                <th className="pb-2 pr-4">Model</th>
+                <th className="pb-2 pr-4 text-right">Prompt</th>
+                <th className="pb-2 pr-4 text-right">Completion</th>
+                <th className="pb-2 pr-4 text-right">Total</th>
+                <th className="pb-2 text-right">Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-4 text-center text-muted-foreground">
+                    No oracle logs yet
+                  </td>
+                </tr>
+              ) : (
+                logs.map((log, i) => (
+                  <tr key={i} className="border-b border-zinc-800 hover:bg-zinc-900">
+                    <td className="py-1.5 pr-4 font-mono whitespace-nowrap">
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </td>
+                    <td className="py-1.5 pr-4">
+                      <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-white">
+                        {log.mode}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-4 font-mono max-w-[120px] truncate" title={log.task_id}>
+                      {log.task_id ? (log.task_id.length > 12 ? log.task_id.slice(0, 12) + '...' : log.task_id) : '-'}
+                    </td>
+                    <td className="py-1.5 pr-4 text-muted-foreground max-w-[150px] truncate" title={log.model}>
+                      {log.model || '-'}
+                    </td>
+                    <td className="py-1.5 pr-4 text-right font-mono">{log.prompt_tokens.toLocaleString()}</td>
+                    <td className="py-1.5 pr-4 text-right font-mono">{log.completion_tokens.toLocaleString()}</td>
+                    <td className="py-1.5 pr-4 text-right font-mono text-white">{log.total_tokens.toLocaleString()}</td>
+                    <td className="py-1.5 text-right font-mono text-muted-foreground">
+                      {log.duration_ms >= 1000 ? `${(log.duration_ms / 1000).toFixed(1)}s` : `${log.duration_ms}ms`}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function DevPanel() {
   const publisherAddress = useMemo(() => {
     if (!DEV_PUBLISHER_WALLET_KEY) return null
@@ -436,7 +529,7 @@ export function DevPanel() {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-10 p-8 max-w-6xl">
+    <div className="grid grid-cols-3 gap-10 p-8 max-w-6xl mx-auto">
       {/* Register User */}
       <div>
         <h2 className="text-base font-semibold mb-5">Register User</h2>
@@ -911,6 +1004,9 @@ export function DevPanel() {
           </form>
         </div>
       </div>
+
+      {/* Oracle Logs */}
+      <OracleLogsPanel />
     </div>
   )
 }
