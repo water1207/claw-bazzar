@@ -13,6 +13,7 @@ UTCDatetime = Annotated[datetime, PlainSerializer(_utc_iso, return_type=str)]
 from .models import (
     TaskType, TaskStatus, SubmissionStatus, UserRole, PayoutStatus,
     ChallengeVerdict, ChallengeStatus,
+    TrustTier, TrustEventType, StakePurpose,
 )
 
 
@@ -139,6 +140,78 @@ class ManualJudgeInput(BaseModel):
     verdict: ChallengeVerdict
     score: float
     feedback: Optional[str] = None
+
+
+class TrustProfile(BaseModel):
+    trust_score: float
+    trust_tier: TrustTier
+    challenge_deposit_rate: float
+    platform_fee_rate: float
+    can_accept_tasks: bool
+    can_challenge: bool
+    max_task_amount: Optional[float] = None
+    is_arbiter: bool
+    github_bound: bool
+    staked_amount: float
+    stake_bonus: float
+    consolation_total: float
+
+
+class TrustEventOut(BaseModel):
+    id: str
+    event_type: TrustEventType
+    task_id: Optional[str] = None
+    amount: float
+    delta: float
+    score_before: float
+    score_after: float
+    created_at: UTCDatetime
+
+    model_config = {"from_attributes": True}
+
+
+class ArbiterVoteCreate(BaseModel):
+    verdict: ChallengeVerdict
+    feedback: str
+
+
+class ArbiterVoteOut(BaseModel):
+    id: str
+    challenge_id: str
+    arbiter_user_id: str
+    vote: Optional[ChallengeVerdict] = None
+    feedback: Optional[str] = None
+    is_majority: Optional[bool] = None
+    reward_amount: Optional[float] = None
+    created_at: UTCDatetime
+
+    model_config = {"from_attributes": True}
+
+
+class StakeRequest(BaseModel):
+    amount: float
+    purpose: StakePurpose
+    permit_deadline: Optional[int] = None
+    permit_v: Optional[int] = None
+    permit_r: Optional[str] = None
+    permit_s: Optional[str] = None
+
+
+class TrustQuote(BaseModel):
+    trust_tier: TrustTier
+    challenge_deposit_rate: float
+    challenge_deposit_amount: float
+    platform_fee_rate: float
+    service_fee: float = 0.01
+
+
+class WeeklyLeaderboardEntry(BaseModel):
+    rank: int
+    user_id: str
+    nickname: str
+    wallet: str
+    total_settled: float
+    bonus: int
 
 
 TaskDetail.model_rebuild()

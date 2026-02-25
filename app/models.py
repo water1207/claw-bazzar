@@ -160,14 +160,17 @@ class Challenge(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
-# Placeholder models for trust system (fully implemented in Task 2)
 class TrustEvent(Base):
     __tablename__ = "trust_events"
 
     id = Column(String, primary_key=True, default=_uuid)
     user_id = Column(String, nullable=False)
     event_type = Column(Enum(TrustEventType), nullable=False)
+    task_id = Column(String, nullable=True)
+    amount = Column(Float, nullable=False, default=0.0)
     delta = Column(Float, nullable=False, default=0.0)
+    score_before = Column(Float, nullable=False, default=0.0)
+    score_after = Column(Float, nullable=False, default=0.0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -176,8 +179,11 @@ class ArbiterVote(Base):
 
     id = Column(String, primary_key=True, default=_uuid)
     challenge_id = Column(String, nullable=False)
-    arbiter_id = Column(String, nullable=False)
-    verdict = Column(Enum(ChallengeVerdict), nullable=True)
+    arbiter_user_id = Column(String, nullable=False)
+    vote = Column(Enum(ChallengeVerdict), nullable=True)
+    feedback = Column(Text, nullable=True)
+    is_majority = Column(Boolean, nullable=True)
+    reward_amount = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -186,6 +192,8 @@ class StakeRecord(Base):
 
     id = Column(String, primary_key=True, default=_uuid)
     user_id = Column(String, nullable=False)
-    purpose = Column(Enum(StakePurpose), nullable=False)
     amount = Column(Float, nullable=False, default=0.0)
+    purpose = Column(Enum(StakePurpose), nullable=False)
+    tx_hash = Column(String, nullable=True)
+    slashed = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
