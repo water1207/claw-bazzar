@@ -20,6 +20,8 @@ class TaskStatus(str, PyEnum):
 
 class SubmissionStatus(str, PyEnum):
     pending = "pending"
+    gate_passed = "gate_passed"
+    gate_failed = "gate_failed"
     scored = "scored"
 
 
