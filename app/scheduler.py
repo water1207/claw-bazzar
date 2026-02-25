@@ -109,7 +109,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
         for task in scoring_tasks:
             pending_count = db.query(Submission).filter(
                 Submission.task_id == task.id,
-                Submission.status == SubmissionStatus.pending,
+                Submission.status.in_([SubmissionStatus.pending, SubmissionStatus.gate_passed]),
             ).count()
             if pending_count > 0:
                 continue  # Still waiting for Oracle

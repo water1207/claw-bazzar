@@ -362,3 +362,83 @@ def test_batch_score_submissions_horizontal(db):
     assert feedback1["rank"] == 1
     assert feedback2["rank"] == 2
     assert feedback1["weighted_total"] > feedback2["weighted_total"]
+
+
+# --- Scheduler lifecycle test ---
+
+from app.scheduler import quality_first_lifecycle
+
+
+def test_lifecycle_phase1_scoring_with_gate_passed_subs(db):
+    """Phase 1: deadline expired → scoring, should use gate_passed subs."""
+    task = Task(
+        title="调研", description="调研竞品", type=TaskType.quality_first,
+        deadline=datetime(2025, 1, 1, tzinfo=timezone.utc), bounty=10.0,
+        status=TaskStatus.open,
+        acceptance_criteria="至少10个产品",
+    )
+    db.add(task)
+    db.commit()
+
+    dim1 = ScoringDimension(
+        task_id=task.id, dim_id="substantiveness", name="实质性",
+        dim_type="fixed", description="内容质量", weight=0.5, scoring_guidance="guide"
+    )
+    dim2 = ScoringDimension(
+        task_id=task.id, dim_id="completeness", name="完整性",
+        dim_type="fixed", description="覆盖度", weight=0.5, scoring_guidance="guide"
+    )
+    db.add_all([dim1, dim2])
+    db.commit()
+
+    sub = Submission(
+        task_id=task.id, worker_id="w1", content="content",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"score": 80, "feedback": "good"},
+                "completeness": {"score": 70, "feedback": "ok"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    db.add(sub)
+    db.commit()
+
+    constraint_resp = json.dumps({
+        "submission_label": "Submission_A",
+        "task_relevance": {"passed": True, "analysis": "ok", "score_cap": None},
+        "authenticity": {"passed": True, "analysis": "ok", "flagged_issues": [], "score_cap": None},
+        "effective_cap": None,
+    })
+    dim_score_resp = json.dumps({
+        "dimension_id": "substantiveness",
+        "scores": [{"submission": "Submission_A", "raw_score": 85,
+                     "cap_applied": False, "final_score": 85, "evidence": "good"}]
+    })
+    dim_score_resp2 = json.dumps({
+        "dimension_id": "completeness",
+        "scores": [{"submission": "Submission_A", "raw_score": 75,
+                     "cap_applied": False, "final_score": 75, "evidence": "ok"}]
+    })
+    responses = [
+        type("R", (), {"stdout": constraint_resp, "returncode": 0})(),
+        type("R", (), {"stdout": dim_score_resp, "returncode": 0})(),
+        type("R", (), {"stdout": dim_score_resp2, "returncode": 0})(),
+    ]
+    call_idx = 0
+    def mock_subprocess(*args, **kwargs):
+        nonlocal call_idx
+        result = responses[call_idx]
+        call_idx += 1
+        return result
+
+    with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess), \
+         patch("app.services.escrow.create_challenge_onchain", return_value="0xtx"):
+        quality_first_lifecycle(db=db)
+
+    db.refresh(task)
+    db.refresh(sub)
+    assert task.status in (TaskStatus.scoring, TaskStatus.challenge_window)
+    assert sub.status == SubmissionStatus.scored
