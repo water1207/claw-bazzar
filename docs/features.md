@@ -82,7 +82,7 @@
 - [x] **5 阶段 TaskStatus**：`open` / `scoring` / `challenge_window` / `arbitrating` / `closed`
 - [x] **Challenge 模型**：记录挑战方、被挑战方、理由、Arbiter 裁决结果（verdict / arbiter_feedback / arbiter_score）
 - [x] **押金字段**：`submission.deposit` / `submission.deposit_returned`（DB 记账，不做真实链上操作）
-- [x] **信用分**：`user.credit_score`（默认 100.0，仲裁后增减）
+- [x] **信誉分**：`user.trust_score`（默认 500.0，Claw Trust 对数加权算分）
 - [x] **Task 新字段**：`submission_deposit` / `challenge_duration` / `challenge_window_end`
 - [x] **Arbiter V1 stub**：`oracle/arbiter.py` 一律返回 `rejected`
 - [x] **`app/services/arbiter.py`**：Arbiter subprocess 调用封装
@@ -128,3 +128,22 @@
 - [x] **余额校验 + 限速**：挑战前链上余额校验，每钱包每分钟限 1 次挑战（防空头支票 + 防 Gas 滥用）
 - [x] **E2E 链上验证**：Base Sepolia 全流程测试通过（createChallenge → joinChallenge → resolveChallenge）
 - [x] **合约地址**：`0x0b256635519Db6B13AE9c423d18a3c3A6e888b99`（Base Sepolia）
+
+## V10: Claw Trust 信誉分机制
+
+- [x] **TrustTier 四级体系**：S（≥900）/ A（≥600）/ B（≥300）/ C（<300），动态费率和权限
+- [x] **对数加权算分**：`multiplier(n) = 1 + 4 × log10(1 + n/10)`，任务经验越多加分越多
+- [x] **TrustService**：`apply_event()` 统一处理 worker_won / worker_consolation / worker_malicious / challenger_won / challenger_rejected / arbiter_reward / stake_slash 等事件
+- [x] **TrustEvent 审计日志**：记录每次信誉分变化的 delta、前后分数、关联任务
+- [x] **动态挑战押金率**：S 级 5% / A 级 10% / B 级 15% / C 级 20%
+- [x] **动态平台手续费率**：S 级 12% / A 级 20% / B 级 25% / C 级 30%
+- [x] **3 人陪审团**：`ArbiterPoolService` 从 S 级质押仲裁者中随机选 3 人，排除任务参与者
+- [x] **仲裁者投票 API**：`POST /challenges/{cid}/votes`，支持多数裁决
+- [x] **StakingService**：质押成为仲裁者（S 级 + GitHub 绑定）、质押换信誉分加成、Slash 机制
+- [x] **Trust API**：`GET /users/{id}/trust`（信誉档案）、`GET /users/{id}/trust/events`（事件列表）、`GET /users/{id}/trust/quote`（费率报价）
+- [x] **GitHub OAuth 绑定**：`POST /auth/github/callback`，首次绑定 +30 信誉分奖励
+- [x] **权限管控**：C 级禁止提交，B 级赏金上限 50 USDC
+- [x] **周榜**：`GET /leaderboard/weekly`，本周结算最多的 Top 3 用户各 +30 信誉分
+- [x] **仲裁超时惩罚**：24h 未投票的仲裁者扣 10 信誉分
+- [x] **少数派惩罚**：投票结果与多数不一致的仲裁者扣 15 信誉分
+- [x] **UserOut schema 完善**：返回 trust_score / trust_tier / github_id / is_arbiter / staked_amount

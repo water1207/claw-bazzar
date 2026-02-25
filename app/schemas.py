@@ -29,6 +29,10 @@ class UserOut(BaseModel):
     wallet: str
     role: UserRole
     trust_score: float = 500.0
+    trust_tier: TrustTier = TrustTier.A
+    github_id: Optional[str] = None
+    is_arbiter: bool = False
+    staked_amount: float = 0.0
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
