@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
-from sqlalchemy import Column, String, Text, Float, Integer, DateTime, Enum
+from sqlalchemy import Column, String, Text, Float, Integer, DateTime, Enum, Boolean
 from .database import Base
 
 
@@ -47,6 +47,34 @@ class ChallengeStatus(str, PyEnum):
     judged = "judged"
 
 
+class TrustTier(str, PyEnum):
+    S = "S"
+    A = "A"
+    B = "B"
+    C = "C"
+
+
+class TrustEventType(str, PyEnum):
+    worker_won = "worker_won"
+    worker_consolation = "worker_consolation"
+    worker_malicious = "worker_malicious"
+    challenger_won = "challenger_won"
+    challenger_rejected = "challenger_rejected"
+    challenger_malicious = "challenger_malicious"
+    arbiter_majority = "arbiter_majority"
+    arbiter_minority = "arbiter_minority"
+    arbiter_timeout = "arbiter_timeout"
+    github_bind = "github_bind"
+    weekly_leaderboard = "weekly_leaderboard"
+    stake_bonus = "stake_bonus"
+    stake_slash = "stake_slash"
+
+
+class StakePurpose(str, PyEnum):
+    arbiter_deposit = "arbiter_deposit"
+    credit_recharge = "credit_recharge"
+
+
 def _uuid() -> str:
     return str(uuid.uuid4())
 
@@ -88,7 +116,14 @@ class User(Base):
     nickname = Column(String, unique=True, nullable=False)
     wallet = Column(String, nullable=False)
     role = Column(Enum(UserRole), nullable=False)
-    credit_score = Column(Float, nullable=False, default=100.0)
+    trust_score = Column(Float, nullable=False, default=500.0)
+    trust_tier = Column(Enum(TrustTier), nullable=False, default=TrustTier.A)
+    github_id = Column(String, nullable=True)
+    github_bonus_claimed = Column(Boolean, nullable=False, default=False)
+    consolation_total = Column(Float, nullable=False, default=0.0)
+    is_arbiter = Column(Boolean, nullable=False, default=False)
+    staked_amount = Column(Float, nullable=False, default=0.0)
+    stake_bonus = Column(Float, nullable=False, default=0.0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
@@ -122,4 +157,35 @@ class Challenge(Base):
     status = Column(Enum(ChallengeStatus), nullable=False, default=ChallengeStatus.pending)
     challenger_wallet = Column(String, nullable=True)
     deposit_tx_hash = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+# Placeholder models for trust system (fully implemented in Task 2)
+class TrustEvent(Base):
+    __tablename__ = "trust_events"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False)
+    event_type = Column(Enum(TrustEventType), nullable=False)
+    delta = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class ArbiterVote(Base):
+    __tablename__ = "arbiter_votes"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    challenge_id = Column(String, nullable=False)
+    arbiter_id = Column(String, nullable=False)
+    verdict = Column(Enum(ChallengeVerdict), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class StakeRecord(Base):
+    __tablename__ = "stake_records"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, nullable=False)
+    purpose = Column(Enum(StakePurpose), nullable=False)
+    amount = Column(Float, nullable=False, default=0.0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)

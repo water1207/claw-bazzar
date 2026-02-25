@@ -27,7 +27,7 @@ class UserOut(BaseModel):
     nickname: str
     wallet: str
     role: UserRole
-    credit_score: float = 100.0
+    trust_score: float = 500.0
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}

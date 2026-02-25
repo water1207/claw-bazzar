@@ -79,7 +79,7 @@ def test_settle_upheld_changes_winner():
     assert s2.deposit_returned == s2.deposit  # Full refund
 
     db.refresh(w2)
-    assert w2.credit_score == 105.0  # +5
+    assert w2.trust_score == 505.0  # +5
 
 
 def test_settle_rejected_deducts_deposit():
@@ -102,7 +102,7 @@ def test_settle_rejected_deducts_deposit():
     assert s2.deposit_returned == 0.70  # 70% returned
 
     db.refresh(w2)
-    assert w2.credit_score == 100.0  # unchanged
+    assert w2.trust_score == 500.0  # unchanged
 
 
 def test_settle_malicious_confiscates_deposit_and_credit():
@@ -125,7 +125,7 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     assert s2.deposit_returned == 0  # Confiscated
 
     db.refresh(w2)
-    assert w2.credit_score == 80.0  # -20
+    assert w2.trust_score == 480.0  # -20
 
 
 def test_settle_multiple_upheld_picks_highest():

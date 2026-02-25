@@ -233,7 +233,7 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if challenger_sub and challenger_sub.deposit is not None and challenger_sub.deposit_returned is None:
                 challenger_sub.deposit_returned = round(challenger_sub.deposit * 0.70, 6)
             if worker:
-                worker.credit_score = round(worker.credit_score + 5, 2)
+                worker.trust_score = round(worker.trust_score + 5, 2)
 
         elif c.verdict == ChallengeVerdict.rejected:
             # 30% to arbiters, remaining 70% to platform — challenger gets nothing
@@ -245,7 +245,7 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if challenger_sub and challenger_sub.deposit_returned is None:
                 challenger_sub.deposit_returned = 0
             if worker:
-                worker.credit_score = round(worker.credit_score - 20, 2)
+                worker.trust_score = round(worker.trust_score - 20, 2)
 
     # Determine final winner
     upheld = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]
