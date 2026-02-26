@@ -5,6 +5,7 @@ const config: Record<PayoutStatus, { variant: 'secondary' | 'default' | 'destruc
   pending: { variant: 'secondary', label: 'pending' },
   paid: { variant: 'default', label: 'paid' },
   failed: { variant: 'destructive', label: 'failed' },
+  refunded: { variant: 'secondary', label: 'refunded' },
 }
 
 interface Props {

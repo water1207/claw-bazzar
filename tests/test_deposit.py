@@ -23,7 +23,8 @@ def make_quality_task(client, bounty=10.0, submission_deposit=1.0):
         return client.post("/tasks", json=body, headers=PAYMENT_HEADERS).json()
 
 
-def test_submission_records_deposit(client):
+def test_quality_first_submission_no_deposit(client):
+    """quality_first submissions no longer require deposit (deposits are for challenges only)."""
     task = make_quality_task(client, bounty=10.0, submission_deposit=1.0)
     with patch("app.routers.submissions.invoke_oracle"):
         resp = client.post(f"/tasks/{task['id']}/submissions", json={
@@ -31,25 +32,7 @@ def test_submission_records_deposit(client):
         })
     assert resp.status_code == 201
     data = resp.json()
-    assert data["deposit"] == 1.0
-    assert data["deposit_returned"] is None
-
-
-def test_submission_deposit_defaults_to_bounty_10_percent(client):
-    """When submission_deposit is not set, default to bounty * 0.10."""
-    body = {
-        "title": "Q2", "description": "d", "type": "quality_first",
-        "max_revisions": 3, "deadline": future(),
-        "publisher_id": "pub", "bounty": 20.0,
-    }
-    with PAYMENT_MOCK:
-        task = client.post("/tasks", json=body, headers=PAYMENT_HEADERS).json()
-    with patch("app.routers.submissions.invoke_oracle"):
-        resp = client.post(f"/tasks/{task['id']}/submissions", json={
-            "worker_id": "w1", "content": "answer"
-        })
-    assert resp.status_code == 201
-    assert resp.json()["deposit"] == 2.0  # 20.0 * 0.10
+    assert data["deposit"] is None
 
 
 def test_fastest_first_no_deposit(client):

@@ -36,7 +36,6 @@ def add_scored_submission(db, task_id, worker_id, score, content="c"):
     sub = Submission(
         task_id=task_id, worker_id=worker_id, revision=1,
         content=content, score=score, status=SubmissionStatus.scored,
-        deposit=1.0,
     )
     db.add(sub)
     db.flush()
@@ -137,32 +136,6 @@ def test_phase3_with_challenges_goes_to_arbitrating():
 
     db.refresh(task)
     assert task.status == TaskStatus.arbitrating
-
-
-# --- Phase 3: deposit refund for non-challengers ---
-
-def test_phase3_no_challenge_refunds_all_deposits():
-    db = make_db()
-    worker1 = User(nickname="dep-w1", wallet="0xDW1", role=UserRole.worker)
-    worker2 = User(nickname="dep-w2", wallet="0xDW2", role=UserRole.worker)
-    db.add_all([worker1, worker2])
-    db.flush()
-    task = make_expired_quality_task(db)
-    s1 = add_scored_submission(db, task.id, worker1.id, 0.9)
-    s2 = add_scored_submission(db, task.id, worker2.id, 0.7)
-    task.status = TaskStatus.challenge_window
-    task.winner_submission_id = s1.id
-    task.challenge_window_end = datetime.now(timezone.utc) - timedelta(minutes=1)
-    db.commit()
-
-    with patch("app.scheduler._resolve_via_contract"):
-        from app.scheduler import quality_first_lifecycle
-        quality_first_lifecycle(db=db)
-
-    db.refresh(s1)
-    db.refresh(s2)
-    assert s1.deposit_returned == s1.deposit
-    assert s2.deposit_returned == s2.deposit
 
 
 def test_phase1_triggers_batch_scoring():

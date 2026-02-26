@@ -155,38 +155,28 @@ def get_balance_events(user_id: str, db: Session = Depends(get_db)):
                 "created_at": t.created_at,
             })
 
-    # 4 & 5. Worker: deposit paid / returned
-    deposit_subs = db.query(Submission).filter(
+    # 4. Challenger: deposit paid (on-chain via joinChallenge)
+    challenger_subs = db.query(Submission).filter(
         Submission.worker_id == user_id,
-        Submission.deposit.isnot(None),
     ).all()
-    task_cache: dict[str, Task] = {}
-    for s in deposit_subs:
-        if s.task_id not in task_cache:
-            task_cache[s.task_id] = db.query(Task).filter_by(id=s.task_id).first()
-        task = task_cache[s.task_id]
-        events.append({
-            "id": f"sub_deposit:{s.id}",
-            "event_type": "deposit_paid",
-            "role": "worker",
-            "task_id": s.task_id,
-            "task_title": task.title if task else None,
-            "amount": s.deposit,
-            "direction": "outflow",
-            "tx_hash": None,
-            "created_at": s.created_at,
-        })
-        if s.deposit_returned is not None and s.deposit_returned > 0:
+    challenger_sub_ids = [s.id for s in challenger_subs]
+    if challenger_sub_ids:
+        deposit_challenges = db.query(Challenge).filter(
+            Challenge.challenger_submission_id.in_(challenger_sub_ids),
+            Challenge.deposit_tx_hash.isnot(None),
+        ).all()
+        for c in deposit_challenges:
+            task = db.query(Task).filter_by(id=c.task_id).first()
             events.append({
-                "id": f"sub_deposit_return:{s.id}",
-                "event_type": "deposit_returned",
+                "id": f"challenge_deposit:{c.id}",
+                "event_type": "challenge_deposit_paid",
                 "role": "worker",
-                "task_id": s.task_id,
+                "task_id": c.task_id,
                 "task_title": task.title if task else None,
-                "amount": s.deposit_returned,
-                "direction": "inflow",
-                "tx_hash": None,
-                "created_at": s.created_at,
+                "amount": task.submission_deposit or round((task.bounty or 0) * 0.10, 6),
+                "direction": "outflow",
+                "tx_hash": c.deposit_tx_hash,
+                "created_at": c.created_at,
             })
 
     # 6. Arbiter: reward

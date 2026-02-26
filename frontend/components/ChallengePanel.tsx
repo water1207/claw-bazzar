@@ -1,20 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select'
-import {
-  useChallenges, createChallenge,
-  useArbiterVotes, submitArbiterVote,
-} from '@/lib/api'
-import type {
-  TaskDetail, Challenge, ChallengeVerdict,
-} from '@/lib/api'
+import { useChallenges, useArbiterVotes } from '@/lib/api'
+import type { TaskDetail, Challenge, ChallengeVerdict } from '@/lib/api'
 
 function VerdictBadge({ verdict }: { verdict: ChallengeVerdict | null }) {
   if (!verdict) return <Badge variant="secondary">pending</Badge>
@@ -64,137 +53,9 @@ function ArbiterVotingPanel({ challengeId }: { challengeId: string }) {
   )
 }
 
-function ArbiterVoteForm({ challenge, onVoted }: {
-  challenge: Challenge
-  onVoted: () => void
-}) {
-  const [verdict, setVerdict] = useState<ChallengeVerdict | ''>('')
-  const [feedback, setFeedback] = useState('')
-  const [arbiterUserId, setArbiterUserId] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!verdict || !feedback || !arbiterUserId) return
-    setError(null)
-    setSubmitting(true)
-    try {
-      await submitArbiterVote(challenge.id, {
-        arbiter_user_id: arbiterUserId,
-        verdict,
-        feedback,
-      })
-      onVoted()
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2 mt-2 p-3 bg-zinc-800 border border-zinc-600 rounded">
-      <p className="text-xs font-medium">Submit Arbiter Vote</p>
-      <Input
-        value={arbiterUserId}
-        onChange={(e) => setArbiterUserId(e.target.value)}
-        placeholder="Your arbiter user ID"
-        className="h-8 text-xs"
-        required
-      />
-      <Select value={verdict} onValueChange={(v) => setVerdict(v as ChallengeVerdict)}>
-        <SelectTrigger className="h-8 text-xs">
-          <SelectValue placeholder="Select verdict" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="upheld">Upheld</SelectItem>
-          <SelectItem value="rejected">Rejected</SelectItem>
-          <SelectItem value="malicious">Malicious</SelectItem>
-        </SelectContent>
-      </Select>
-      <Textarea
-        value={feedback}
-        onChange={(e) => setFeedback(e.target.value)}
-        placeholder="Verdict reasoning (required)"
-        rows={2}
-        className="text-xs"
-        required
-      />
-      <Button type="submit" size="sm" disabled={submitting || !verdict || !feedback || !arbiterUserId}>
-        {submitting ? 'Submitting...' : 'Submit Vote'}
-      </Button>
-      {error && <p className="text-xs text-red-400 break-all">{error}</p>}
-    </form>
-  )
-}
-
-function ChallengeCreateForm({ task, onCreated }: {
-  task: TaskDetail
-  onCreated: () => void
-}) {
-  const [subId, setSubId] = useState('')
-  const [reason, setReason] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const nonWinnerSubs = task.submissions.filter(
-    (s) => s.id !== task.winner_submission_id && s.status === 'scored'
-  )
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setSubmitting(true)
-    try {
-      await createChallenge(task.id, {
-        challenger_submission_id: subId,
-        reason,
-      })
-      setSubId('')
-      setReason('')
-      onCreated()
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-3 p-4 bg-zinc-900 border border-zinc-700 rounded">
-      <p className="text-sm font-medium">Submit Challenge</p>
-      <Select value={subId} onValueChange={setSubId}>
-        <SelectTrigger className="h-8 text-xs">
-          <SelectValue placeholder="Select your submission" />
-        </SelectTrigger>
-        <SelectContent>
-          {nonWinnerSubs.map((s) => (
-            <SelectItem key={s.id} value={s.id}>
-              {s.worker_id.slice(0, 8)}... (score: {s.score?.toFixed(2) ?? '—'})
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Textarea
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder="Reason for challenging the winner..."
-        rows={3}
-        required
-      />
-      <Button type="submit" size="sm" disabled={submitting || !subId}>
-        {submitting ? 'Submitting...' : 'Submit Challenge'}
-      </Button>
-      {error && <p className="text-xs text-red-400 break-all">{error}</p>}
-    </form>
-  )
-}
-
-function ChallengeCard({ challenge, task, onJudged }: {
+function ChallengeCard({ challenge, task }: {
   challenge: Challenge
   task: TaskDetail
-  onJudged: () => void
 }) {
   const challengerSub = task.submissions.find(
     (s) => s.id === challenge.challenger_submission_id
@@ -266,12 +127,8 @@ function ChallengeCard({ challenge, task, onJudged }: {
         </div>
       )}
 
-      {task.status === 'arbitrating' && (
+      {(task.status === 'arbitrating' || task.status === 'closed') && (
         <ArbiterVotingPanel challengeId={challenge.id} />
-      )}
-
-      {challenge.status === 'pending' && task.status === 'arbitrating' && (
-        <ArbiterVoteForm challenge={challenge} onVoted={onJudged} />
       )}
     </div>
   )
@@ -303,10 +160,8 @@ function useWindowCountdown(end: string | null, active: boolean) {
 }
 
 export function ChallengePanel({ task }: Props) {
-  const { data: challenges = [], mutate } = useChallenges(task.id)
+  const { data: challenges = [] } = useChallenges(task.id)
 
-  const showCreateForm = task.status === 'challenge_window'
-  const showArbiterHeader = task.status === 'arbitrating'
   const pendingCount = challenges.filter((c) => c.status === 'pending').length
 
   const windowLabel = useWindowCountdown(
@@ -326,7 +181,7 @@ export function ChallengePanel({ task }: Props) {
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">
           Challenges ({challenges.length})
-          {showArbiterHeader && pendingCount > 0 && (
+          {task.status === 'arbitrating' && pendingCount > 0 && (
             <span className="text-yellow-400 ml-2">
               {pendingCount} pending verdict{pendingCount > 1 ? 's' : ''}
             </span>
@@ -337,7 +192,7 @@ export function ChallengePanel({ task }: Props) {
         )}
       </div>
 
-      {challenges.length === 0 && !showCreateForm && (
+      {challenges.length === 0 && (
         <p className="text-xs text-muted-foreground">No challenges were filed.</p>
       )}
 
@@ -346,13 +201,8 @@ export function ChallengePanel({ task }: Props) {
           key={c.id}
           challenge={c}
           task={task}
-          onJudged={() => mutate()}
         />
       ))}
-
-      {showCreateForm && (
-        <ChallengeCreateForm task={task} onCreated={() => mutate()} />
-      )}
     </div>
   )
 }

@@ -6,7 +6,7 @@ const fetcher = (url: string) =>
     return r.json()
   })
 
-export type PayoutStatus = 'pending' | 'paid' | 'failed'
+export type PayoutStatus = 'pending' | 'paid' | 'failed' | 'refunded'
 export type UserRole = 'publisher' | 'worker'
 export type TaskStatus = 'open' | 'scoring' | 'challenge_window' | 'arbitrating' | 'closed'
 export type ChallengeVerdict = 'upheld' | 'rejected' | 'malicious'
@@ -220,6 +220,11 @@ export async function createTask(
     body: JSON.stringify(data),
   })
   if (!resp.ok) {
+    if (resp.status === 402) {
+      const body = await resp.json().catch(() => null)
+      const reason = body?.error || 'payment verification failed'
+      throw new Error(`Payment failed: ${reason}`)
+    }
     const text = await resp.text()
     throw new Error(text)
   }

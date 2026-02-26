@@ -21,7 +21,6 @@ def _maybe_hide_score(submission: Submission, task: Task, db: Session = None) ->
         submission.score = None
     return submission
 
-DEFAULT_DEPOSIT_RATE = 0.10
 
 
 @router.post("/tasks/{task_id}/submissions", response_model=SubmissionOut, status_code=201)
@@ -62,17 +61,11 @@ def create_submission(
             status_code=400, detail=f"Max revisions ({task.max_revisions}) reached"
         )
 
-    # Calculate deposit for quality_first tasks
-    deposit = None
-    if task.type == TaskType.quality_first and task.bounty:
-        deposit = task.submission_deposit if task.submission_deposit is not None else round(task.bounty * DEFAULT_DEPOSIT_RATE, 6)
-
     submission = Submission(
         task_id=task_id,
         worker_id=data.worker_id,
         content=data.content,
         revision=existing + 1,
-        deposit=deposit,
     )
     db.add(submission)
     db.commit()

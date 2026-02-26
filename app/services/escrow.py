@@ -25,7 +25,7 @@ def _load_escrow_abi() -> list:
     """Load ChallengeEscrow ABI from Foundry output."""
     abi_path = Path(__file__).parent.parent.parent / "contracts" / "out" / "ChallengeEscrow.sol" / "ChallengeEscrow.json"
     if abi_path.exists():
-        with open(abi_path) as f:
+        with open(abi_path, encoding="utf-8") as f:
             return json.load(f)["abi"]
     # Fallback: minimal ABI for the 4 functions we use
     return _MINIMAL_ESCROW_ABI

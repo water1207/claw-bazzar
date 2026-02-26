@@ -43,7 +43,8 @@ def _facilitator_verify(payment_header: str, requirements: dict) -> dict:
         verify_data = verify_resp.json()
         print(f"[x402] verify status={verify_resp.status_code} body={verify_data}", flush=True)
         if not verify_data.get("isValid", False):
-            return {"valid": False, "tx_hash": None}
+            reason = verify_data.get("invalidReason") or verify_data.get("error") or "signature verification failed"
+            return {"valid": False, "tx_hash": None, "reason": f"verify: {reason}"}
 
         # Step 2: settle (executes the on-chain USDC transfer)
         settle_resp = httpx.post(
@@ -55,12 +56,16 @@ def _facilitator_verify(payment_header: str, requirements: dict) -> dict:
         settle_data = settle_resp.json()
         print(f"[x402] settle status={settle_resp.status_code} body={settle_data}", flush=True)
         if settle_resp.status_code != 200 or not settle_data.get("success", False):
-            return {"valid": False, "tx_hash": None}
+            reason = settle_data.get("error") or f"settle failed (HTTP {settle_resp.status_code})"
+            return {"valid": False, "tx_hash": None, "reason": f"settle: {reason}"}
 
         return {"valid": True, "tx_hash": settle_data.get("transaction")}
+    except httpx.TimeoutException:
+        print("[x402] facilitator timeout", flush=True)
+        return {"valid": False, "tx_hash": None, "reason": "facilitator timeout"}
     except Exception as e:
         print(f"[x402] exception: {e}", flush=True)
-        return {"valid": False, "tx_hash": None}
+        return {"valid": False, "tx_hash": None, "reason": str(e)}
 
 
 def verify_payment(payment_header: str | None, bounty: float) -> dict:

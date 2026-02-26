@@ -45,17 +45,6 @@ def _resolve_via_contract(
         print(f"[scheduler] resolveChallenge failed for {task.id}: {e}", flush=True)
 
 
-def _refund_all_deposits(db: Session, task_id: str) -> None:
-    """Refund all deposits for a task (no challenges scenario)."""
-    submissions = db.query(Submission).filter(
-        Submission.task_id == task_id,
-        Submission.deposit.isnot(None),
-    ).all()
-    for sub in submissions:
-        if sub.deposit_returned is None:
-            sub.deposit_returned = sub.deposit
-
-
 JURY_VOTING_TIMEOUT = timedelta(hours=6)
 
 
@@ -271,7 +260,6 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 Challenge.task_id == task.id
             ).count()
             if challenge_count == 0:
-                _refund_all_deposits(db, task.id)
                 task.status = TaskStatus.closed
                 # Publisher trust reward for successful task completion
                 from .services.trust import apply_event as _apply_event
@@ -332,7 +320,7 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     from .services.staking import check_and_slash
     challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
 
-    # Process deposits (30% arbiter cut from ALL) and trust events
+    # Process trust events for challengers (deposits handled on-chain by escrow contract)
     for c in challenges:
         challenger_sub = db.query(Submission).filter(
             Submission.id == c.challenger_submission_id
@@ -342,22 +330,11 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
         ).first() if challenger_sub else None
 
         if c.verdict == ChallengeVerdict.upheld:
-            # 30% to arbiters, remaining 70% back to challenger
-            if challenger_sub and challenger_sub.deposit is not None and challenger_sub.deposit_returned is None:
-                challenger_sub.deposit_returned = round(challenger_sub.deposit * 0.70, 6)
             if worker:
                 apply_event(db, worker.id, TrustEventType.challenger_won,
                             task_bounty=task.bounty or 0.0, task_id=task.id)
 
-        elif c.verdict == ChallengeVerdict.rejected:
-            # 30% to arbiters, remaining 70% to platform — challenger gets nothing
-            if challenger_sub and challenger_sub.deposit_returned is None:
-                challenger_sub.deposit_returned = 0
-
         elif c.verdict == ChallengeVerdict.malicious:
-            # 30% to arbiters, remaining 70% to platform — challenger gets nothing
-            if challenger_sub and challenger_sub.deposit_returned is None:
-                challenger_sub.deposit_returned = 0
             if worker:
                 apply_event(db, worker.id, TrustEventType.challenger_malicious,
                             task_id=task.id)
@@ -393,15 +370,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if sub.id not in malicious_ids:
                 apply_event(db, sub.worker_id, TrustEventType.worker_consolation,
                             task_id=task.id)
-
-    # Refund non-challenger deposits
-    all_subs = db.query(Submission).filter(
-        Submission.task_id == task.id,
-        Submission.deposit.isnot(None),
-        Submission.deposit_returned.is_(None),
-    ).all()
-    for sub in all_subs:
-        sub.deposit_returned = sub.deposit
 
     task.status = TaskStatus.closed
 

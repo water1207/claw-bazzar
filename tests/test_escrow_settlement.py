@@ -24,9 +24,9 @@ def _setup_arbitrated_task(db):
     db.add(task)
 
     s1 = Submission(id="s1", task_id="t1", worker_id="w1", content="winner", score=0.9,
-                    status=SubmissionStatus.scored, deposit=1.0)
+                    status=SubmissionStatus.scored, )
     s2 = Submission(id="s2", task_id="t1", worker_id="w2", content="challenger", score=0.7,
-                    status=SubmissionStatus.scored, deposit=1.0)
+                    status=SubmissionStatus.scored, )
     db.add_all([s1, s2])
 
     challenge = Challenge(
@@ -86,9 +86,9 @@ def test_settle_without_wallets_still_resolves(client):
     db.add(task)
 
     s1 = Submission(id="s1b", task_id="t1b", worker_id="w1b", content="w", score=0.9,
-                    status=SubmissionStatus.scored, deposit=1.0)
+                    status=SubmissionStatus.scored, )
     s2 = Submission(id="s2b", task_id="t1b", worker_id="w2b", content="c", score=0.7,
-                    status=SubmissionStatus.scored, deposit=1.0)
+                    status=SubmissionStatus.scored, )
     db.add_all([s1, s2])
 
     challenge = Challenge(

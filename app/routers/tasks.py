@@ -23,10 +23,9 @@ def create_task(data: TaskCreate, request: Request, db: Session = Depends(get_db
             )
         result = verify_payment(payment_header, data.bounty)
         if not result["valid"]:
-            return JSONResponse(
-                status_code=402,
-                content=build_payment_requirements(data.bounty),
-            )
+            reqs = build_payment_requirements(data.bounty)
+            reqs["error"] = result.get("reason", "payment verification failed")
+            return JSONResponse(status_code=402, content=reqs)
         tx_hash = result.get("tx_hash")
     task = Task(**data.model_dump(), payment_tx_hash=tx_hash)
     db.add(task)

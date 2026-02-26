@@ -93,8 +93,8 @@ def test_balance_events_worker_payout(client):
     assert evt["tx_hash"] == "0xpayout123"
 
 
-def test_balance_events_worker_deposit(client):
-    """Worker who submitted to quality_first task sees deposit_paid event."""
+def test_balance_events_no_submission_deposit(client):
+    """Submitting to quality_first no longer creates deposit events."""
     pub = client.post("/users", json={"nickname": "be-pub3", "wallet": "0xBEP3", "role": "publisher"})
     pub_id = pub.json()["id"]
     wrk = client.post("/users", json={"nickname": "be-wrk2", "wallet": "0xBEW2", "role": "worker"})
@@ -118,7 +118,4 @@ def test_balance_events_worker_deposit(client):
 
     resp = client.get(f"/users/{wrk_id}/balance-events")
     data = resp.json()
-    deposit_events = [e for e in data if e["event_type"] == "deposit_paid"]
-    assert len(deposit_events) == 1
-    assert deposit_events[0]["direction"] == "outflow"
-    assert deposit_events[0]["amount"] == 1.0  # default 10% of bounty
+    assert len(data) == 0  # No deposit events for submissions

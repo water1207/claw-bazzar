@@ -37,11 +37,11 @@ def setup_arbitrating_task(db):
 
     s1 = Submission(
         task_id=task.id, worker_id=user_w1.id, revision=1,
-        content="winner", score=0.9, status=SubmissionStatus.scored, deposit=1.0,
+        content="winner", score=0.9, status=SubmissionStatus.scored,
     )
     s2 = Submission(
         task_id=task.id, worker_id=user_w2.id, revision=1,
-        content="challenger", score=0.7, status=SubmissionStatus.scored, deposit=1.0,
+        content="challenger", score=0.7, status=SubmissionStatus.scored,
     )
     db.add_all([s1, s2])
     db.flush()
@@ -74,9 +74,6 @@ def test_settle_upheld_changes_winner():
     assert task.status == TaskStatus.closed
     assert task.winner_submission_id == s2.id  # Challenger took over
 
-    db.refresh(s2)
-    assert s2.deposit_returned == round(s2.deposit * 0.70, 6)  # 70% returned (30% to arbiters)
-
     # Challenger gets challenger_won trust event (weighted by bounty)
     from app.models import TrustEvent, TrustEventType
     events = db.query(TrustEvent).filter_by(
@@ -101,9 +98,6 @@ def test_settle_rejected_deducts_deposit():
     assert task.status == TaskStatus.closed
     assert task.winner_submission_id == s1.id  # Original winner stays
 
-    db.refresh(s2)
-    assert s2.deposit_returned == 0  # Challenger gets nothing on rejection
-
 
 def test_settle_malicious_confiscates_deposit_and_credit():
     db = make_db()
@@ -121,9 +115,6 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     db.refresh(task)
     assert task.status == TaskStatus.closed
     assert task.winner_submission_id == s1.id  # Original winner stays
-
-    db.refresh(s2)
-    assert s2.deposit_returned == 0  # Confiscated
 
     # Challenger gets challenger_malicious trust event (-100)
     from app.models import TrustEvent, TrustEventType
@@ -153,11 +144,11 @@ def test_settle_multiple_upheld_picks_highest():
     db.flush()
 
     s1 = Submission(task_id=task.id, worker_id=user_w1.id, revision=1,
-                    content="a", score=0.9, status=SubmissionStatus.scored, deposit=1.0)
+                    content="a", score=0.9, status=SubmissionStatus.scored)
     s2 = Submission(task_id=task.id, worker_id=user_w2.id, revision=1,
-                    content="b", score=0.7, status=SubmissionStatus.scored, deposit=1.0)
+                    content="b", score=0.7, status=SubmissionStatus.scored)
     s3 = Submission(task_id=task.id, worker_id=user_w3.id, revision=1,
-                    content="c", score=0.8, status=SubmissionStatus.scored, deposit=1.0)
+                    content="c", score=0.8, status=SubmissionStatus.scored)
     db.add_all([s1, s2, s3])
     db.flush()
     task.winner_submission_id = s1.id
@@ -181,27 +172,3 @@ def test_settle_multiple_upheld_picks_highest():
     assert task.winner_submission_id == s3.id  # w3 had higher arbiter_score
 
 
-def test_non_challengers_get_full_refund():
-    db = make_db()
-    task, s1, s2, challenge, w1, w2 = setup_arbitrating_task(db)
-
-    # Add a third non-challenging worker
-    user_w3 = User(nickname="w3", wallet="0xccc", role=UserRole.worker)
-    db.add(user_w3)
-    db.flush()
-    s3 = Submission(task_id=task.id, worker_id=user_w3.id, revision=1,
-                    content="passive", score=0.5, status=SubmissionStatus.scored, deposit=1.0)
-    db.add(s3)
-
-    challenge.verdict = ChallengeVerdict.rejected
-    challenge.status = ChallengeStatus.judged
-    db.commit()
-
-    with patch("app.scheduler._resolve_via_contract"):
-        from app.scheduler import quality_first_lifecycle
-        quality_first_lifecycle(db=db)
-
-    db.refresh(s1)
-    db.refresh(s3)
-    assert s1.deposit_returned == s1.deposit  # Winner: full refund
-    assert s3.deposit_returned == s3.deposit  # Non-challenger: full refund
