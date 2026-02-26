@@ -1,8 +1,24 @@
+'use client'
+
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
-import { Submission, Task } from '@/lib/api'
+import { Submission, Task, useUser } from '@/lib/api'
+import { TrustBadge } from '@/components/TrustBadge'
 import { scoreColor } from '@/lib/utils'
+
+function WorkerCell({ workerId }: { workerId: string }) {
+  const { data: user } = useUser(workerId)
+  if (!user) {
+    return <span className="font-mono text-sm">{workerId.slice(0, 8)}...</span>
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-sm">{user.nickname}</span>
+      <TrustBadge tier={user.trust_tier} score={user.trust_score} />
+    </span>
+  )
+}
 
 interface Props {
   submissions: Submission[]
@@ -29,7 +45,7 @@ export function SubmissionTable({ submissions, task }: Props) {
               key={sub.id}
               className={isWinner ? 'bg-yellow-500/10 border-yellow-500/30' : ''}
             >
-              <TableCell className="font-mono text-sm">{sub.worker_id}</TableCell>
+              <TableCell><WorkerCell workerId={sub.worker_id} /></TableCell>
               <TableCell>{sub.revision}</TableCell>
               <TableCell className={scoreColor(sub.score, task.threshold)}>
                 {sub.score !== null ? sub.score.toFixed(2) : '—'}

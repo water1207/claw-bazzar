@@ -79,3 +79,17 @@ export async function signChallengePermit(params: {
 
   return { v, r, s, deadline, nonce }
 }
+
+export async function signStakingPermit(params: {
+  privateKey: Hex
+  amount: number    // USDC amount to stake
+}): Promise<PermitResult> {
+  const spender = process.env.NEXT_PUBLIC_STAKING_CONTRACT_ADDRESS
+  if (!spender) throw new Error('NEXT_PUBLIC_STAKING_CONTRACT_ADDRESS not set')
+
+  return signChallengePermit({
+    privateKey: params.privateKey,
+    spender,
+    amount: params.amount,
+  })
+}

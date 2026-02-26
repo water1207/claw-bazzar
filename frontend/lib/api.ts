@@ -11,6 +11,8 @@ export type UserRole = 'publisher' | 'worker'
 export type TaskStatus = 'open' | 'scoring' | 'challenge_window' | 'arbitrating' | 'closed'
 export type ChallengeVerdict = 'upheld' | 'rejected' | 'malicious'
 export type ChallengeStatus = 'pending' | 'judged'
+export type TrustTier = 'S' | 'A' | 'B' | 'C'
+export type ArbiterVerdictType = 'upheld' | 'rejected' | 'malicious'
 
 export interface ScoringDimension {
   name: string
@@ -47,6 +49,11 @@ export interface User {
   wallet: string
   role: UserRole
   created_at: string
+  trust_score: number
+  trust_tier: TrustTier
+  github_id: string | null
+  is_arbiter: boolean
+  staked_amount: number
 }
 
 export interface Submission {
@@ -76,6 +83,60 @@ export interface Challenge {
   created_at: string
 }
 
+export interface TrustProfile {
+  trust_score: number
+  trust_tier: TrustTier
+  challenge_deposit_rate: number
+  platform_fee_rate: number
+  can_accept_tasks: boolean
+  can_challenge: boolean
+  max_task_amount: number | null
+  is_arbiter: boolean
+  github_bound: boolean
+  staked_amount: number
+  stake_bonus: number
+  consolation_total: number
+}
+
+export interface TrustEvent {
+  id: string
+  event_type: string
+  task_id: string | null
+  amount: number
+  delta: number
+  score_before: number
+  score_after: number
+  created_at: string
+}
+
+export interface TrustQuote {
+  trust_tier: TrustTier
+  challenge_deposit_rate: number
+  challenge_deposit_amount: number
+  platform_fee_rate: number
+  service_fee: number
+}
+
+export interface ArbiterVote {
+  id: string
+  challenge_id: string
+  arbiter_user_id: string
+  vote: ArbiterVerdictType | null
+  feedback: string | null
+  is_majority: boolean | null
+  reward_amount: number | null
+  created_at: string
+}
+
+export interface WeeklyLeaderboardEntry {
+  user_id: string
+  nickname: string
+  total_earned: number
+  trust_score: number
+  trust_tier: TrustTier
+  rank: number
+}
+
 export interface TaskDetail extends Task {
   submissions: Submission[]
 }
@@ -96,6 +157,32 @@ export function useChallenges(taskId: string | null) {
     fetcher,
     { refreshInterval: 10_000 },
   )
+}
+
+export function useTrustProfile(userId: string | null) {
+  return useSWR<TrustProfile>(userId ? `/api/users/${userId}/trust` : null, fetcher, {
+    refreshInterval: 30_000,
+  })
+}
+
+export function useTrustEvents(userId: string | null) {
+  return useSWR<TrustEvent[]>(userId ? `/api/users/${userId}/trust/events` : null, fetcher, {
+    refreshInterval: 30_000,
+  })
+}
+
+export function useArbiterVotes(challengeId: string | null) {
+  return useSWR<ArbiterVote[]>(
+    challengeId ? `/api/challenges/${challengeId}/votes` : null,
+    fetcher,
+    { refreshInterval: 10_000 },
+  )
+}
+
+export function useWeeklyLeaderboard() {
+  return useSWR<WeeklyLeaderboardEntry[]>('/api/leaderboard/weekly', fetcher, {
+    refreshInterval: 60_000,
+  })
 }
 
 export async function createTask(
@@ -185,6 +272,22 @@ export async function judgeChallenge(
   data: { verdict: ChallengeVerdict; score: number; feedback?: string },
 ): Promise<Challenge> {
   const resp = await fetch(`/api/internal/challenges/${challengeId}/judge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(text)
+  }
+  return resp.json()
+}
+
+export async function submitArbiterVote(
+  challengeId: string,
+  data: { arbiter_user_id: string; verdict: ArbiterVerdictType; feedback: string },
+): Promise<ArbiterVote> {
+  const resp = await fetch(`/api/challenges/${challengeId}/vote`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),

@@ -3,13 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-interface IERC20Permit {
-    function permit(
-        address owner, address spender, uint256 value,
-        uint256 deadline, uint8 v, bytes32 r, bytes32 s
-    ) external;
-}
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 contract StakingVault is Ownable {
     IERC20 public immutable usdc;

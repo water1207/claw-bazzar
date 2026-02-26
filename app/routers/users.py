@@ -1,10 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import User
 from ..schemas import UserCreate, UserOut
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+@router.get("", response_model=UserOut)
+def get_user_by_nickname(nickname: str = Query(...), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.nickname == nickname).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 
 @router.post("", response_model=UserOut, status_code=201)

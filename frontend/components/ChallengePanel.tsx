@@ -9,7 +9,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  useChallenges, createChallenge, judgeChallenge,
+  useChallenges, createChallenge,
+  useArbiterVotes, submitArbiterVote,
 } from '@/lib/api'
 import type {
   TaskDetail, Challenge, ChallengeVerdict,
@@ -24,6 +25,108 @@ function VerdictBadge({ verdict }: { verdict: ChallengeVerdict | null }) {
   }
   const c = cfg[verdict]
   return <Badge variant={c.variant}>{c.label}</Badge>
+}
+
+function ArbiterVotingPanel({ challengeId }: { challengeId: string }) {
+  const { data: votes = [] } = useArbiterVotes(challengeId)
+
+  if (votes.length === 0) return null
+
+  const voted = votes.filter((v) => v.vote !== null).length
+  const total = votes.length
+
+  return (
+    <div className="mt-2 p-3 bg-zinc-800 border border-zinc-600 rounded space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium">Jury Votes</span>
+        <span className="text-xs text-muted-foreground">{voted}/{total} voted</span>
+      </div>
+      <div className="space-y-1">
+        {votes.map((v) => (
+          <div key={v.id} className="flex items-center justify-between text-xs">
+            <span className="font-mono text-muted-foreground">
+              {v.arbiter_user_id.slice(0, 8)}...
+            </span>
+            {v.vote ? (
+              <div className="flex items-center gap-2">
+                <VerdictBadge verdict={v.vote} />
+                {v.feedback && (
+                  <span className="text-muted-foreground max-w-xs truncate">{v.feedback}</span>
+                )}
+              </div>
+            ) : (
+              <span className="text-yellow-400">pending...</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ArbiterVoteForm({ challenge, onVoted }: {
+  challenge: Challenge
+  onVoted: () => void
+}) {
+  const [verdict, setVerdict] = useState<ChallengeVerdict | ''>('')
+  const [feedback, setFeedback] = useState('')
+  const [arbiterUserId, setArbiterUserId] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!verdict || !feedback || !arbiterUserId) return
+    setError(null)
+    setSubmitting(true)
+    try {
+      await submitArbiterVote(challenge.id, {
+        arbiter_user_id: arbiterUserId,
+        verdict,
+        feedback,
+      })
+      onVoted()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-2 mt-2 p-3 bg-zinc-800 border border-zinc-600 rounded">
+      <p className="text-xs font-medium">Submit Arbiter Vote</p>
+      <Input
+        value={arbiterUserId}
+        onChange={(e) => setArbiterUserId(e.target.value)}
+        placeholder="Your arbiter user ID"
+        className="h-8 text-xs"
+        required
+      />
+      <Select value={verdict} onValueChange={(v) => setVerdict(v as ChallengeVerdict)}>
+        <SelectTrigger className="h-8 text-xs">
+          <SelectValue placeholder="Select verdict" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="upheld">Upheld</SelectItem>
+          <SelectItem value="rejected">Rejected</SelectItem>
+          <SelectItem value="malicious">Malicious</SelectItem>
+        </SelectContent>
+      </Select>
+      <Textarea
+        value={feedback}
+        onChange={(e) => setFeedback(e.target.value)}
+        placeholder="Verdict reasoning (required)"
+        rows={2}
+        className="text-xs"
+        required
+      />
+      <Button type="submit" size="sm" disabled={submitting || !verdict || !feedback || !arbiterUserId}>
+        {submitting ? 'Submitting...' : 'Submit Vote'}
+      </Button>
+      {error && <p className="text-xs text-red-400 break-all">{error}</p>}
+    </form>
+  )
 }
 
 function ChallengeCreateForm({ task, onCreated }: {
@@ -82,80 +185,6 @@ function ChallengeCreateForm({ task, onCreated }: {
       />
       <Button type="submit" size="sm" disabled={submitting || !subId}>
         {submitting ? 'Submitting...' : 'Submit Challenge'}
-      </Button>
-      {error && <p className="text-xs text-red-400 break-all">{error}</p>}
-    </form>
-  )
-}
-
-function JudgeForm({ challenge, onJudged }: {
-  challenge: Challenge
-  onJudged: () => void
-}) {
-  const [verdict, setVerdict] = useState<ChallengeVerdict | ''>('')
-  const [score, setScore] = useState('')
-  const [feedback, setFeedback] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function handleJudge(e: React.FormEvent) {
-    e.preventDefault()
-    if (!verdict) return
-    setError(null)
-    setSubmitting(true)
-    try {
-      await judgeChallenge(challenge.id, {
-        verdict,
-        score: parseFloat(score) || 0,
-        feedback: feedback || undefined,
-      })
-      onJudged()
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleJudge} className="flex flex-col gap-2 mt-2 p-3 bg-zinc-800 border border-zinc-600 rounded">
-      <div className="flex gap-2 items-end">
-        <div className="flex-1">
-          <label className="text-xs text-muted-foreground">Verdict</label>
-          <Select value={verdict} onValueChange={(v) => setVerdict(v as ChallengeVerdict)}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Select verdict" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="upheld">Upheld</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-              <SelectItem value="malicious">Malicious</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="w-24">
-          <label className="text-xs text-muted-foreground">Score</label>
-          <Input
-            type="number"
-            step="0.01"
-            min="0"
-            max="1"
-            placeholder="0.00"
-            value={score}
-            onChange={(e) => setScore(e.target.value)}
-            className="h-8 text-xs"
-          />
-        </div>
-      </div>
-      <Textarea
-        value={feedback}
-        onChange={(e) => setFeedback(e.target.value)}
-        placeholder="Arbiter feedback (optional)"
-        rows={2}
-        className="text-xs"
-      />
-      <Button type="submit" size="sm" disabled={submitting || !verdict}>
-        {submitting ? 'Judging...' : 'Confirm Verdict'}
       </Button>
       {error && <p className="text-xs text-red-400 break-all">{error}</p>}
     </form>
@@ -237,8 +266,12 @@ function ChallengeCard({ challenge, task, onJudged }: {
         </div>
       )}
 
+      {task.status === 'arbitrating' && (
+        <ArbiterVotingPanel challengeId={challenge.id} />
+      )}
+
       {challenge.status === 'pending' && task.status === 'arbitrating' && (
-        <JudgeForm challenge={challenge} onJudged={onJudged} />
+        <ArbiterVoteForm challenge={challenge} onVoted={onJudged} />
       )}
     </div>
   )

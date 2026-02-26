@@ -13,6 +13,7 @@ import type { UserRole, Task, Submission, TaskDetail, Challenge } from '@/lib/ap
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
 import { signChallengePermit } from '@/lib/permit'
 import { fetchUsdcBalance } from '@/lib/utils'
+import { ArbiterPanel } from '@/components/ArbiterPanel'
 import type { Hex } from 'viem'
 
 const DEV_PUBLISHER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY as Hex | undefined
@@ -209,7 +210,7 @@ function OracleLogsPanel() {
   }
 
   return (
-    <div className="col-span-3 mt-6 border-t border-zinc-700 pt-6">
+    <div className="col-span-4 mt-6 border-t border-zinc-700 pt-6">
       <button
         onClick={() => setCollapsed(!collapsed)}
         className="flex items-center gap-2 text-base font-semibold mb-4 hover:text-blue-400"
@@ -638,7 +639,7 @@ export function DevPanel() {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-10 p-8 max-w-6xl mx-auto">
+    <div className="grid grid-cols-4 gap-10 p-8 max-w-[1600px] mx-auto">
       {/* Register User */}
       <div>
         <h2 className="text-base font-semibold mb-5">Register User</h2>
@@ -1138,6 +1139,9 @@ export function DevPanel() {
           </form>
         </div>
       </div>
+
+      {/* Arbiter Panel */}
+      <ArbiterPanel />
 
       {/* Oracle Logs */}
       <OracleLogsPanel />

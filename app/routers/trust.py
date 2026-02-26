@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -121,3 +122,57 @@ def submit_arbiter_vote(
     db.commit()
     db.refresh(vote)
     return vote
+
+
+@router.get("/leaderboard/weekly")
+def weekly_leaderboard(db: Session = Depends(get_db)):
+    """Return this week's leaderboard: workers ranked by total payout from closed tasks."""
+    from datetime import timedelta
+    from app.models import Task, Submission, TaskStatus
+
+    now = datetime.now(timezone.utc)
+    # Start of current week (Monday 00:00 UTC)
+    monday = now - timedelta(days=now.weekday(), hours=now.hour, minutes=now.minute, seconds=now.second, microseconds=now.microsecond)
+
+    # Find all closed tasks from this week with winners
+    closed_tasks = (
+        db.query(Task)
+        .filter(
+            Task.status == TaskStatus.closed,
+            Task.created_at >= monday,
+            Task.winner_submission_id.isnot(None),
+        )
+        .all()
+    )
+
+    # Aggregate earnings per worker
+    worker_earnings: dict[str, float] = {}
+    for task in closed_tasks:
+        winner_sub = (
+            db.query(Submission)
+            .filter_by(id=task.winner_submission_id)
+            .first()
+        )
+        if winner_sub:
+            worker_earnings[winner_sub.worker_id] = (
+                worker_earnings.get(winner_sub.worker_id, 0.0)
+                + (task.payout_amount or task.bounty * 0.8)
+            )
+
+    # Sort by earnings, take top 100
+    sorted_workers = sorted(worker_earnings.items(), key=lambda x: x[1], reverse=True)[:100]
+
+    result = []
+    for rank, (worker_id, total_earned) in enumerate(sorted_workers, start=1):
+        user = db.query(User).filter_by(id=worker_id).first()
+        if user:
+            result.append({
+                "user_id": user.id,
+                "nickname": user.nickname,
+                "total_earned": round(total_earned, 2),
+                "trust_score": user.trust_score,
+                "trust_tier": user.trust_tier,
+                "rank": rank,
+            })
+
+    return result
