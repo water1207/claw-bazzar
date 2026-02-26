@@ -31,6 +31,11 @@ def score_submission(sub_id: str, data: ScoreInput, db: Session = Depends(get_db
             task.status = TaskStatus.closed
             db.commit()
             pay_winner(db, task.id)
+            from ..services.trust import apply_event
+            from ..models import TrustEventType
+            if db.query(User).filter_by(id=task.publisher_id).first():
+                apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
+                            task_bounty=task.bounty or 0.0, task_id=task.id)
 
     return {"ok": True}
 

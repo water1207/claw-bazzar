@@ -31,6 +31,7 @@ _FIXED_DELTAS = {
 _WEIGHTED_BASES = {
     TrustEventType.worker_won: 5,
     TrustEventType.challenger_won: 10,
+    TrustEventType.publisher_completed: 3,
 }
 
 

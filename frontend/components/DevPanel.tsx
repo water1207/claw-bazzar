@@ -8,12 +8,13 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { createTask, createSubmission, registerUser, createChallenge } from '@/lib/api'
+import { createTask, createSubmission, registerUser, createChallenge, useUser } from '@/lib/api'
 import type { UserRole, Task, Submission, TaskDetail, Challenge } from '@/lib/api'
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
 import { signChallengePermit } from '@/lib/permit'
 import { fetchUsdcBalance } from '@/lib/utils'
 import { ArbiterPanel } from '@/components/ArbiterPanel'
+import { TrustBadge } from '@/components/TrustBadge'
 import type { Hex } from 'viem'
 
 const DEV_PUBLISHER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY as Hex | undefined
@@ -67,6 +68,17 @@ function useCountdown(target: string | null | undefined): string {
   return display
 }
 
+function UserTrustLine({ userId }: { userId: string }) {
+  const { data: user } = useUser(userId)
+  if (!user) return null
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <span className="text-xs text-muted-foreground">{user.nickname}</span>
+      <TrustBadge tier={user.trust_tier} score={user.trust_score} />
+    </div>
+  )
+}
+
 function WalletCard({
   label, address, id, balance, onRefresh, refreshing, showFundLink,
 }: {
@@ -94,9 +106,12 @@ function WalletCard({
         Balance: <span className="text-white">{balance} USDC</span>
       </p>
       {id && (
-        <p className="text-xs text-muted-foreground mt-0.5">
-          ID: <span className="font-mono text-white break-all">{id}</span>
-        </p>
+        <>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            ID: <span className="font-mono text-white break-all">{id}</span>
+          </p>
+          <UserTrustLine userId={id} />
+        </>
       )}
       {showFundLink && (
         <a
@@ -419,16 +434,41 @@ export function DevPanel() {
   }
 
   async function autoRegister() {
+    // Helper: resolve a user ID — validate cached, else register or fetch by nickname
+    async function resolveUser(
+      storageKey: string, nickname: string, wallet: string, role: UserRole,
+    ): Promise<string | null> {
+      // Check if cached ID is still valid
+      const cached = localStorage.getItem(storageKey)
+      if (cached) {
+        try {
+          const resp = await fetch(`/api/users/${cached}`)
+          if (resp.ok) return cached
+        } catch {}
+        localStorage.removeItem(storageKey)
+      }
+      // Register new or fetch existing by nickname
+      try {
+        const user = await registerUser({ nickname, wallet, role })
+        localStorage.setItem(storageKey, user.id)
+        return user.id
+      } catch {
+        try {
+          const resp = await fetch(`/api/users?nickname=${nickname}`)
+          if (resp.ok) {
+            const u = await resp.json()
+            localStorage.setItem(storageKey, u.id)
+            return u.id
+          }
+        } catch {}
+      }
+      return null
+    }
+
     // Publisher
-    let pubId = localStorage.getItem('devPublisherId')
-    if (!pubId && DEV_PUBLISHER_WALLET_KEY) {
-      const user = await registerUser({
-        nickname: 'dev-publisher',
-        wallet: publisherAddress!,
-        role: 'publisher',
-      })
-      pubId = user.id
-      localStorage.setItem('devPublisherId', pubId)
+    let pubId: string | null = null
+    if (DEV_PUBLISHER_WALLET_KEY) {
+      pubId = await resolveUser('devPublisherId', 'dev-publisher', publisherAddress!, 'publisher')
     }
     if (pubId) setPublisherId(pubId)
 
@@ -437,19 +477,9 @@ export function DevPanel() {
     for (let i = 0; i < DEV_WORKERS.length; i++) {
       const w = DEV_WORKERS[i]
       const addr = workerAddresses[i]
-      let wrkId = localStorage.getItem(w.storageKey)
-      if (!wrkId && addr) {
-        try {
-          const user = await registerUser({
-            nickname: w.nickname,
-            wallet: addr,
-            role: 'worker',
-          })
-          wrkId = user.id
-          localStorage.setItem(w.storageKey, wrkId)
-        } catch {
-          wrkId = localStorage.getItem(w.storageKey)
-        }
+      let wrkId: string | null = null
+      if (addr) {
+        wrkId = await resolveUser(w.storageKey, w.nickname, addr, 'worker')
       }
       ids.push(wrkId || '')
     }

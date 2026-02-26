@@ -263,6 +263,12 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             if challenge_count == 0:
                 _refund_all_deposits(db, task.id)
                 task.status = TaskStatus.closed
+                # Publisher trust reward for successful task completion
+                from .services.trust import apply_event as _apply_event
+                from .models import TrustEventType as _TET, User as _User
+                if db.query(_User).filter_by(id=task.publisher_id).first():
+                    _apply_event(db, task.publisher_id, _TET.publisher_completed,
+                                 task_bounty=task.bounty or 0.0, task_id=task.id)
                 # Release bounty via contract (no challengers, empty verdicts)
                 if task.bounty and task.bounty > 0:
                     _resolve_via_contract(db, task, verdicts=[])
@@ -388,6 +394,11 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
         sub.deposit_returned = sub.deposit
 
     task.status = TaskStatus.closed
+
+    # Publisher trust reward for successful task completion
+    if db.query(User).filter_by(id=task.publisher_id).first():
+        apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
+                    task_bounty=task.bounty or 0.0, task_id=task.id)
 
     # Resolve on-chain: distribute bounty + deposits + arbiter rewards
     if task.bounty and task.bounty > 0:

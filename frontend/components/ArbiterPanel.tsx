@@ -14,6 +14,7 @@ import {
 import type { ChallengeVerdict } from '@/lib/api'
 import { TrustBadge } from '@/components/TrustBadge'
 import { getDevWalletAddress } from '@/lib/x402'
+import { fetchUsdcBalance } from '@/lib/utils'
 import type { Hex } from 'viem'
 
 interface ArbiterDef {
@@ -166,6 +167,8 @@ export function ArbiterPanel() {
   const [arbiterIds, setArbiterIds] = useState<string[]>(() => DEV_ARBITERS.map(() => ''))
   const [challenges, setChallenges] = useState<Array<{ challenge_id: string; task_id: string; task_title: string }>>([])
   const [pollKey, setPollKey] = useState(0)
+  const [balances, setBalances] = useState<string[]>(() => DEV_ARBITERS.map(() => '...'))
+  const [balRefreshing, setBalRefreshing] = useState(false)
 
   const arbiterAddresses = useMemo(
     () => DEV_ARBITERS.map((a) => {
@@ -232,6 +235,23 @@ export function ArbiterPanel() {
     fetchChallenges()
   }, [arbitratingTasks, pollKey])
 
+  async function refreshBalance() {
+    const addr = arbiterAddresses[activeIdx]
+    if (!addr) return
+    setBalRefreshing(true)
+    try {
+      const bal = await fetchUsdcBalance(addr)
+      setBalances((prev) => { const next = [...prev]; next[activeIdx] = bal; return next })
+    } catch {
+      setBalances((prev) => { const next = [...prev]; next[activeIdx] = 'error'; return next })
+    } finally {
+      setBalRefreshing(false)
+    }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshBalance() }, [activeIdx])
+
   const activeArbiter = DEV_ARBITERS[activeIdx]
   const activeArbiterId = arbiterIds[activeIdx] || ''
 
@@ -271,9 +291,20 @@ export function ArbiterPanel() {
       </div>
 
       {/* Arbiter info */}
-      <div className="mb-4 p-3 bg-zinc-900 border border-zinc-700 rounded text-sm">
+      <div className="relative mb-4 p-3 bg-zinc-900 border border-zinc-700 rounded text-sm">
+        <button
+          onClick={refreshBalance}
+          disabled={balRefreshing}
+          className="absolute top-2 right-2 text-muted-foreground hover:text-white disabled:opacity-40"
+          title="Refresh balance"
+        >
+          ↻
+        </button>
         <p className="text-muted-foreground mb-1">{activeArbiter?.nickname}</p>
         <p className="font-mono text-xs break-all">{arbiterAddresses[activeIdx] ?? '—'}</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Balance: <span className="text-white">{balances[activeIdx]} USDC</span>
+        </p>
         {activeArbiterId ? (
           <>
             <p className="text-xs text-muted-foreground mt-1">

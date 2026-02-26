@@ -71,6 +71,7 @@ class TrustEventType(str, PyEnum):
     weekly_leaderboard = "weekly_leaderboard"
     stake_bonus = "stake_bonus"
     stake_slash = "stake_slash"
+    publisher_completed = "publisher_completed"
 
 
 class StakePurpose(str, PyEnum):
