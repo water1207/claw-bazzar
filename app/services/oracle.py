@@ -25,6 +25,59 @@ def get_oracle_logs(limit: int = 50) -> list[dict]:
         return list(reversed(_oracle_logs))[:limit]
 
 
+PENALTY_THRESHOLD = 60
+
+FIXED_DIM_NAMES = {
+    "substantiveness": "实质性",
+    "credibility": "可信度",
+    "completeness": "完整性",
+}
+
+
+def compute_penalized_total(
+    dim_scores: dict[str, dict],
+    dims: list[dict],
+) -> dict:
+    """Compute non-linear penalized total score.
+
+    Args:
+        dim_scores: {dim_id: {"score": int, "band": str, ...}}
+        dims: [{"dim_id": str, "dim_type": str, "weight": float}]
+
+    Returns:
+        {"weighted_base", "penalty", "penalty_reasons", "final_score", "risk_flags"}
+    """
+    weighted_base = 0.0
+    penalty = 1.0
+    penalty_reasons = []
+    risk_flags = []
+
+    for dim in dims:
+        dim_id = dim["dim_id"]
+        weight = dim["weight"]
+        score_entry = dim_scores.get(dim_id, {})
+        score = score_entry.get("score", 0)
+        weighted_base += score * weight
+
+        if dim["dim_type"] == "fixed" and score < PENALTY_THRESHOLD:
+            penalty *= score / PENALTY_THRESHOLD
+            name = FIXED_DIM_NAMES.get(dim_id, dim_id)
+            penalty_reasons.append(f"关键维度「{name}」低于预期")
+            risk_flags.append(f"{name}偏低")
+
+    final_score = round(weighted_base * penalty, 2)
+    weighted_base = round(weighted_base, 2)
+    penalty = round(penalty, 4)
+
+    return {
+        "weighted_base": weighted_base,
+        "penalty": penalty,
+        "penalty_reasons": penalty_reasons,
+        "final_score": final_score,
+        "risk_flags": risk_flags,
+    }
+
+
 def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
     """Call oracle subprocess. meta provides context for logging:
     task_id, task_title, submission_id, worker_id."""
