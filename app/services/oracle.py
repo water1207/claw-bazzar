@@ -331,19 +331,55 @@ def _get_individual_weighted_total(submission: Submission, dimensions: list) -> 
         return 0.0
 
 
+BAND_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+
+
+def _get_individual_ir(submission: Submission) -> dict:
+    """Extract individual scoring IR (band + evidence per dimension) from oracle_feedback."""
+    if not submission.oracle_feedback:
+        return {}
+    try:
+        feedback = json.loads(submission.oracle_feedback)
+        if feedback.get("type") != "individual_scoring":
+            return {}
+        dim_scores = feedback.get("dimension_scores", {})
+        return {
+            dim_id: {"band": v.get("band", "?"), "evidence": v.get("evidence", "")}
+            for dim_id, v in dim_scores.items()
+        }
+    except (json.JSONDecodeError, KeyError):
+        return {}
+
+
+def _passes_threshold_filter(submission: Submission, fixed_dim_ids: set) -> bool:
+    """Check if all fixed dimensions have band >= C (i.e., not D or E)."""
+    if not submission.oracle_feedback:
+        return False
+    try:
+        feedback = json.loads(submission.oracle_feedback)
+        dim_scores = feedback.get("dimension_scores", {})
+        for dim_id in fixed_dim_ids:
+            entry = dim_scores.get(dim_id, {})
+            band = entry.get("band", "E")
+            if BAND_ORDER.get(band, 4) > BAND_ORDER["C"]:  # D or E
+                return False
+        return True
+    except (json.JSONDecodeError, KeyError):
+        return False
+
+
 def batch_score_submissions(db: Session, task_id: str) -> None:
-    """Score all gate_passed submissions after deadline: constraint check + horizontal comparison."""
+    """Score all gate_passed submissions after deadline: threshold filter + horizontal comparison."""
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         return
 
-    # Collect gate_passed submissions
     passed = db.query(Submission).filter(
         Submission.task_id == task_id,
         Submission.status == SubmissionStatus.gate_passed,
     ).all()
 
-    # Also check pending (backward compat with V1 tests)
+    # Backward compat with V1 tests
     if not passed:
         passed = db.query(Submission).filter(
             Submission.task_id == task_id,
@@ -359,7 +395,7 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
 
     task_meta = {"task_id": task.id, "task_title": task.title}
 
-    # If no dimensions (V1 mode / backward compat), fall back to legacy scoring
+    # V1 fallback: no dimensions
     if not dimensions:
         for submission in passed:
             m = {**task_meta, "submission_id": submission.id, "worker_id": submission.worker_id}
@@ -370,63 +406,90 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
         db.commit()
         return
 
-    # Select top 3 by individual score
-    scored_subs = sorted(
-        passed,
-        key=lambda s: _get_individual_weighted_total(s, dimensions),
-        reverse=True,
-    )[:3]
-
-    # Anonymize
-    label_map = {}
-    anonymized = []
-    for i, sub in enumerate(scored_subs):
-        label = f"Submission_{chr(65 + i)}"
-        label_map[label] = sub
-        anonymized.append({"label": label, "payload": sub.content})
-
-    # Step 1: Constraint check for each submission
-    caps = {}
-    for anon in anonymized:
-        sub = label_map[anon["label"]]
-        constraint_meta = {**task_meta, "submission_id": sub.id, "worker_id": sub.worker_id}
-        constraint_payload = {
-            "mode": "constraint_check",
-            "task_type": "quality_first",
-            "task_title": task.title,
-            "task_description": task.description,
-            "acceptance_criteria": task.acceptance_criteria or "",
-            "submission_payload": anon["payload"],
-            "submission_label": anon["label"],
-        }
-        result = _call_oracle(constraint_payload, meta=constraint_meta)
-        caps[anon["label"]] = result.get("effective_cap")
-
-    # Step 2: Horizontal scoring per dimension
-    all_scores = {}
     dims_data = [
         {"id": d.dim_id, "name": d.name, "description": d.description,
          "weight": d.weight, "scoring_guidance": d.scoring_guidance}
         for d in dimensions
     ]
+    fixed_dim_ids = {d.dim_id for d in dimensions if d.dim_type == "fixed"}
+
+    # Step 1: Threshold filter — any fixed dim band < C → below_threshold
+    eligible = []
+    below_threshold = []
+    for sub in passed:
+        if _passes_threshold_filter(sub, fixed_dim_ids):
+            eligible.append(sub)
+        else:
+            below_threshold.append(sub)
+
+    # Mark below_threshold subs as scored with their penalized individual score
+    for sub in below_threshold:
+        try:
+            feedback = json.loads(sub.oracle_feedback)
+            dim_scores_for_penalty = feedback.get("dimension_scores", {})
+        except (json.JSONDecodeError, KeyError):
+            dim_scores_for_penalty = {}
+        dims_for_penalty = [{"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight} for d in dimensions]
+        penalty_result = compute_penalized_total(dim_scores_for_penalty, dims_for_penalty)
+        sub.score = penalty_result["final_score"] / 100.0
+        sub.status = SubmissionStatus.scored
+
+    if not eligible:
+        db.commit()
+        return
+
+    # Step 2: Sort by penalized_total from individual scores, take top 3
+    def _get_penalized_total(sub):
+        try:
+            feedback = json.loads(sub.oracle_feedback)
+            dim_scores = feedback.get("dimension_scores", {})
+        except (json.JSONDecodeError, KeyError):
+            dim_scores = {}
+        dims_for_penalty = [{"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight} for d in dimensions]
+        return compute_penalized_total(dim_scores, dims_for_penalty)["final_score"]
+
+    eligible.sort(key=_get_penalized_total, reverse=True)
+    top_subs = eligible[:3]
+
+    # Anonymize
+    label_map = {}
+    anonymized = []
+    for i, sub in enumerate(top_subs):
+        label = f"Submission_{chr(65 + i)}"
+        label_map[label] = sub
+        anonymized.append({"label": label, "payload": sub.content})
+
+    # Build individual IR for dimension_score reference
+    individual_ir_map = {}
+    for anon in anonymized:
+        sub = label_map[anon["label"]]
+        ir = _get_individual_ir(sub)
+        for dim_data in dims_data:
+            dim_id = dim_data["id"]
+            if dim_id not in individual_ir_map:
+                individual_ir_map[dim_id] = {}
+            individual_ir_map[dim_id][anon["label"]] = ir.get(dim_id, {"band": "?", "evidence": ""})
+
+    # Step 3: Horizontal scoring per dimension
+    all_scores = {}
     for dim_data in dims_data:
         dim_payload = {
             "mode": "dimension_score",
             "task_title": task.title,
             "task_description": task.description,
             "dimension": dim_data,
-            "constraint_caps": caps,
+            "individual_ir": individual_ir_map.get(dim_data["id"], {}),
             "submissions": anonymized,
         }
         result = _call_oracle(dim_payload, meta=task_meta)
         all_scores[dim_data["id"]] = result
 
-    # Step 3: Compute ranking
+    # Step 4: Compute ranking with penalized_total
     ranking = []
     for anon in anonymized:
         label = anon["label"]
+        dim_scores_for_ranking = {}
         breakdown = {}
-        weighted_total = 0.0
         for dim_data in dims_data:
             dim_id = dim_data["id"]
             scores_list = all_scores[dim_id].get("scores", [])
@@ -437,30 +500,37 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
                     "final_score": entry["final_score"],
                     "evidence": entry.get("evidence", ""),
                 }
-                weighted_total += entry["final_score"] * dim_data["weight"]
+                dim_scores_for_ranking[dim_id] = {"score": entry["final_score"]}
+
+        dims_for_penalty = [{"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight} for d in dimensions]
+        penalty_result = compute_penalized_total(dim_scores_for_ranking, dims_for_penalty)
+
         ranking.append({
             "label": label,
             "dimension_breakdown": breakdown,
-            "weighted_total": round(weighted_total, 2),
+            **penalty_result,
         })
 
-    ranking.sort(key=lambda x: x["weighted_total"], reverse=True)
+    ranking.sort(key=lambda x: x["final_score"], reverse=True)
 
     # Write back to submissions
     for rank_idx, entry in enumerate(ranking):
         sub = label_map[entry["label"]]
         sub.oracle_feedback = json.dumps({
             "type": "scoring",
-            "constraint_cap": caps.get(entry["label"]),
             "dimension_scores": entry["dimension_breakdown"],
-            "weighted_total": entry["weighted_total"],
+            "weighted_base": entry["weighted_base"],
+            "penalty": entry["penalty"],
+            "penalty_reasons": entry["penalty_reasons"],
+            "final_score": entry["final_score"],
+            "risk_flags": entry["risk_flags"],
             "rank": rank_idx + 1,
         })
-        sub.score = entry["weighted_total"] / 100.0
+        sub.score = entry["final_score"] / 100.0
         sub.status = SubmissionStatus.scored
 
-    # Mark any remaining gate_passed subs (outside top 3) as scored without horizontal eval
-    for sub in passed:
+    # Mark remaining eligible subs (outside top 3) as scored
+    for sub in eligible:
         if sub not in [label_map[a["label"]] for a in anonymized]:
             sub.status = SubmissionStatus.scored
             if not sub.score:

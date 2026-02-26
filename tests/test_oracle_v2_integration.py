@@ -50,12 +50,12 @@ def test_quality_first_full_lifecycle():
         "summary": "通过"
     })
     individual_scores = [
-        json.dumps({"dimension_scores": {"substantiveness": {"score": 85, "feedback": "好"},
-                     "completeness": {"score": 80, "feedback": "好"}}, "revision_suggestions": ["建议A"]}),
-        json.dumps({"dimension_scores": {"substantiveness": {"score": 70, "feedback": "中"},
-                     "completeness": {"score": 65, "feedback": "中"}}, "revision_suggestions": ["建议B"]}),
-        json.dumps({"dimension_scores": {"substantiveness": {"score": 60, "feedback": "弱"},
-                     "completeness": {"score": 55, "feedback": "弱"}}, "revision_suggestions": ["建议C"]}),
+        json.dumps({"dimension_scores": {"substantiveness": {"band": "A", "score": 85, "evidence": "好", "feedback": "好"},
+                     "completeness": {"band": "A", "score": 80, "evidence": "好", "feedback": "好"}}, "revision_suggestions": ["建议A"]}),
+        json.dumps({"dimension_scores": {"substantiveness": {"band": "B", "score": 70, "evidence": "中", "feedback": "中"},
+                     "completeness": {"band": "B", "score": 65, "evidence": "中", "feedback": "中"}}, "revision_suggestions": ["建议B"]}),
+        json.dumps({"dimension_scores": {"substantiveness": {"band": "C", "score": 60, "evidence": "弱", "feedback": "弱"},
+                     "completeness": {"band": "C", "score": 55, "evidence": "弱", "feedback": "弱"}}, "revision_suggestions": ["建议C"]}),
     ]
 
     subs = []
@@ -83,26 +83,18 @@ def test_quality_first_full_lifecycle():
     task.status = TaskStatus.open
     db.commit()
 
-    constraint_clean = json.dumps({
-        "submission_label": "X", "effective_cap": None,
-        "task_relevance": {"passed": True, "analysis": "ok", "score_cap": None},
-        "authenticity": {"passed": True, "analysis": "ok", "flagged_issues": [], "score_cap": None},
-    })
     dim_sub = json.dumps({"dimension_id": "substantiveness", "scores": [
-        {"submission": "Submission_A", "raw_score": 90, "cap_applied": False, "final_score": 90, "evidence": "best"},
-        {"submission": "Submission_B", "raw_score": 70, "cap_applied": False, "final_score": 70, "evidence": "mid"},
-        {"submission": "Submission_C", "raw_score": 55, "cap_applied": False, "final_score": 55, "evidence": "low"},
+        {"submission": "Submission_A", "raw_score": 90, "final_score": 90, "evidence": "best"},
+        {"submission": "Submission_B", "raw_score": 70, "final_score": 70, "evidence": "mid"},
+        {"submission": "Submission_C", "raw_score": 55, "final_score": 55, "evidence": "low"},
     ]})
     dim_comp = json.dumps({"dimension_id": "completeness", "scores": [
-        {"submission": "Submission_A", "raw_score": 85, "cap_applied": False, "final_score": 85, "evidence": "best"},
-        {"submission": "Submission_B", "raw_score": 65, "cap_applied": False, "final_score": 65, "evidence": "mid"},
-        {"submission": "Submission_C", "raw_score": 50, "cap_applied": False, "final_score": 50, "evidence": "low"},
+        {"submission": "Submission_A", "raw_score": 85, "final_score": 85, "evidence": "best"},
+        {"submission": "Submission_B", "raw_score": 65, "final_score": 65, "evidence": "mid"},
+        {"submission": "Submission_C", "raw_score": 50, "final_score": 50, "evidence": "low"},
     ]})
 
     responses = [
-        type("R", (), {"stdout": constraint_clean, "returncode": 0})(),  # constraint sub0
-        type("R", (), {"stdout": constraint_clean, "returncode": 0})(),  # constraint sub1
-        type("R", (), {"stdout": constraint_clean, "returncode": 0})(),  # constraint sub2
         type("R", (), {"stdout": dim_sub, "returncode": 0})(),           # dim: substantiveness
         type("R", (), {"stdout": dim_comp, "returncode": 0})(),          # dim: completeness
     ]

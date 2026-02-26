@@ -290,42 +290,35 @@ def test_give_feedback_gate_pass_then_individual_score(db):
 
 # --- batch_score_submissions tests ---
 
-MOCK_CONSTRAINT_QF_CLEAN = json.dumps({
-    "submission_label": "Submission_A",
-    "task_relevance": {"passed": True, "analysis": "ok", "score_cap": None},
-    "authenticity": {"passed": True, "analysis": "ok", "flagged_issues": [], "score_cap": None},
-    "effective_cap": None,
-})
-
-MOCK_DIM_SCORE_SUB = json.dumps({
+MOCK_DIM_SCORE_SUB_V2 = json.dumps({
     "dimension_id": "substantiveness",
     "dimension_name": "实质性",
     "evaluation_focus": "focus",
     "comparative_analysis": "A > B",
     "scores": [
-        {"submission": "Submission_A", "raw_score": 85, "cap_applied": False,
+        {"submission": "Submission_A", "raw_score": 85,
          "final_score": 85, "evidence": "good"},
-        {"submission": "Submission_B", "raw_score": 70, "cap_applied": False,
+        {"submission": "Submission_B", "raw_score": 70,
          "final_score": 70, "evidence": "ok"},
     ]
 })
 
-MOCK_DIM_SCORE_COMP = json.dumps({
+MOCK_DIM_SCORE_COMP_V2 = json.dumps({
     "dimension_id": "completeness",
     "dimension_name": "完整性",
     "evaluation_focus": "focus",
     "comparative_analysis": "A > B",
     "scores": [
-        {"submission": "Submission_A", "raw_score": 80, "cap_applied": False,
+        {"submission": "Submission_A", "raw_score": 80,
          "final_score": 80, "evidence": "good"},
-        {"submission": "Submission_B", "raw_score": 60, "cap_applied": False,
+        {"submission": "Submission_B", "raw_score": 60,
          "final_score": 60, "evidence": "ok"},
     ]
 })
 
 
 def test_batch_score_submissions_horizontal(db):
-    """After deadline: top 3 → constraint check → horizontal scoring → ranking."""
+    """After deadline: threshold filter → top 3 by penalized_total → horizontal scoring → ranking."""
     from app.services.oracle import batch_score_submissions
 
     task = Task(
@@ -347,15 +340,15 @@ def test_batch_score_submissions_horizontal(db):
     db.add_all([dim1, dim2])
     db.commit()
 
-    # Create 2 gate_passed submissions with individual scores
+    # Create 2 gate_passed submissions with individual scores (band + evidence IR format)
     sub1 = Submission(
         task_id=task.id, worker_id="w1", content="content A",
         status=SubmissionStatus.gate_passed,
         oracle_feedback=json.dumps({
             "type": "individual_scoring",
             "dimension_scores": {
-                "substantiveness": {"score": 80, "feedback": "good"},
-                "completeness": {"score": 75, "feedback": "ok"},
+                "substantiveness": {"band": "B", "score": 80, "evidence": "good", "feedback": "good"},
+                "completeness": {"band": "B", "score": 75, "evidence": "ok", "feedback": "ok"},
             },
             "revision_suggestions": []
         })
@@ -366,8 +359,8 @@ def test_batch_score_submissions_horizontal(db):
         oracle_feedback=json.dumps({
             "type": "individual_scoring",
             "dimension_scores": {
-                "substantiveness": {"score": 60, "feedback": "basic"},
-                "completeness": {"score": 55, "feedback": "incomplete"},
+                "substantiveness": {"band": "C", "score": 60, "evidence": "basic", "feedback": "basic"},
+                "completeness": {"band": "C", "score": 55, "evidence": "incomplete", "feedback": "incomplete"},
             },
             "revision_suggestions": []
         })
@@ -375,22 +368,27 @@ def test_batch_score_submissions_horizontal(db):
     db.add_all([sub1, sub2])
     db.commit()
 
-    # Mock: constraint_check for each sub, then dimension_score for each dim
+    # Mock: only dimension_score calls (2 dimensions = 2 calls, no constraint_check)
+    modes_called = []
     responses = [
-        type("R", (), {"stdout": MOCK_CONSTRAINT_QF_CLEAN, "returncode": 0})(),
-        type("R", (), {"stdout": MOCK_CONSTRAINT_QF_CLEAN, "returncode": 0})(),
-        type("R", (), {"stdout": MOCK_DIM_SCORE_SUB, "returncode": 0})(),
-        type("R", (), {"stdout": MOCK_DIM_SCORE_COMP, "returncode": 0})(),
+        type("R", (), {"stdout": MOCK_DIM_SCORE_SUB_V2, "returncode": 0})(),
+        type("R", (), {"stdout": MOCK_DIM_SCORE_COMP_V2, "returncode": 0})(),
     ]
     call_idx = 0
     def mock_subprocess(*args, **kwargs):
         nonlocal call_idx
+        payload = json.loads(kwargs.get("input", args[0] if args else "{}"))
+        modes_called.append(payload.get("mode", "unknown"))
         result = responses[call_idx]
         call_idx += 1
         return result
 
     with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess):
         batch_score_submissions(db, task.id)
+
+    # Verify no constraint_check calls were made
+    assert "constraint_check" not in modes_called
+    assert modes_called == ["dimension_score", "dimension_score"]
 
     db.refresh(sub1)
     db.refresh(sub2)
@@ -402,7 +400,103 @@ def test_batch_score_submissions_horizontal(db):
     assert feedback1["type"] == "scoring"
     assert feedback1["rank"] == 1
     assert feedback2["rank"] == 2
-    assert feedback1["weighted_total"] > feedback2["weighted_total"]
+    # New fields from penalized_total
+    assert "penalty" in feedback1
+    assert "weighted_base" in feedback1
+    assert "risk_flags" in feedback1
+    assert feedback1["final_score"] > feedback2["final_score"]
+
+
+def test_batch_score_threshold_filter(db):
+    """Submissions with any fixed dim band < C are filtered out and scored with individual penalty."""
+    from app.services.oracle import batch_score_submissions
+
+    task = Task(
+        title="调研", description="调研竞品", type=TaskType.quality_first,
+        deadline=datetime(2026, 1, 1, tzinfo=timezone.utc), bounty=10.0,
+        acceptance_criteria="至少10个产品",
+    )
+    db.add(task)
+    db.commit()
+
+    dim1 = ScoringDimension(
+        task_id=task.id, dim_id="substantiveness", name="实质性",
+        dim_type="fixed", description="内容质量", weight=0.5, scoring_guidance="guide"
+    )
+    dim2 = ScoringDimension(
+        task_id=task.id, dim_id="completeness", name="完整性",
+        dim_type="fixed", description="覆盖度", weight=0.5, scoring_guidance="guide"
+    )
+    db.add_all([dim1, dim2])
+    db.commit()
+
+    # sub_good: both fixed dims band B (passes threshold)
+    sub_good = Submission(
+        task_id=task.id, worker_id="w1", content="good content",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"band": "B", "score": 80, "evidence": "solid", "feedback": "solid"},
+                "completeness": {"band": "B", "score": 75, "evidence": "ok", "feedback": "ok"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    # sub_bad: one fixed dim band D (fails threshold)
+    sub_bad = Submission(
+        task_id=task.id, worker_id="w2", content="bad content",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"band": "D", "score": 40, "evidence": "weak", "feedback": "weak"},
+                "completeness": {"band": "B", "score": 70, "evidence": "ok", "feedback": "ok"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    db.add_all([sub_good, sub_bad])
+    db.commit()
+
+    # Only dimension_score calls for the 1 eligible sub (sub_good only)
+    dim_score_sub_single = json.dumps({
+        "dimension_id": "substantiveness",
+        "scores": [{"submission": "Submission_A", "raw_score": 85,
+                     "final_score": 85, "evidence": "good"}]
+    })
+    dim_score_comp_single = json.dumps({
+        "dimension_id": "completeness",
+        "scores": [{"submission": "Submission_A", "raw_score": 80,
+                     "final_score": 80, "evidence": "good"}]
+    })
+    responses = [
+        type("R", (), {"stdout": dim_score_sub_single, "returncode": 0})(),
+        type("R", (), {"stdout": dim_score_comp_single, "returncode": 0})(),
+    ]
+    call_idx = 0
+    def mock_subprocess(*args, **kwargs):
+        nonlocal call_idx
+        result = responses[call_idx]
+        call_idx += 1
+        return result
+
+    with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess):
+        batch_score_submissions(db, task.id)
+
+    db.refresh(sub_good)
+    db.refresh(sub_bad)
+
+    # sub_good went through horizontal scoring
+    assert sub_good.status == SubmissionStatus.scored
+    feedback_good = json.loads(sub_good.oracle_feedback)
+    assert feedback_good["type"] == "scoring"
+    assert feedback_good["rank"] == 1
+
+    # sub_bad was filtered out and scored with individual penalized score
+    assert sub_bad.status == SubmissionStatus.scored
+    assert sub_bad.score is not None
+    assert sub_bad.score < sub_good.score  # penalized score should be lower
 
 
 # --- Scheduler lifecycle test ---
@@ -438,8 +532,8 @@ def test_lifecycle_phase1_scoring_with_gate_passed_subs(db):
         oracle_feedback=json.dumps({
             "type": "individual_scoring",
             "dimension_scores": {
-                "substantiveness": {"score": 80, "feedback": "good"},
-                "completeness": {"score": 70, "feedback": "ok"},
+                "substantiveness": {"band": "B", "score": 80, "evidence": "good", "feedback": "good"},
+                "completeness": {"band": "B", "score": 70, "evidence": "ok", "feedback": "ok"},
             },
             "revision_suggestions": []
         })
@@ -447,24 +541,17 @@ def test_lifecycle_phase1_scoring_with_gate_passed_subs(db):
     db.add(sub)
     db.commit()
 
-    constraint_resp = json.dumps({
-        "submission_label": "Submission_A",
-        "task_relevance": {"passed": True, "analysis": "ok", "score_cap": None},
-        "authenticity": {"passed": True, "analysis": "ok", "flagged_issues": [], "score_cap": None},
-        "effective_cap": None,
-    })
     dim_score_resp = json.dumps({
         "dimension_id": "substantiveness",
         "scores": [{"submission": "Submission_A", "raw_score": 85,
-                     "cap_applied": False, "final_score": 85, "evidence": "good"}]
+                     "final_score": 85, "evidence": "good"}]
     })
     dim_score_resp2 = json.dumps({
         "dimension_id": "completeness",
         "scores": [{"submission": "Submission_A", "raw_score": 75,
-                     "cap_applied": False, "final_score": 75, "evidence": "ok"}]
+                     "final_score": 75, "evidence": "ok"}]
     })
     responses = [
-        type("R", (), {"stdout": constraint_resp, "returncode": 0})(),
         type("R", (), {"stdout": dim_score_resp, "returncode": 0})(),
         type("R", (), {"stdout": dim_score_resp2, "returncode": 0})(),
     ]
