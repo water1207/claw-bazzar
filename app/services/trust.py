@@ -43,6 +43,7 @@ def apply_event(
     task_id: str | None = None,
     leaderboard_bonus: int = 0,
     stake_amount: float = 0.0,
+    coherence_delta: float = 0.0,
 ) -> TrustEvent:
     """Apply a trust event to a user. Returns the TrustEvent record."""
     user = db.query(User).filter_by(id=user_id).one()
@@ -72,6 +73,8 @@ def apply_event(
         user.stake_bonus = 0.0
         user.staked_amount = 0.0
         user.is_arbiter = False
+    elif event_type == TrustEventType.arbiter_coherence:
+        delta = float(coherence_delta)
     else:
         delta = 0.0
 

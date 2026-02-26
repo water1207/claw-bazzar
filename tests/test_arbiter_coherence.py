@@ -154,3 +154,39 @@ def test_resolve_jury_deadlock_neutral(client):
     assert v1.is_majority is None
     assert v2.is_majority is None
     assert v3.is_majority is None
+
+
+from app.models import TrustEvent
+from app.services.trust import apply_event
+
+
+def test_apply_event_arbiter_coherence_positive(client):
+    """arbiter_coherence with positive delta."""
+    db = next(next(iter(client.app.dependency_overrides.values()))())
+    user = User(nickname="ac-pos", wallet="0xACP", role=UserRole.worker)
+    db.add(user)
+    db.commit()
+
+    event = apply_event(
+        db, user.id, TrustEventType.arbiter_coherence,
+        task_id="t1", coherence_delta=3,
+    )
+    db.refresh(user)
+    assert event.delta == 3.0
+    assert user.trust_score == 503.0
+
+
+def test_apply_event_arbiter_coherence_negative(client):
+    """arbiter_coherence with negative delta."""
+    db = next(next(iter(client.app.dependency_overrides.values()))())
+    user = User(nickname="ac-neg", wallet="0xACN", role=UserRole.worker)
+    db.add(user)
+    db.commit()
+
+    event = apply_event(
+        db, user.id, TrustEventType.arbiter_coherence,
+        task_id="t1", coherence_delta=-30,
+    )
+    db.refresh(user)
+    assert event.delta == -30.0
+    assert user.trust_score == 470.0
