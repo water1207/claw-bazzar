@@ -85,18 +85,8 @@ def _try_resolve_challenge_jury(
 def _apply_verdict_trust(
     db: Session, challenge: Challenge, verdict, task: Task
 ) -> None:
-    """Apply trust score changes based on jury verdict."""
-    from .services.trust import apply_event, TrustEventType
-    from .models import ChallengeVerdict, ChallengeStatus as CS
-    votes = db.query(ArbiterVote).filter_by(challenge_id=challenge.id).all()
-    for v in votes:
-        if v.vote is not None:
-            if v.is_majority:
-                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_majority,
-                            task_id=task.id)
-            else:
-                apply_event(db, v.arbiter_user_id, TrustEventType.arbiter_minority,
-                            task_id=task.id)
+    """Set challenge verdict and status. Arbiter trust is deferred to Task-level coherence."""
+    from .models import ChallengeStatus as CS
     challenge.verdict = verdict
     challenge.status = CS.judged
     db.commit()
@@ -392,22 +382,42 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                     "challenger": c.challenger_wallet,
                     "result": result_map.get(c.verdict, 1),
                 })
-        # Collect arbiter wallets from jury votes; fall back to platform wallet
+        # Collect arbiter wallets: only coherent + neutral (not incoherent)
         from .models import User
-        arbiter_user_ids = set()
+        arbiter_wallet_ids = set()
         for c in challenges:
             jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
             for v in jury_votes:
-                if v.vote is not None:
-                    arbiter_user_ids.add(v.arbiter_user_id)
-        if arbiter_user_ids:
-            arbiter_users = db.query(User).filter(User.id.in_(arbiter_user_ids)).all()
+                if v.coherence_status in ("coherent", "neutral"):
+                    arbiter_wallet_ids.add(v.arbiter_user_id)
+        if arbiter_wallet_ids:
+            arbiter_users = db.query(User).filter(User.id.in_(arbiter_wallet_ids)).all()
             arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
         else:
             import os
             platform_wallet = os.environ.get("PLATFORM_WALLET", "")
             arbiter_wallets = [platform_wallet] if platform_wallet else []
         _resolve_via_contract(db, task, verdicts, arbiter_wallets)
+
+    # Settle arbiter reputation via coherence rate
+    from .services.trust import compute_coherence_delta
+    all_votes = []
+    for c in challenges:
+        all_votes.extend(
+            db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
+        )
+    arbiter_groups: dict[str, list[ArbiterVote]] = {}
+    for v in all_votes:
+        arbiter_groups.setdefault(v.arbiter_user_id, []).append(v)
+
+    for user_id, votes in arbiter_groups.items():
+        effective = [v for v in votes
+                     if v.coherence_status in ("coherent", "incoherent")]
+        coherent_count = sum(1 for v in effective if v.coherence_status == "coherent")
+        delta = compute_coherence_delta(coherent_count, len(effective))
+        if delta is not None:
+            apply_event(db, user_id, TrustEventType.arbiter_coherence,
+                        task_id=task.id, coherence_delta=delta)
 
     db.commit()
 

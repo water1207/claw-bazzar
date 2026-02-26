@@ -198,11 +198,17 @@ def test_scheduler_resolves_jury_when_all_voted(client):
     assert ch.status == ChallengeStatus.judged
     assert ch.verdict == ChallengeVerdict.rejected
 
-    # Check trust events were applied for majority voters
-    events = db.query(TrustEvent).filter_by(
+    # No per-challenge arbiter_majority events (replaced by coherence)
+    majority_events = db.query(TrustEvent).filter_by(
         event_type=TrustEventType.arbiter_majority
     ).all()
-    assert len(events) == 3
+    assert len(majority_events) == 0
+
+    # Coherence events: all 3 voted same (coherent), rate=100% → +3 each
+    coherence_events = db.query(TrustEvent).filter_by(
+        event_type=TrustEventType.arbiter_coherence
+    ).all()
+    assert len(coherence_events) == 3
 
 
 def test_scheduler_applies_timeout_penalty(client):
@@ -292,11 +298,18 @@ def test_scheduler_applies_timeout_penalty(client):
     ).all()
     assert len(timeout_events) == 2
 
-    # Check majority trust events for the single voter
+    # No per-challenge arbiter_majority events (replaced by coherence)
     majority_events = db.query(TrustEvent).filter_by(
         event_type=TrustEventType.arbiter_majority
     ).all()
-    assert len(majority_events) == 1
+    assert len(majority_events) == 0
+
+    # Single voter in timeout: only 1 vote counted by resolve_jury →
+    # no consensus (count < 2) → "neutral" → 0 effective → no coherence event
+    coherence_events = db.query(TrustEvent).filter_by(
+        event_type=TrustEventType.arbiter_coherence
+    ).all()
+    assert len(coherence_events) == 0
 
 
 def test_apply_verdict_trust_minority(client):
@@ -376,16 +389,22 @@ def test_apply_verdict_trust_minority(client):
     db.refresh(task)
     assert task.status == TaskStatus.closed
 
-    # 2 majority events, 1 minority event
+    # No per-challenge arbiter_majority/minority events (replaced by coherence)
     majority_events = db.query(TrustEvent).filter_by(
         event_type=TrustEventType.arbiter_majority
     ).all()
     minority_events = db.query(TrustEvent).filter_by(
         event_type=TrustEventType.arbiter_minority
     ).all()
-    assert len(majority_events) == 2
-    assert len(minority_events) == 1
+    assert len(majority_events) == 0
+    assert len(minority_events) == 0
 
-    # Minority voter should have lost 15 trust points
+    # Coherence events: 2 coherent (100% → +3), 1 incoherent (0% with 1 game → -10)
+    coherence_events = db.query(TrustEvent).filter_by(
+        event_type=TrustEventType.arbiter_coherence
+    ).all()
+    assert len(coherence_events) == 3
+
+    # Incoherent voter (arbiter[2]) should have lost 10 trust points
     db.refresh(arbiters[2])
-    assert arbiters[2].trust_score == 835.0
+    assert arbiters[2].trust_score == 840.0

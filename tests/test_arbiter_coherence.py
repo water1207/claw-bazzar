@@ -228,3 +228,196 @@ def test_coherence_delta_zero_percent_lt_2():
 def test_coherence_delta_zero_effective():
     """0 effective games -> None (no delta to apply)."""
     assert compute_coherence_delta(coherent=0, effective=0) is None
+
+
+from unittest.mock import patch
+from app.scheduler import _settle_after_arbitration
+
+
+def _setup_arbitrated_task(db, verdicts_config):
+    """Create a fully arbitrated task with given challenge configs.
+
+    verdicts_config: list of dicts, each with:
+        "verdict": ChallengeVerdict value
+        "votes": list of (ChallengeVerdict, coherence_status) per arbiter
+    Returns (task, challenges, arbiters).
+    """
+    publisher = User(nickname="set-pub", wallet="0xSPUB", role=UserRole.publisher)
+    worker = User(nickname="set-wrk", wallet="0xSWRK", role=UserRole.worker,
+                  trust_score=850.0, trust_tier=TrustTier.S)
+    db.add_all([publisher, worker])
+    db.commit()
+
+    task = Task(
+        title="Settle", description="test", type=TaskType.quality_first,
+        deadline=datetime.now(timezone.utc) - timedelta(hours=2),
+        status=TaskStatus.arbitrating, publisher_id=publisher.id,
+        bounty=100.0,
+    )
+    db.add(task)
+    db.commit()
+
+    winner_sub = Submission(
+        task_id=task.id, worker_id=worker.id, content="w",
+        score=0.9, status="scored",
+    )
+    db.add(winner_sub)
+    db.commit()
+    task.winner_submission_id = winner_sub.id
+
+    # Create 3 shared arbiters
+    a1 = _make_arbiter(db, "set-a1", "0xSA1")
+    a2 = _make_arbiter(db, "set-a2", "0xSA2")
+    a3 = _make_arbiter(db, "set-a3", "0xSA3")
+    arbiters = [a1, a2, a3]
+
+    challenges = []
+    for i, cfg in enumerate(verdicts_config):
+        challenger_user = User(
+            nickname=f"set-chl-{i}", wallet=f"0xSCHL{i}", role=UserRole.worker,
+        )
+        db.add(challenger_user)
+        db.commit()
+        chl_sub = Submission(
+            task_id=task.id, worker_id=challenger_user.id,
+            content=f"chl-{i}", score=0.5, status="scored",
+        )
+        db.add(chl_sub)
+        db.commit()
+
+        challenge = Challenge(
+            task_id=task.id, challenger_submission_id=chl_sub.id,
+            target_submission_id=winner_sub.id, reason=f"challenge-{i}",
+            status=ChallengeStatus.judged, verdict=cfg["verdict"],
+            challenger_wallet=f"0xSCHL{i}",
+        )
+        db.add(challenge)
+        db.commit()
+
+        # Create votes with pre-set coherence_status
+        for j, (vote_val, coh_status) in enumerate(cfg["votes"]):
+            vote = ArbiterVote(
+                challenge_id=challenge.id,
+                arbiter_user_id=arbiters[j].id,
+                vote=vote_val,
+                coherence_status=coh_status,
+                is_majority=(coh_status == "coherent"),
+            )
+            db.add(vote)
+        db.commit()
+        challenges.append(challenge)
+
+    return task, challenges, arbiters
+
+
+def test_settle_no_per_challenge_arbiter_trust(client):
+    """After settlement, no arbiter_majority or arbiter_minority events exist.
+    Only arbiter_coherence events should be created."""
+    db = next(next(iter(client.app.dependency_overrides.values()))())
+    task, challenges, arbiters = _setup_arbitrated_task(db, [
+        {
+            "verdict": ChallengeVerdict.rejected,
+            "votes": [
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.upheld, "incoherent"),
+            ],
+        },
+    ])
+
+    with patch("app.scheduler._resolve_via_contract"):
+        _settle_after_arbitration(db, task)
+
+    events = db.query(TrustEvent).filter(
+        TrustEvent.event_type.in_([
+            TrustEventType.arbiter_majority,
+            TrustEventType.arbiter_minority,
+        ])
+    ).all()
+    assert len(events) == 0
+
+    coherence_events = db.query(TrustEvent).filter(
+        TrustEvent.event_type == TrustEventType.arbiter_coherence,
+    ).all()
+    # 3 arbiters: a1 coherent (rate=100%→+3), a2 coherent (100%→+3),
+    # a3 incoherent (0% with 1 game → -10)
+    assert len(coherence_events) == 3
+
+
+def test_settle_coherence_rate_multi_challenge(client):
+    """Arbiter participates in 3 challenges: 2 coherent + 1 neutral.
+    Effective = 2, coherent = 2, rate = 100% → delta = +3."""
+    db = next(next(iter(client.app.dependency_overrides.values()))())
+    task, challenges, arbiters = _setup_arbitrated_task(db, [
+        {   # 2:1 consensus
+            "verdict": ChallengeVerdict.rejected,
+            "votes": [
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.upheld, "incoherent"),
+            ],
+        },
+        {   # 3:0 consensus
+            "verdict": ChallengeVerdict.rejected,
+            "votes": [
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.rejected, "coherent"),
+            ],
+        },
+        {   # 1:1:1 deadlock
+            "verdict": ChallengeVerdict.rejected,
+            "votes": [
+                (ChallengeVerdict.upheld, "neutral"),
+                (ChallengeVerdict.rejected, "neutral"),
+                (ChallengeVerdict.malicious, "neutral"),
+            ],
+        },
+    ])
+
+    with patch("app.scheduler._resolve_via_contract"):
+        _settle_after_arbitration(db, task)
+
+    # Arbiter a1: 2 coherent, 1 neutral → effective=2, rate=100% → +3
+    a1_event = db.query(TrustEvent).filter(
+        TrustEvent.user_id == arbiters[0].id,
+        TrustEvent.event_type == TrustEventType.arbiter_coherence,
+    ).first()
+    assert a1_event is not None
+    assert a1_event.delta == 3.0
+
+    # Arbiter a3: 1 incoherent + 1 coherent + 1 neutral → effective=2,
+    # coherent=1, rate=50% → 0
+    a3_event = db.query(TrustEvent).filter(
+        TrustEvent.user_id == arbiters[2].id,
+        TrustEvent.event_type == TrustEventType.arbiter_coherence,
+    ).first()
+    assert a3_event is not None
+    assert a3_event.delta == 0.0
+
+
+def test_settle_only_majority_wallets_passed(client):
+    """_resolve_via_contract receives only coherent+neutral arbiter wallets."""
+    db = next(next(iter(client.app.dependency_overrides.values()))())
+    task, challenges, arbiters = _setup_arbitrated_task(db, [
+        {   # 2:1 → a3 is incoherent
+            "verdict": ChallengeVerdict.rejected,
+            "votes": [
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.rejected, "coherent"),
+                (ChallengeVerdict.upheld, "incoherent"),
+            ],
+        },
+    ])
+
+    with patch("app.scheduler._resolve_via_contract") as mock_resolve:
+        _settle_after_arbitration(db, task)
+        mock_resolve.assert_called_once()
+        args, kwargs = mock_resolve.call_args
+        # arbiter_wallets is the 4th positional arg
+        passed_wallets = args[3] if len(args) > 3 else kwargs.get("arbiter_wallets")
+        # a3 (incoherent) should NOT be in the wallet list
+        assert arbiters[2].wallet not in passed_wallets
+        # a1, a2 (coherent) should be present
+        assert arbiters[0].wallet in passed_wallets
+        assert arbiters[1].wallet in passed_wallets
