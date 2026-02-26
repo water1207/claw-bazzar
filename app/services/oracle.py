@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy.orm import Session
@@ -470,9 +471,10 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
                 individual_ir_map[dim_id] = {}
             individual_ir_map[dim_id][anon["label"]] = ir.get(dim_id, {"band": "?", "evidence": ""})
 
-    # Step 3: Horizontal scoring per dimension
+    # Step 3: Horizontal scoring per dimension (PARALLEL)
     all_scores = {}
-    for dim_data in dims_data:
+
+    def _score_dimension(dim_data):
         dim_payload = {
             "mode": "dimension_score",
             "task_title": task.title,
@@ -481,8 +483,13 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
             "individual_ir": individual_ir_map.get(dim_data["id"], {}),
             "submissions": anonymized,
         }
-        result = _call_oracle(dim_payload, meta=task_meta)
-        all_scores[dim_data["id"]] = result
+        return dim_data["id"], _call_oracle(dim_payload, meta=task_meta)
+
+    with ThreadPoolExecutor(max_workers=len(dims_data)) as executor:
+        futures = [executor.submit(_score_dimension, d) for d in dims_data]
+        for future in futures:
+            dim_id, result = future.result()
+            all_scores[dim_id] = result
 
     # Step 4: Compute ranking with penalized_total
     ranking = []
