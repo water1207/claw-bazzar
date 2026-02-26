@@ -2,8 +2,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, TrustEvent, ArbiterVote, Challenge, ChallengeVerdict
-from app.schemas import TrustProfile, TrustQuote, TrustEventOut, ArbiterVoteOut
+from app.models import (
+    User, TrustEvent, ArbiterVote, Challenge, ChallengeVerdict,
+    Task, Submission, StakeRecord, PayoutStatus,
+)
+from app.schemas import TrustProfile, TrustQuote, TrustEventOut, ArbiterVoteOut, BalanceEventOut
 from app.services.trust import (
     get_challenge_deposit_rate, get_platform_fee_rate, check_permissions,
 )
@@ -83,6 +86,148 @@ def get_trust_events(user_id: str, db: Session = Depends(get_db)):
         .all()
     )
     return events
+
+
+@router.get("/users/{user_id}/balance-events", response_model=list[BalanceEventOut])
+def get_balance_events(user_id: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    events: list[dict] = []
+
+    # 1. Publisher: bounty paid
+    pub_tasks = db.query(Task).filter(
+        Task.publisher_id == user_id,
+        Task.payment_tx_hash.isnot(None),
+    ).all()
+    for t in pub_tasks:
+        events.append({
+            "id": f"task_bounty:{t.id}",
+            "event_type": "bounty_paid",
+            "role": "publisher",
+            "task_id": t.id,
+            "task_title": t.title,
+            "amount": t.bounty or 0,
+            "direction": "outflow",
+            "tx_hash": t.payment_tx_hash,
+            "created_at": t.created_at,
+        })
+
+    # 2. Publisher: refund received
+    refund_tasks = db.query(Task).filter(
+        Task.publisher_id == user_id,
+        Task.refund_tx_hash.isnot(None),
+    ).all()
+    for t in refund_tasks:
+        events.append({
+            "id": f"task_refund:{t.id}",
+            "event_type": "refund_received",
+            "role": "publisher",
+            "task_id": t.id,
+            "task_title": t.title,
+            "amount": t.refund_amount or 0,
+            "direction": "inflow",
+            "tx_hash": t.refund_tx_hash,
+            "created_at": t.created_at,
+        })
+
+    # 3. Worker: payout received
+    winner_subs = db.query(Submission).filter(
+        Submission.worker_id == user_id,
+    ).all()
+    winner_sub_ids = [s.id for s in winner_subs]
+    if winner_sub_ids:
+        payout_tasks = db.query(Task).filter(
+            Task.winner_submission_id.in_(winner_sub_ids),
+            Task.payout_status == PayoutStatus.paid,
+        ).all()
+        for t in payout_tasks:
+            events.append({
+                "id": f"task_payout:{t.id}",
+                "event_type": "payout_received",
+                "role": "worker",
+                "task_id": t.id,
+                "task_title": t.title,
+                "amount": t.payout_amount or 0,
+                "direction": "inflow",
+                "tx_hash": t.payout_tx_hash,
+                "created_at": t.created_at,
+            })
+
+    # 4 & 5. Worker: deposit paid / returned
+    deposit_subs = db.query(Submission).filter(
+        Submission.worker_id == user_id,
+        Submission.deposit.isnot(None),
+    ).all()
+    task_cache: dict[str, Task] = {}
+    for s in deposit_subs:
+        if s.task_id not in task_cache:
+            task_cache[s.task_id] = db.query(Task).filter_by(id=s.task_id).first()
+        task = task_cache[s.task_id]
+        events.append({
+            "id": f"sub_deposit:{s.id}",
+            "event_type": "deposit_paid",
+            "role": "worker",
+            "task_id": s.task_id,
+            "task_title": task.title if task else None,
+            "amount": s.deposit,
+            "direction": "outflow",
+            "tx_hash": None,
+            "created_at": s.created_at,
+        })
+        if s.deposit_returned is not None and s.deposit_returned > 0:
+            events.append({
+                "id": f"sub_deposit_return:{s.id}",
+                "event_type": "deposit_returned",
+                "role": "worker",
+                "task_id": s.task_id,
+                "task_title": task.title if task else None,
+                "amount": s.deposit_returned,
+                "direction": "inflow",
+                "tx_hash": None,
+                "created_at": s.created_at,
+            })
+
+    # 6. Arbiter: reward
+    arbiter_votes = db.query(ArbiterVote).filter(
+        ArbiterVote.arbiter_user_id == user_id,
+        ArbiterVote.reward_amount.isnot(None),
+    ).all()
+    for v in arbiter_votes:
+        challenge = db.query(Challenge).filter_by(id=v.challenge_id).first()
+        task = db.query(Task).filter_by(id=challenge.task_id).first() if challenge else None
+        events.append({
+            "id": f"vote_reward:{v.id}",
+            "event_type": "arbiter_reward",
+            "role": "arbiter",
+            "task_id": challenge.task_id if challenge else None,
+            "task_title": task.title if task else None,
+            "amount": v.reward_amount,
+            "direction": "inflow",
+            "tx_hash": None,
+            "created_at": v.created_at,
+        })
+
+    # 7. Staking: deposits and slashes
+    stake_records = db.query(StakeRecord).filter(
+        StakeRecord.user_id == user_id,
+    ).all()
+    for r in stake_records:
+        events.append({
+            "id": f"stake:{ r.id}",
+            "event_type": "stake_slashed" if r.slashed else "stake_deposited",
+            "role": "worker",
+            "task_id": None,
+            "task_title": None,
+            "amount": r.amount,
+            "direction": "outflow",
+            "tx_hash": r.tx_hash,
+            "created_at": r.created_at,
+        })
+
+    events.sort(key=lambda e: e["created_at"], reverse=True)
+    return events[:100]
 
 
 @router.get("/challenges/{challenge_id}/votes", response_model=list[ArbiterVoteOut])

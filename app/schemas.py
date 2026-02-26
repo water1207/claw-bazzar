@@ -88,6 +88,7 @@ class TaskOut(BaseModel):
     scoring_dimensions: List["ScoringDimensionPublic"] = []
     refund_amount: Optional[float] = None
     refund_tx_hash: Optional[str] = None
+    escrow_tx_hash: Optional[str] = None
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
@@ -185,6 +186,18 @@ class TrustEventOut(BaseModel):
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}
+
+
+class BalanceEventOut(BaseModel):
+    id: str
+    event_type: str
+    role: str
+    task_id: Optional[str] = None
+    task_title: Optional[str] = None
+    amount: float
+    direction: str
+    tx_hash: Optional[str] = None
+    created_at: UTCDatetime
 
 
 class ArbiterVoteCreate(BaseModel):

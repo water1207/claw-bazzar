@@ -133,7 +133,7 @@ def test_quality_first_qualifying_submission_no_refund():
     add_scored_submission(db, task.id, "w2", 0.6)
     db.commit()
 
-    with patch("app.scheduler.create_challenge_onchain"):
+    with patch("app.scheduler.create_challenge_onchain", return_value="0xESCROW"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 
@@ -156,7 +156,7 @@ def test_quality_first_no_threshold_picks_best():
     s1 = add_scored_submission(db, task.id, "w1", 0.3)
     db.commit()
 
-    with patch("app.scheduler.create_challenge_onchain"):
+    with patch("app.scheduler.create_challenge_onchain", return_value="0xESCROW"):
         from app.scheduler import quality_first_lifecycle
         quality_first_lifecycle(db=db)
 

@@ -111,6 +111,7 @@ class Task(Base):
     acceptance_criteria = Column(Text, nullable=True)
     refund_amount = Column(Float, nullable=True)
     refund_tx_hash = Column(String, nullable=True)
+    escrow_tx_hash = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 

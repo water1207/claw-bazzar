@@ -217,7 +217,7 @@ def test_bounty_lifecycle_quality_first(client):
     t.deadline = datetime.now(timezone.utc) - timedelta(minutes=1)
     db.commit()
 
-    with patch("app.scheduler.create_challenge_onchain"), \
+    with patch("app.scheduler.create_challenge_onchain", return_value="0xESCROW"), \
          patch("app.scheduler.resolve_challenge_onchain", return_value="0xQPAYOUT"):
         # Phase 1: open → scoring
         quality_first_lifecycle(db=db)

@@ -85,6 +85,12 @@ export function TaskDetail({ task }: Props) {
               <TxLink hash={task.payment_tx_hash} />
             </div>
           )}
+          {task.escrow_tx_hash && (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Escrow Tx: </span>
+              <TxLink hash={task.escrow_tx_hash} />
+            </div>
+          )}
         </div>
       )}
 

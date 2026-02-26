@@ -14,6 +14,7 @@ import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
 import { signChallengePermit } from '@/lib/permit'
 import { fetchUsdcBalance } from '@/lib/utils'
 import { ArbiterPanel } from '@/components/ArbiterPanel'
+import { BalanceTrustHistoryPanel } from '@/components/BalanceTrustHistoryPanel'
 import { TrustBadge } from '@/components/TrustBadge'
 import type { Hex } from 'viem'
 
@@ -1189,6 +1190,9 @@ export function DevPanel() {
 
       {/* Oracle Logs */}
       <OracleLogsPanel />
+
+      {/* Activity History */}
+      <BalanceTrustHistoryPanel />
     </div>
   )
 }

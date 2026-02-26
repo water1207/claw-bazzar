@@ -224,7 +224,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 task.challenge_window_end = now + timedelta(seconds=duration)
                 task.status = TaskStatus.challenge_window
 
-                # Lock 90% bounty into escrow contract at start of challenge window
+                # Lock 95% bounty into escrow contract at start of challenge window
                 if task.bounty and task.bounty > 0:
                     try:
                         from .models import User
@@ -238,11 +238,17 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                             escrow_amount = round(task.bounty * 0.95, 6)
                             incentive = 0
                             deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
-                            create_challenge_onchain(
+                            tx_hash = create_challenge_onchain(
                                 task.id, winner_user.wallet, escrow_amount, incentive, deposit_amount
                             )
+                            task.escrow_tx_hash = tx_hash
                     except Exception as e:
                         print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
+                        # Revert: do NOT enter challenge_window if escrow lock failed
+                        task.winner_submission_id = None
+                        task.challenge_window_end = None
+                        task.status = TaskStatus.scoring
+                        continue
             else:
                 # No qualifying submissions → 95% refund if there were submissions, close
                 task.status = TaskStatus.closed

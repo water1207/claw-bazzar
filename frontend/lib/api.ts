@@ -40,6 +40,7 @@ export interface Task {
   challenge_duration: number | null
   challenge_window_end: string | null
   acceptance_criteria: string | null
+  escrow_tx_hash: string | null
   scoring_dimensions: ScoringDimension[]
 }
 
@@ -109,6 +110,18 @@ export interface TrustEvent {
   created_at: string
 }
 
+export interface BalanceEvent {
+  id: string
+  event_type: string
+  role: string
+  task_id: string | null
+  task_title: string | null
+  amount: number
+  direction: 'inflow' | 'outflow'
+  tx_hash: string | null
+  created_at: string
+}
+
 export interface TrustQuote {
   trust_tier: TrustTier
   challenge_deposit_rate: number
@@ -167,6 +180,12 @@ export function useTrustProfile(userId: string | null) {
 
 export function useTrustEvents(userId: string | null) {
   return useSWR<TrustEvent[]>(userId ? `/api/users/${userId}/trust/events` : null, fetcher, {
+    refreshInterval: 30_000,
+  })
+}
+
+export function useBalanceEvents(userId: string | null) {
+  return useSWR<BalanceEvent[]>(userId ? `/api/users/${userId}/balance-events` : null, fetcher, {
     refreshInterval: 30_000,
   })
 }

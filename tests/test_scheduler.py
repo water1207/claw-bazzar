@@ -142,8 +142,9 @@ def test_settle_triggers_payout():
     # Phase 1: open → scoring
     quality_first_lifecycle(db=db)
 
-    # Phase 2: scoring → challenge_window
-    quality_first_lifecycle(db=db)
+    # Phase 2: scoring → challenge_window (mock escrow lock)
+    with patch("app.scheduler.create_challenge_onchain", return_value="0xESCROW"):
+        quality_first_lifecycle(db=db)
 
     # Phase 3: expire challenge window → closed with payout
     db.refresh(task)
