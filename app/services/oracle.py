@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,11 +16,13 @@ ORACLE_SCRIPT = Path(__file__).parent.parent.parent / "oracle" / "oracle.py"
 # In-memory oracle call logs
 _oracle_logs: list[dict] = []
 MAX_LOGS = 200
+_oracle_logs_lock = threading.Lock()
 
 
 def get_oracle_logs(limit: int = 50) -> list[dict]:
     """Return recent oracle logs, newest first."""
-    return list(reversed(_oracle_logs))[:limit]
+    with _oracle_logs_lock:
+        return list(reversed(_oracle_logs))[:limit]
 
 
 def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
@@ -52,9 +55,10 @@ def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
             "total_tokens": token_usage.get("total_tokens", 0),
             "duration_ms": duration_ms,
         }
-        _oracle_logs.append(log_entry)
-        if len(_oracle_logs) > MAX_LOGS:
-            _oracle_logs[:] = _oracle_logs[-MAX_LOGS:]
+        with _oracle_logs_lock:
+            _oracle_logs.append(log_entry)
+            if len(_oracle_logs) > MAX_LOGS:
+                _oracle_logs[:] = _oracle_logs[-MAX_LOGS:]
 
     return output
 
