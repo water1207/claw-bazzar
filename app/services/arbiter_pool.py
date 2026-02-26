@@ -66,7 +66,12 @@ def submit_vote(
 
 
 def resolve_jury(db: Session, challenge_id: str) -> ChallengeVerdict:
-    """Resolve jury votes for a challenge. Returns the majority verdict."""
+    """Resolve jury votes for a challenge. Returns the majority verdict.
+
+    Sets coherence_status on each vote:
+    - 2:1 or 3:0 → majority="coherent", minority="incoherent"
+    - 1:1:1 deadlock → all="neutral", verdict defaults to rejected
+    """
     votes = (
         db.query(ArbiterVote)
         .filter_by(challenge_id=challenge_id)
@@ -81,12 +86,17 @@ def resolve_jury(db: Session, challenge_id: str) -> ChallengeVerdict:
     most_common = counter.most_common()
 
     if most_common[0][1] >= 2:
+        # Consensus: 2:1 or 3:0
         majority_verdict = most_common[0][0]
+        for vote in votes:
+            vote.is_majority = (vote.vote == majority_verdict)
+            vote.coherence_status = "coherent" if vote.is_majority else "incoherent"
     else:
+        # Deadlock: 1:1:1 — status quo (rejected)
         majority_verdict = ChallengeVerdict.rejected
-
-    for vote in votes:
-        vote.is_majority = (vote.vote == majority_verdict)
+        for vote in votes:
+            vote.is_majority = None
+            vote.coherence_status = "neutral"
 
     db.commit()
     return majority_verdict
