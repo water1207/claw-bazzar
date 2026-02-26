@@ -72,6 +72,7 @@ class TrustEventType(str, PyEnum):
     stake_bonus = "stake_bonus"
     stake_slash = "stake_slash"
     publisher_completed = "publisher_completed"
+    arbiter_coherence = "arbiter_coherence"
 
 
 class StakePurpose(str, PyEnum):
@@ -205,6 +206,7 @@ class ArbiterVote(Base):
     feedback = Column(Text, nullable=True)
     is_majority = Column(Boolean, nullable=True)
     reward_amount = Column(Float, nullable=True)
+    coherence_status = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
