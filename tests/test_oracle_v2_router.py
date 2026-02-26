@@ -164,51 +164,6 @@ def test_gate_check_fail():
     assert output["criteria_checks"][0]["revision_hint"] is not None
 
 
-MOCK_CONSTRAINT_FF_PASS = {
-    "task_relevance": {"passed": True, "reason": "提交切题"},
-    "authenticity": {"passed": True, "reason": "数据可信"},
-    "overall_passed": True,
-    "rejection_reason": None,
-}
-
-MOCK_CONSTRAINT_QF = {
-    "submission_label": "Submission_A",
-    "task_relevance": {"passed": True, "analysis": "切题", "score_cap": None},
-    "authenticity": {"passed": False, "analysis": "数据疑似编造",
-                     "flagged_issues": ["来源不可验证"], "score_cap": 40},
-    "effective_cap": 40,
-}
-
-
-def test_constraint_check_fastest_first():
-    import constraint_check
-    input_data = {
-        "mode": "constraint_check",
-        "task_type": "fastest_first",
-        "task_title": "Test", "task_description": "Desc",
-        "acceptance_criteria": "AC",
-        "submission_payload": "content",
-    }
-    with patch.object(constraint_check, "call_llm_json", return_value=(MOCK_CONSTRAINT_FF_PASS, MOCK_USAGE)):
-        output = constraint_check.run(input_data)
-    assert output["overall_passed"] is True
-
-
-def test_constraint_check_quality_first():
-    import constraint_check
-    input_data = {
-        "mode": "constraint_check",
-        "task_type": "quality_first",
-        "task_title": "Test", "task_description": "Desc",
-        "acceptance_criteria": "AC",
-        "submission_payload": "content",
-        "submission_label": "Submission_A",
-    }
-    with patch.object(constraint_check, "call_llm_json", return_value=(MOCK_CONSTRAINT_QF, MOCK_USAGE)):
-        output = constraint_check.run(input_data)
-    assert output["effective_cap"] == 40
-
-
 MOCK_INDIVIDUAL_SCORE = {
     "dimension_scores": {
         "substantiveness": {"band": "B", "score": 72, "evidence": "内容充实", "feedback": "内容充实但缺少深度分析"},

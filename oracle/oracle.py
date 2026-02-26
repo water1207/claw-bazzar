@@ -29,13 +29,11 @@ def _register_v2_modules():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from dimension_gen import run as dimension_gen_run
         from gate_check import run as gate_check_run
-        from constraint_check import run as constraint_check_run
         from score_individual import run as score_individual_run
         from dimension_score import run as dimension_score_run
         V2_MODES = {
             "dimension_gen": dimension_gen_run,
             "gate_check": gate_check_run,
-            "constraint_check": constraint_check_run,
             "score_individual": score_individual_run,
             "dimension_score": dimension_score_run,
         }
