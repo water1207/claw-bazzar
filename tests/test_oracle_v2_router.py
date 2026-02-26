@@ -55,13 +55,16 @@ def test_oracle_unknown_mode_falls_back_to_legacy():
 MOCK_DIMENSIONS = {
     "dimensions": [
         {"id": "substantiveness", "name": "实质性", "type": "fixed",
-         "description": "评估提交是否有实质内容", "weight": 0.3,
+         "description": "评估提交是否有实质内容", "weight": 0.25,
          "scoring_guidance": "高分: 有独到见解; 低分: 空洞堆砌"},
+        {"id": "credibility", "name": "可信度", "type": "fixed",
+         "description": "评估数据可信度", "weight": 0.25,
+         "scoring_guidance": "高分: 数据可追溯; 低分: 数据编造"},
         {"id": "completeness", "name": "完整性", "type": "fixed",
-         "description": "评估覆盖度", "weight": 0.3,
+         "description": "评估覆盖度", "weight": 0.25,
          "scoring_guidance": "高分: 覆盖全面; 低分: 遗漏重要方面"},
         {"id": "data_precision", "name": "数据精度", "type": "dynamic",
-         "description": "数据准确性", "weight": 0.4,
+         "description": "数据准确性", "weight": 0.25,
          "scoring_guidance": "高分: 数据可验证; 低分: 数据模糊"},
     ],
     "rationale": "根据任务需求生成"
@@ -80,8 +83,40 @@ def test_dimension_gen_mode():
     with patch.object(dimension_gen, "call_llm_json", return_value=(MOCK_DIMENSIONS, MOCK_USAGE)):
         output = dimension_gen.run(input_data)
     assert "dimensions" in output
-    assert len(output["dimensions"]) == 3
+    assert len(output["dimensions"]) == 4
     assert output["dimensions"][0]["id"] == "substantiveness"
+    assert output["dimensions"][1]["id"] == "credibility"
+    assert output["dimensions"][2]["id"] == "completeness"
+
+
+def test_dimension_gen_prompt_includes_credibility():
+    """dimension_gen prompt should include credibility as a fixed dimension."""
+    import dimension_gen
+    input_data = {
+        "mode": "dimension_gen",
+        "task_title": "市场调研",
+        "task_description": "调研竞品",
+        "acceptance_criteria": "至少覆盖10个产品",
+    }
+    captured_prompt = None
+
+    def fake_call_llm_json(prompt, system=None):
+        nonlocal captured_prompt
+        captured_prompt = prompt
+        return (MOCK_DIMENSIONS, MOCK_USAGE)
+
+    with patch.object(dimension_gen, "call_llm_json", side_effect=fake_call_llm_json):
+        output = dimension_gen.run(input_data)
+
+    # Verify prompt contains credibility references
+    assert "可信度" in captured_prompt
+    assert "credibility" in captured_prompt
+
+    # Verify output has 3 fixed dimensions with correct ids
+    fixed_dims = [d for d in output["dimensions"] if d["type"] == "fixed"]
+    assert len(fixed_dims) == 3
+    fixed_ids = [d["id"] for d in fixed_dims]
+    assert fixed_ids == ["substantiveness", "credibility", "completeness"]
 
 
 MOCK_GATE_PASS = {
