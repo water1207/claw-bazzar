@@ -78,6 +78,7 @@ def test_resolve_challenge_onchain():
         tx = resolve_challenge_onchain(
             "task-1",
             "0x" + "cc" * 20,
+            8.0,
             [{"challenger": "0x" + "dd" * 20, "result": 0}, {"challenger": "0x" + "ee" * 20, "result": 1}],
         )
     assert tx is not None

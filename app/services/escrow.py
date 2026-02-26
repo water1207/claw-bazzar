@@ -62,6 +62,7 @@ _MINIMAL_ESCROW_ABI = [
         "inputs": [
             {"name": "taskId", "type": "bytes32"},
             {"name": "finalWinner", "type": "address"},
+            {"name": "winnerPayout", "type": "uint256"},
             {
                 "name": "verdicts",
                 "type": "tuple[]",
@@ -177,15 +178,18 @@ def join_challenge_onchain(
 def resolve_challenge_onchain(
     task_id: str,
     final_winner_wallet: str,
+    winner_payout: float,
     verdicts: list[dict],
     arbiter_wallets: list[str] | None = None,
 ) -> str:
-    """Call ChallengeEscrow.resolveChallenge() with verdicts and arbiter addresses.
+    """Call ChallengeEscrow.resolveChallenge() with winner payout, verdicts, and arbiter addresses.
+    winner_payout: USDC amount the winner receives (rest goes to platform).
     verdicts: [{"challenger": "0x...", "result": 0|1|2}, ...]
     arbiter_wallets: list of arbiter addresses to split deposit rewards.
     Returns tx hash."""
     w3, contract = _get_w3_and_contract()
     task_bytes = _task_id_to_bytes32(task_id)
+    winner_payout_wei = int(winner_payout * 10**6)
 
     verdict_tuples = [
         (Web3.to_checksum_address(v["challenger"]), v["result"])
@@ -198,6 +202,7 @@ def resolve_challenge_onchain(
     fn = contract.functions.resolveChallenge(
         task_bytes,
         Web3.to_checksum_address(final_winner_wallet),
+        winner_payout_wei,
         verdict_tuples,
         arbiter_addresses,
     )

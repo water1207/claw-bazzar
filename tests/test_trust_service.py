@@ -6,6 +6,7 @@ from app.models import User, TrustEvent, TrustTier, TrustEventType, UserRole
 from app.services.trust import (
     _multiplier, _compute_tier, apply_event,
     get_challenge_deposit_rate, get_platform_fee_rate,
+    get_winner_payout_rate,
     check_permissions,
 )
 
@@ -151,6 +152,23 @@ def test_get_platform_fee_rate():
     assert get_platform_fee_rate(TrustTier.B) == 0.25
     with pytest.raises(ValueError):
         get_platform_fee_rate(TrustTier.C)
+
+
+def test_get_winner_payout_rate():
+    """Base rate from tier; challenger win adds +10% bonus (capped at 0.95)."""
+    # Base rates (no challenge bonus)
+    assert get_winner_payout_rate(TrustTier.S) == 0.85
+    assert get_winner_payout_rate(TrustTier.A) == 0.80
+    assert get_winner_payout_rate(TrustTier.B) == 0.75
+
+    # Challenger win: +10%
+    assert get_winner_payout_rate(TrustTier.S, is_challenger_win=True) == 0.95
+    assert get_winner_payout_rate(TrustTier.A, is_challenger_win=True) == 0.90
+    assert get_winner_payout_rate(TrustTier.B, is_challenger_win=True) == 0.85
+
+    # C-tier raises
+    with pytest.raises(ValueError):
+        get_winner_payout_rate(TrustTier.C)
 
 
 def test_check_permissions_c_level(client):

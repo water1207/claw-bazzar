@@ -25,12 +25,13 @@ interface WorkerDef {
   key: Hex
   nickname: string
   storageKey: string
+  trustScore: number
 }
 
 const DEV_WORKERS: WorkerDef[] = [
-  { key: process.env.NEXT_PUBLIC_DEV_WORKER_WALLET_KEY as Hex, nickname: 'Alice', storageKey: 'devWorkerId' },
-  { key: process.env.NEXT_PUBLIC_DEV_WORKER2_WALLET_KEY as Hex, nickname: 'Bob', storageKey: 'devWorker2Id' },
-  { key: process.env.NEXT_PUBLIC_DEV_WORKER3_WALLET_KEY as Hex, nickname: 'Charlie', storageKey: 'devWorker3Id' },
+  { key: process.env.NEXT_PUBLIC_DEV_WORKER_WALLET_KEY as Hex, nickname: 'Alice', storageKey: 'devWorkerId', trustScore: 850 },
+  { key: process.env.NEXT_PUBLIC_DEV_WORKER2_WALLET_KEY as Hex, nickname: 'Bob', storageKey: 'devWorker2Id', trustScore: 550 },
+  { key: process.env.NEXT_PUBLIC_DEV_WORKER3_WALLET_KEY as Hex, nickname: 'Charlie', storageKey: 'devWorker3Id', trustScore: 350 },
 ].filter((w) => w.key)
 
 const PRESETS = [
@@ -465,14 +466,26 @@ export function DevPanel() {
       return null
     }
 
-    // Publisher
+    // Helper: ensure trust score is set (idempotent)
+    async function ensureTrustScore(userId: string, score: number) {
+      try {
+        await fetch(`/api/internal/users/${userId}/trust`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ score }),
+        })
+      } catch {}
+    }
+
+    // Publisher (S-tier: 850)
     let pubId: string | null = null
     if (DEV_PUBLISHER_WALLET_KEY) {
       pubId = await resolveUser('devPublisherId', 'dev-publisher', publisherAddress!, 'publisher')
+      if (pubId) await ensureTrustScore(pubId, 850)
     }
     if (pubId) setPublisherId(pubId)
 
-    // All workers
+    // All workers (Alice=850/S, Bob=550/A, Charlie=350/B)
     const ids: string[] = []
     for (let i = 0; i < DEV_WORKERS.length; i++) {
       const w = DEV_WORKERS[i]
@@ -480,6 +493,7 @@ export function DevPanel() {
       let wrkId: string | null = null
       if (addr) {
         wrkId = await resolveUser(w.storageKey, w.nickname, addr, 'worker')
+        if (wrkId) await ensureTrustScore(wrkId, w.trustScore)
       }
       ids.push(wrkId || '')
     }

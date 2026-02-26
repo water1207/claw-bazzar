@@ -103,10 +103,12 @@ contract ChallengeEscrow is Ownable {
     }
 
     /// @notice Resolve challenge: distribute bounty + deposits + arbiter rewards.
+    /// @param winnerPayout Amount of locked bounty to send to finalWinner (rest → platform).
     /// @param arbiters Addresses that judged this challenge (receive deposit share).
     function resolveChallenge(
         bytes32 taskId,
         address finalWinner,
+        uint256 winnerPayout,
         Verdict[] calldata verdicts,
         address[] calldata arbiters
     ) external onlyOwner {
@@ -116,21 +118,12 @@ contract ChallengeEscrow is Ownable {
 
         uint256 platformTotal = 0;
 
-        // 1. Bounty distribution
-        bool hasUpheld = false;
-        for (uint256 i = 0; i < verdicts.length; i++) {
-            if (verdicts[i].result == 0) { hasUpheld = true; break; }
+        // 1. Bounty distribution: caller decides split based on winner trust tier
+        require(winnerPayout <= info.bounty, "Payout exceeds bounty");
+        if (winnerPayout > 0) {
+            require(usdc.transfer(finalWinner, winnerPayout), "Bounty transfer failed");
         }
-
-        if (hasUpheld) {
-            // Challenger won: full bounty (90%) to challenger
-            require(usdc.transfer(finalWinner, info.bounty), "Bounty transfer failed");
-        } else {
-            // No challenger won: base payout to original winner, incentive back to platform
-            uint256 basePayout = info.bounty - info.incentive;
-            require(usdc.transfer(finalWinner, basePayout), "Bounty transfer failed");
-            platformTotal += info.incentive;
-        }
+        platformTotal += info.bounty - winnerPayout;
 
         // 2. Deposit distribution: 30% of each deposit → arbiters, rest by verdict
         uint256 arbiterPool = 0;

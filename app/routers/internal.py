@@ -86,6 +86,21 @@ def judge_challenge(challenge_id: str, data: ManualJudgeInput, db: Session = Dep
     return challenge
 
 
+@router.patch("/users/{user_id}/trust")
+def set_trust_score(user_id: str, data: dict, db: Session = Depends(get_db)):
+    """Dev-only: directly set a user's trust score and recompute tier."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    from ..services.trust import _compute_tier
+    score = float(data.get("score", user.trust_score))
+    user.trust_score = max(0.0, min(1000.0, score))
+    user.trust_tier = _compute_tier(user.trust_score)
+    db.commit()
+    db.refresh(user)
+    return {"id": user.id, "trust_score": user.trust_score, "trust_tier": user.trust_tier.value}
+
+
 @router.get("/oracle-logs")
 def oracle_logs(
     task_count: int = Query(default=5, ge=1, le=50, description="Return logs for the N most recent tasks"),

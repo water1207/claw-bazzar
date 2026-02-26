@@ -92,7 +92,12 @@ def pay_winner(db: Session, task_id: str) -> None:
     if not winner:
         return
 
-    payout_amount = round(task.bounty * (1 - PLATFORM_FEE_RATE), 6)
+    from .trust import get_winner_payout_rate
+    try:
+        rate = get_winner_payout_rate(winner.trust_tier)
+    except ValueError:
+        rate = 1 - PLATFORM_FEE_RATE
+    payout_amount = round(task.bounty * rate, 6)
 
     try:
         tx_hash = _send_usdc_transfer(winner.wallet, payout_amount)

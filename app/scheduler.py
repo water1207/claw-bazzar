@@ -19,6 +19,7 @@ def _resolve_via_contract(
 ) -> None:
     """Call resolveChallenge on-chain to distribute bounty + deposits."""
     from .models import User, PayoutStatus
+    from .services.trust import get_winner_payout_rate
     try:
         winner_sub = db.query(Submission).filter(
             Submission.id == task.winner_submission_id
@@ -27,11 +28,14 @@ def _resolve_via_contract(
             User.id == winner_sub.worker_id
         ).first() if winner_sub else None
         if winner_user:
-            # Payout is 90% if challenger won, 80% if original winner kept
             has_upheld = any(v.get("result") == 0 for v in verdicts)
-            payout_amount = round(task.bounty * 0.90, 6) if has_upheld else round(task.bounty * 0.80, 6)
+            try:
+                rate = get_winner_payout_rate(winner_user.trust_tier, is_challenger_win=has_upheld)
+            except ValueError:
+                rate = 0.80
+            payout_amount = round(task.bounty * rate, 6)
             tx_hash = resolve_challenge_onchain(
-                task.id, winner_user.wallet, verdicts, arbiter_wallets
+                task.id, winner_user.wallet, payout_amount, verdicts, arbiter_wallets
             )
             task.payout_status = PayoutStatus.paid
             task.payout_tx_hash = tx_hash
@@ -231,8 +235,8 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                             User.id == winner_sub.worker_id
                         ).first() if winner_sub else None
                         if winner_user:
-                            escrow_amount = round(task.bounty * 0.90, 6)
-                            incentive = round(task.bounty * 0.10, 6)
+                            escrow_amount = round(task.bounty * 0.95, 6)
+                            incentive = 0
                             deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
                             create_challenge_onchain(
                                 task.id, winner_user.wallet, escrow_amount, incentive, deposit_amount

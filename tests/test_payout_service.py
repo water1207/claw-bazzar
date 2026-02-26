@@ -89,6 +89,80 @@ def test_pay_winner_handles_transfer_failure():
     db.close()
 
 
+def test_pay_winner_s_tier_gets_85_percent():
+    from app.models import Task, Submission, User, TaskType, TaskStatus, SubmissionStatus, PayoutStatus, TrustTier
+    Session = make_db()
+    db = Session()
+
+    user = User(nickname="s-winner", wallet="0xS_WINNER", role="worker",
+                trust_score=850.0, trust_tier=TrustTier.S)
+    db.add(user)
+    db.flush()
+
+    task = Task(
+        title="T", description="d", type=TaskType.fastest_first,
+        threshold=0.8, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        status=TaskStatus.closed, publisher_id="pub-1", bounty=10.0,
+        winner_submission_id="sub-s",
+    )
+    db.add(task)
+    db.flush()
+
+    sub = Submission(
+        id="sub-s", task_id=task.id, worker_id=user.id,
+        revision=1, content="answer", score=0.9, status=SubmissionStatus.scored,
+    )
+    db.add(sub)
+    db.commit()
+
+    with patch("app.services.payout._send_usdc_transfer") as mock_send:
+        mock_send.return_value = "0xS_TX"
+        from app.services.payout import pay_winner
+        pay_winner(db, task.id)
+
+    db.refresh(task)
+    assert task.payout_amount == 8.5  # 10.0 * 0.85
+    mock_send.assert_called_once_with("0xS_WINNER", 8.5)
+    db.close()
+
+
+def test_pay_winner_b_tier_gets_75_percent():
+    from app.models import Task, Submission, User, TaskType, TaskStatus, SubmissionStatus, PayoutStatus, TrustTier
+    Session = make_db()
+    db = Session()
+
+    user = User(nickname="b-winner", wallet="0xB_WINNER", role="worker",
+                trust_score=350.0, trust_tier=TrustTier.B)
+    db.add(user)
+    db.flush()
+
+    task = Task(
+        title="T", description="d", type=TaskType.fastest_first,
+        threshold=0.8, deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        status=TaskStatus.closed, publisher_id="pub-1", bounty=10.0,
+        winner_submission_id="sub-b",
+    )
+    db.add(task)
+    db.flush()
+
+    sub = Submission(
+        id="sub-b", task_id=task.id, worker_id=user.id,
+        revision=1, content="answer", score=0.9, status=SubmissionStatus.scored,
+    )
+    db.add(sub)
+    db.commit()
+
+    with patch("app.services.payout._send_usdc_transfer") as mock_send:
+        mock_send.return_value = "0xB_TX"
+        from app.services.payout import pay_winner
+        pay_winner(db, task.id)
+
+    db.refresh(task)
+    assert task.payout_amount == 7.5  # 10.0 * 0.75
+    mock_send.assert_called_once_with("0xB_WINNER", 7.5)
+    db.close()
+
+
 def test_pay_winner_skips_if_no_winner():
     from app.models import Task, TaskType, TaskStatus, PayoutStatus
     Session = make_db()

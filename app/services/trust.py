@@ -110,6 +110,18 @@ def get_platform_fee_rate(tier: TrustTier) -> float:
     return rates[tier]
 
 
+CHALLENGE_WIN_BONUS = 0.10
+
+
+def get_winner_payout_rate(tier: TrustTier, is_challenger_win: bool = False) -> float:
+    """Winner payout rate based on trust tier.
+    Challenger who wins gets an extra +10% bonus (capped at 0.95)."""
+    base = 1.0 - get_platform_fee_rate(tier)  # S=0.85, A=0.80, B=0.75
+    if is_challenger_win:
+        return min(base + CHALLENGE_WIN_BONUS, 0.95)
+    return base
+
+
 def check_permissions(user: User) -> dict:
     """Return permission dict for the user based on trust tier."""
     tier = user.trust_tier

@@ -54,12 +54,16 @@ def test_settle_calls_escrow_when_challengers_have_wallets(client):
 
     # Verify resolveChallenge was called via _resolve_via_contract
     mock_resolve.assert_called_once()
+    # Verify winner_payout arg (A-tier default: 80% of 10.0 = 8.0)
+    call_args = mock_resolve.call_args
+    assert call_args[0][2] == 8.0  # winner_payout positional arg
 
     # Verify task is closed and payout recorded
     db.refresh(task)
     assert task.status == TaskStatus.closed
     assert task.payout_tx_hash == "0xresolve"
     assert task.payout_status == PayoutStatus.paid
+    assert task.payout_amount == 8.0
 
 
 def test_settle_without_wallets_still_resolves(client):
