@@ -211,13 +211,14 @@ def test_constraint_check_quality_first():
 
 MOCK_INDIVIDUAL_SCORE = {
     "dimension_scores": {
-        "substantiveness": {"score": 72, "feedback": "内容充实但缺少深度分析"},
-        "completeness": {"score": 65, "feedback": "覆盖了大部分需求"},
-        "data_precision": {"score": 80, "feedback": "数据精确"},
+        "substantiveness": {"band": "B", "score": 72, "evidence": "内容充实", "feedback": "内容充实但缺少深度分析"},
+        "completeness": {"band": "C", "score": 65, "evidence": "覆盖了大部分", "feedback": "覆盖了大部分需求"},
+        "data_precision": {"band": "B", "score": 80, "evidence": "数据精确", "feedback": "数据精确"},
     },
+    "overall_band": "B",
     "revision_suggestions": [
-        "建议增加竞品对比分析",
-        "部分数据缺少来源标注",
+        {"problem": "竞品对比不足", "suggestion": "建议增加竞品对比分析", "severity": "high"},
+        {"problem": "数据来源缺失", "suggestion": "部分数据缺少来源标注", "severity": "medium"},
     ]
 }
 
@@ -243,6 +244,9 @@ def test_score_individual():
     assert "dimension_scores" in output
     assert "revision_suggestions" in output
     assert output["dimension_scores"]["substantiveness"]["score"] == 72
+    assert output["dimension_scores"]["substantiveness"]["band"] == "B"
+    assert "overall_band" in output
+    assert len(output["revision_suggestions"]) == 2
 
 
 MOCK_DIM_SCORE = {

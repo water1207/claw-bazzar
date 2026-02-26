@@ -1,10 +1,12 @@
-"""Individual scoring — score a single submission on all dimensions + provide revision suggestions."""
+"""Individual scoring — band-first scoring with evidence for each dimension."""
 from llm_client import call_llm_json
 
-SYSTEM_PROMPT = "你是 Agent Market 的质量评分 Oracle。对单个提交在各维度独立打分并给出修订建议，返回严格JSON。"
+SYSTEM_PROMPT = "你是 Agent Market 的质量评分 Oracle。对单个提交在各维度独立打分（band-first），强制引用证据，返回严格JSON。"
 
 PROMPT_TEMPLATE = """## 你的任务
-对单个提交在每个评分维度上独立打分（0-100），并给出修订建议帮助提交者改进。
+对单个提交在每个评分维度上独立打分，使用 Band-first 方法：先判定档位，再在档内给精确分数。
+每个维度必须引用提交中的具体内容作为评分依据（evidence），不允许泛泛评价。
+最后给出恰好 2 条修订建议，按严重程度排序。
 
 ## 任务信息
 
@@ -21,25 +23,46 @@ PROMPT_TEMPLATE = """## 你的任务
 ## 提交内容
 {submission_payload}
 
-## 评分流程
-1. 对每个维度独立评分（0-100）
-2. 给出每个维度的简要反馈
-3. 综合所有维度给出2-3条修订建议
+## Band-first 评分流程
 
-## 打分标准
-- 90-100: 显著超出预期
-- 70-89: 良好完成，有亮点
-- 50-69: 基本满足但平庸
-- 30-49: 勉强相关但质量差
-- 0-29: 几乎无价值
+对每个维度：
+1. 先判定落在哪个档位（Band）
+2. 再在档内给精确分数
+3. 引用提交中的具体内容作为 evidence
+4. 如果某个 fixed 类型维度的分数低于 60，添加 "flag": "below_expected"
+
+### 档位定义
+
+| Band | 分数区间 | 含义 |
+|------|---------|------|
+| A | 90-100 | 显著超出预期 |
+| B | 70-89 | 良好完成，有亮点 |
+| C | 50-69 | 基本满足但平庸 |
+| D | 30-49 | 勉强相关但质量差 |
+| E | 0-29 | 几乎无价值 |
+
+## 修订建议规则
+- 恰好给出 2 条建议（不多不少）
+- 按严重程度排序（high → medium → low）
+- 聚焦最关键的问题
+- 结构化为 {{"problem": "...", "suggestion": "...", "severity": "high/medium/low"}}
 
 ## 输出格式 (严格JSON)
 
 {{
   "dimension_scores": {{
-    "dim_id": {{ "score": 0-100, "feedback": "简要反馈" }}
+    "dim_id": {{
+      "band": "A/B/C/D/E",
+      "score": 0-100,
+      "evidence": "引用提交中的具体内容作为评分依据",
+      "feedback": "简要反馈"
+    }}
   }},
-  "revision_suggestions": ["建议1", "建议2"]
+  "overall_band": "A/B/C/D/E",
+  "revision_suggestions": [
+    {{ "problem": "具体问题", "suggestion": "改进建议", "severity": "high/medium/low" }},
+    {{ "problem": "具体问题", "suggestion": "改进建议", "severity": "high/medium/low" }}
+  ]
 }}"""
 
 
