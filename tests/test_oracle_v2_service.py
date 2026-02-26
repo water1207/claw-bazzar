@@ -62,28 +62,55 @@ MOCK_GATE_PASS = json.dumps({
     "summary": "通过"
 })
 
-MOCK_CONSTRAINT_FF_PASS = json.dumps({
-    "task_relevance": {"passed": True, "reason": "切题"},
-    "authenticity": {"passed": True, "reason": "可信"},
-    "overall_passed": True, "rejection_reason": None,
+# New mock for fastest_first individual scoring (high scores, all pass)
+MOCK_INDIVIDUAL_FF_PASS = json.dumps({
+    "dimension_scores": {
+        "substantiveness": {"band": "B", "score": 80, "evidence": "good", "feedback": "好"},
+        "completeness": {"band": "B", "score": 75, "evidence": "完整", "feedback": "完整"},
+    },
+    "overall_band": "B",
+    "revision_suggestions": [
+        {"problem": "p1", "suggestion": "s1", "severity": "high"},
+        {"problem": "p2", "suggestion": "s2", "severity": "medium"},
+    ]
 })
 
-MOCK_CONSTRAINT_FF_FAIL = json.dumps({
-    "task_relevance": {"passed": False, "reason": "偏题"},
-    "authenticity": {"passed": True, "reason": "可信"},
-    "overall_passed": False, "rejection_reason": "提交偏离任务主题",
+# New mock for fastest_first individual scoring (low scores, penalty triggers)
+MOCK_INDIVIDUAL_FF_LOW = json.dumps({
+    "dimension_scores": {
+        "substantiveness": {"band": "D", "score": 40, "evidence": "弱", "feedback": "弱"},
+        "completeness": {"band": "D", "score": 35, "evidence": "不完整", "feedback": "不完整"},
+    },
+    "overall_band": "D",
+    "revision_suggestions": [
+        {"problem": "p1", "suggestion": "s1", "severity": "high"},
+        {"problem": "p2", "suggestion": "s2", "severity": "medium"},
+    ]
 })
 
 
 def test_score_submission_fastest_first_pass(db):
-    """fastest_first: gate pass + constraint pass → accepted + close task."""
+    """fastest_first: gate pass + score_individual → penalized_total >= 60 → close task."""
     from app.services.oracle import score_submission
 
     task = Task(
         title="Test", description="Desc", type=TaskType.fastest_first,
-        threshold=0.7, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0,
+        threshold=0.6, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0,
+        acceptance_criteria="AC",
     )
     db.add(task)
+    db.commit()
+
+    # Add dimensions (2 fixed)
+    dim1 = ScoringDimension(
+        task_id=task.id, dim_id="substantiveness", name="实质性",
+        dim_type="fixed", description="d", weight=0.5, scoring_guidance="g"
+    )
+    dim2 = ScoringDimension(
+        task_id=task.id, dim_id="completeness", name="完整性",
+        dim_type="fixed", description="d", weight=0.5, scoring_guidance="g"
+    )
+    db.add_all([dim1, dim2])
     db.commit()
 
     sub = Submission(task_id=task.id, worker_id="w1", content="good content")
@@ -91,38 +118,52 @@ def test_score_submission_fastest_first_pass(db):
     db.commit()
 
     gate_result = type("R", (), {"stdout": MOCK_GATE_PASS, "returncode": 0})()
-    constraint_result = type("R", (), {"stdout": MOCK_CONSTRAINT_FF_PASS, "returncode": 0})()
+    individual_result = type("R", (), {"stdout": MOCK_INDIVIDUAL_FF_PASS, "returncode": 0})()
 
     call_count = 0
     def mock_subprocess(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            return gate_result
-        return constraint_result
+        return gate_result if call_count == 1 else individual_result
 
-    with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess):
-        with patch("app.services.oracle.pay_winner"):
-            score_submission(db, sub.id, task.id)
+    with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess), \
+         patch("app.services.oracle.pay_winner"):
+        score_submission(db, sub.id, task.id)
 
     db.refresh(sub)
     db.refresh(task)
     assert sub.status == SubmissionStatus.scored
     assert task.status == TaskStatus.closed
     feedback = json.loads(sub.oracle_feedback)
-    assert feedback["type"] == "fastest_first_check"
+    assert feedback["type"] == "scoring"
     assert feedback["passed"] is True
+    assert "dimension_scores" in feedback
+    assert "penalty" in feedback
+    assert "final_score" in feedback
+    assert feedback["final_score"] >= 60
 
 
-def test_score_submission_fastest_first_constraint_fail(db):
-    """fastest_first: gate pass + constraint fail → rejected."""
+def test_score_submission_fastest_first_low_score(db):
+    """fastest_first: gate pass + score_individual → penalized_total < 60 → scored but NOT closed."""
     from app.services.oracle import score_submission
 
     task = Task(
         title="Test", description="Desc", type=TaskType.fastest_first,
-        threshold=0.7, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0,
+        threshold=0.6, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0,
+        acceptance_criteria="AC",
     )
     db.add(task)
+    db.commit()
+
+    dim1 = ScoringDimension(
+        task_id=task.id, dim_id="substantiveness", name="实质性",
+        dim_type="fixed", description="d", weight=0.5, scoring_guidance="g"
+    )
+    dim2 = ScoringDimension(
+        task_id=task.id, dim_id="completeness", name="完整性",
+        dim_type="fixed", description="d", weight=0.5, scoring_guidance="g"
+    )
+    db.add_all([dim1, dim2])
     db.commit()
 
     sub = Submission(task_id=task.id, worker_id="w1", content="bad content")
@@ -130,15 +171,13 @@ def test_score_submission_fastest_first_constraint_fail(db):
     db.commit()
 
     gate_result = type("R", (), {"stdout": MOCK_GATE_PASS, "returncode": 0})()
-    constraint_result = type("R", (), {"stdout": MOCK_CONSTRAINT_FF_FAIL, "returncode": 0})()
+    individual_result = type("R", (), {"stdout": MOCK_INDIVIDUAL_FF_LOW, "returncode": 0})()
 
     call_count = 0
     def mock_subprocess(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            return gate_result
-        return constraint_result
+        return gate_result if call_count == 1 else individual_result
 
     with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess):
         score_submission(db, sub.id, task.id)
@@ -146,9 +185,11 @@ def test_score_submission_fastest_first_constraint_fail(db):
     db.refresh(sub)
     db.refresh(task)
     assert sub.status == SubmissionStatus.scored
-    assert task.status == TaskStatus.open  # Not closed
+    assert task.status == TaskStatus.open  # NOT closed
     feedback = json.loads(sub.oracle_feedback)
-    assert feedback["passed"] is False
+    assert feedback["type"] == "scoring"
+    assert feedback["final_score"] < 60
+    assert len(feedback["risk_flags"]) > 0
 
 
 # --- quality_first tests ---

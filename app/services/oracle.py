@@ -219,15 +219,16 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
 
 
 def score_submission(db: Session, submission_id: str, task_id: str) -> None:
-    """Score a single submission (fastest_first path): gate_check + constraint_check."""
+    """Score a single submission (fastest_first path): gate_check + score_individual + penalized_total."""
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     task = db.query(Task).filter(Task.id == task_id).first()
     if not submission or not task:
         return
 
-    # Step 1: Gate Check
     sub_meta = {"task_id": task.id, "task_title": task.title,
                 "submission_id": submission.id, "worker_id": submission.worker_id}
+
+    # Step 1: Gate Check
     gate_payload = {
         "mode": "gate_check",
         "task_description": task.description,
@@ -238,9 +239,8 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
 
     if not gate_result.get("overall_passed", False):
         submission.oracle_feedback = json.dumps({
-            "type": "fastest_first_check",
+            "type": "scoring",
             "gate_check": gate_result,
-            "constraint_check": None,
             "passed": False,
         })
         submission.score = 0.0
@@ -248,25 +248,64 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
         db.commit()
         return
 
-    # Step 2: Constraint Check
-    constraint_payload = {
-        "mode": "constraint_check",
-        "task_type": "fastest_first",
+    # Step 2: Score Individual (band-first + evidence)
+    dimensions = db.query(ScoringDimension).filter(
+        ScoringDimension.task_id == task_id
+    ).all()
+
+    if not dimensions:
+        # V1 fallback — no dimensions available
+        output = _call_oracle(_build_payload(task, submission, "score"), meta=sub_meta)
+        submission.score = output.get("score", 0.0)
+        submission.oracle_feedback = json.dumps({
+            "type": "scoring",
+            "passed": submission.score >= (task.threshold or 0),
+            **output,
+        })
+        submission.status = SubmissionStatus.scored
+        db.commit()
+        if submission.score >= (task.threshold or 0):
+            _apply_fastest_first(db, task, submission)
+        return
+
+    dims_data = [
+        {"id": d.dim_id, "name": d.name, "description": d.description,
+         "weight": d.weight, "scoring_guidance": d.scoring_guidance}
+        for d in dimensions
+    ]
+    score_payload = {
+        "mode": "score_individual",
         "task_title": task.title,
         "task_description": task.description,
-        "acceptance_criteria": task.acceptance_criteria or "",
+        "dimensions": dims_data,
         "submission_payload": submission.content,
     }
-    constraint_result = _call_oracle(constraint_payload, meta=sub_meta)
+    score_result = _call_oracle(score_payload, meta=sub_meta)
 
-    passed = constraint_result.get("overall_passed", False)
+    # Step 3: Compute penalized_total
+    dim_scores = score_result.get("dimension_scores", {})
+    dims_for_penalty = [
+        {"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight}
+        for d in dimensions
+    ]
+    penalty_result = compute_penalized_total(dim_scores, dims_for_penalty)
+
+    final_score = penalty_result["final_score"]
+    passed = final_score >= PENALTY_THRESHOLD
+
     submission.oracle_feedback = json.dumps({
-        "type": "fastest_first_check",
-        "gate_check": gate_result,
-        "constraint_check": constraint_result,
+        "type": "scoring",
+        "dimension_scores": dim_scores,
+        "overall_band": score_result.get("overall_band", ""),
+        "revision_suggestions": score_result.get("revision_suggestions", []),
+        "weighted_base": penalty_result["weighted_base"],
+        "penalty": penalty_result["penalty"],
+        "penalty_reasons": penalty_result["penalty_reasons"],
+        "final_score": final_score,
+        "risk_flags": penalty_result["risk_flags"],
         "passed": passed,
     })
-    submission.score = 1.0 if passed else 0.0
+    submission.score = final_score / 100.0
     submission.status = SubmissionStatus.scored
     db.commit()
 
