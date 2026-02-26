@@ -86,11 +86,36 @@ def get_trust_events(user_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/challenges/{challenge_id}/votes", response_model=list[ArbiterVoteOut])
-def get_challenge_votes(challenge_id: str, db: Session = Depends(get_db)):
+def get_challenge_votes(
+    challenge_id: str,
+    viewer_id: str = Query(default=None),
+    db: Session = Depends(get_db),
+):
     challenge = db.query(Challenge).filter_by(id=challenge_id).first()
     if not challenge:
         raise HTTPException(404, "Challenge not found")
     votes = db.query(ArbiterVote).filter_by(challenge_id=challenge_id).all()
+
+    # Hide other arbiters' votes while challenge is pending and not all voted
+    all_voted = all(v.vote is not None for v in votes)
+    if challenge.status.value == "pending" and not all_voted:
+        result = []
+        for v in votes:
+            if v.arbiter_user_id == viewer_id:
+                result.append(v)
+            else:
+                result.append(ArbiterVoteOut(
+                    id=v.id,
+                    challenge_id=v.challenge_id,
+                    arbiter_user_id=v.arbiter_user_id,
+                    vote=None,
+                    feedback=None,
+                    is_majority=None,
+                    reward_amount=None,
+                    created_at=v.created_at,
+                ))
+        return result
+
     return votes
 
 

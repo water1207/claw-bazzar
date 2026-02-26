@@ -171,9 +171,10 @@ export function useTrustEvents(userId: string | null) {
   })
 }
 
-export function useArbiterVotes(challengeId: string | null) {
+export function useArbiterVotes(challengeId: string | null, viewerId?: string | null) {
+  const params = viewerId ? `?viewer_id=${viewerId}` : ''
   return useSWR<ArbiterVote[]>(
-    challengeId ? `/api/challenges/${challengeId}/votes` : null,
+    challengeId ? `/api/challenges/${challengeId}/votes${params}` : null,
     fetcher,
     { refreshInterval: 10_000 },
   )

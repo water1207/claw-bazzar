@@ -58,7 +58,7 @@ function ChallengeVoteCard({ challengeId, arbiterId, onVoted }: {
   arbiterId: string
   onVoted: () => void
 }) {
-  const { data: votes = [], mutate } = useArbiterVotes(challengeId)
+  const { data: votes = [], mutate } = useArbiterVotes(challengeId, arbiterId)
   const [verdict, setVerdict] = useState<ChallengeVerdict | ''>('')
   const [feedback, setFeedback] = useState('')
   const [submitting, setSubmitting] = useState(false)

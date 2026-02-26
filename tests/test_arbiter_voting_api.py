@@ -116,3 +116,63 @@ def test_submit_vote_duplicate(client):
         "feedback": "second vote",
     })
     assert resp.status_code == 400
+
+
+def test_votes_hidden_without_viewer(client):
+    """Without viewer_id, all pending votes are hidden."""
+    task, ch, arbs, votes = _setup_challenge_with_jury(client)
+
+    # Arbiter 0 votes
+    client.post(f"/challenges/{ch.id}/vote", json={
+        "arbiter_user_id": arbs[0].id,
+        "verdict": "upheld",
+        "feedback": "good work",
+    })
+
+    # No viewer_id → all votes masked
+    resp = client.get(f"/challenges/{ch.id}/votes")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 3
+    assert all(v["vote"] is None for v in data)
+    assert all(v["feedback"] is None for v in data)
+
+
+def test_votes_visible_to_own_viewer(client):
+    """Arbiter can see their own vote but not others'."""
+    task, ch, arbs, votes = _setup_challenge_with_jury(client)
+
+    # Arbiter 0 votes
+    client.post(f"/challenges/{ch.id}/vote", json={
+        "arbiter_user_id": arbs[0].id,
+        "verdict": "upheld",
+        "feedback": "good work",
+    })
+
+    # Arbiter 0 as viewer → sees own vote
+    resp = client.get(f"/challenges/{ch.id}/votes?viewer_id={arbs[0].id}")
+    data = resp.json()
+    own = [v for v in data if v["arbiter_user_id"] == arbs[0].id]
+    others = [v for v in data if v["arbiter_user_id"] != arbs[0].id]
+    assert own[0]["vote"] == "upheld"
+    assert own[0]["feedback"] == "good work"
+    assert all(v["vote"] is None for v in others)
+    assert all(v["feedback"] is None for v in others)
+
+
+def test_votes_revealed_when_all_voted(client):
+    """All votes become visible once every arbiter has voted."""
+    task, ch, arbs, votes = _setup_challenge_with_jury(client)
+
+    for a in arbs:
+        client.post(f"/challenges/{ch.id}/vote", json={
+            "arbiter_user_id": a.id,
+            "verdict": "upheld",
+            "feedback": f"feedback from {a.nickname}",
+        })
+
+    # No viewer_id needed — all votes visible
+    resp = client.get(f"/challenges/{ch.id}/votes")
+    data = resp.json()
+    assert all(v["vote"] == "upheld" for v in data)
+    assert all(v["feedback"] is not None for v in data)
