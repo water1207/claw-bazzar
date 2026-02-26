@@ -190,3 +190,41 @@ def test_apply_event_arbiter_coherence_negative(client):
     db.refresh(user)
     assert event.delta == -30.0
     assert user.trust_score == 470.0
+
+
+from app.services.trust import compute_coherence_delta
+
+
+def test_coherence_delta_above_80():
+    assert compute_coherence_delta(coherent=5, effective=5) == 3   # 100%
+    assert compute_coherence_delta(coherent=5, effective=6) == 3   # 83%
+
+
+def test_coherence_delta_above_60():
+    assert compute_coherence_delta(coherent=2, effective=3) == 2   # 66.7%
+    assert compute_coherence_delta(coherent=4, effective=5) == 2   # 80% boundary
+
+
+def test_coherence_delta_40_to_60():
+    assert compute_coherence_delta(coherent=1, effective=2) == 0   # 50%
+    assert compute_coherence_delta(coherent=2, effective=5) == 0   # 40%
+
+
+def test_coherence_delta_below_40():
+    assert compute_coherence_delta(coherent=1, effective=3) == -10  # 33%
+    assert compute_coherence_delta(coherent=1, effective=5) == -10  # 20%
+
+
+def test_coherence_delta_zero_percent_ge_2():
+    assert compute_coherence_delta(coherent=0, effective=2) == -30
+    assert compute_coherence_delta(coherent=0, effective=5) == -30
+
+
+def test_coherence_delta_zero_percent_lt_2():
+    """0% with only 1 effective game -> -10 (not -30)."""
+    assert compute_coherence_delta(coherent=0, effective=1) == -10
+
+
+def test_coherence_delta_zero_effective():
+    """0 effective games -> None (no delta to apply)."""
+    assert compute_coherence_delta(coherent=0, effective=0) is None

@@ -142,3 +142,25 @@ def check_permissions(user: User) -> dict:
     if tier == TrustTier.B:
         result["max_task_amount"] = 50.0
     return result
+
+
+def compute_coherence_delta(coherent: int, effective: int) -> int | None:
+    """Compute trust score delta from arbiter coherence rate.
+
+    Returns None if no effective games (nothing to settle).
+    Tiers: >80%->+3, >60%->+2, 40-60%->0, <40%->-10, 0%&>=2->-30.
+    """
+    if effective == 0:
+        return None
+
+    rate = coherent / effective
+
+    if rate == 0 and effective >= 2:
+        return -30
+    if rate < 0.40:
+        return -10
+    if rate <= 0.60:
+        return 0
+    if rate <= 0.80:
+        return 2
+    return 3
