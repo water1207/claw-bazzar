@@ -25,10 +25,9 @@ PROMPT_TEMPLATE = """## 你的任务
 ### 评分指引
 {dim_scoring_guidance}
 
-## 底层约束结果（来自 Step 1）
+## Individual Scoring 参考（仅供锚定，不限制你的判断）
 
-以下提交存在约束上限，该维度得分不得超过 cap 值:
-{constraint_caps_text}
+{individual_ir_text}
 
 ## 待评提交（已匿名化）
 
@@ -46,7 +45,7 @@ PROMPT_TEMPLATE = """## 你的任务
 将所有提交在该维度上的表现放在一起对比，说明排序理由。
 
 ### 4. 打分
-0-100 分。如果该提交有 score_cap，最终得分不得超过 cap 值。
+0-100 分。
 
 ## 打分标准
 - 90-100: 显著超出预期
@@ -66,7 +65,6 @@ PROMPT_TEMPLATE = """## 你的任务
     {{
       "submission": "Submission_A",
       "raw_score": 85,
-      "cap_applied": false,
       "final_score": 85,
       "evidence": "核心评分依据"
     }}
@@ -74,14 +72,15 @@ PROMPT_TEMPLATE = """## 你的任务
 }}"""
 
 
-def _format_caps(caps: dict) -> str:
+def _format_individual_ir(ir: dict) -> str:
+    if not ir:
+        return "无 individual scoring 参考"
     lines = []
-    for label, cap in caps.items():
-        if cap is not None:
-            lines.append(f"- {label}: score_cap = {cap}")
-        else:
-            lines.append(f"- {label}: 无约束")
-    return "\n".join(lines) if lines else "无约束"
+    for label, data in ir.items():
+        band = data.get("band", "?")
+        evidence = data.get("evidence", "")
+        lines.append(f"- {label}: band={band}, evidence=\"{evidence}\"")
+    return "\n".join(lines)
 
 
 def _format_submissions(submissions: list) -> str:
@@ -102,7 +101,7 @@ def run(input_data: dict) -> dict:
         dim_name=dim.get("name", ""),
         dim_description=dim.get("description", ""),
         dim_scoring_guidance=dim.get("scoring_guidance", ""),
-        constraint_caps_text=_format_caps(input_data.get("constraint_caps", {})),
+        individual_ir_text=_format_individual_ir(input_data.get("individual_ir", {})),
         submissions_text=_format_submissions(input_data.get("submissions", [])),
     )
     result, _usage = call_llm_json(prompt, system=SYSTEM_PROMPT)

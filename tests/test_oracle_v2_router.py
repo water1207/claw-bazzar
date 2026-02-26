@@ -255,11 +255,11 @@ MOCK_DIM_SCORE = {
     "evaluation_focus": "内容深度和独到性",
     "comparative_analysis": "A优于B和C",
     "scores": [
-        {"submission": "Submission_A", "raw_score": 85, "cap_applied": False,
+        {"submission": "Submission_A", "raw_score": 85,
          "final_score": 85, "evidence": "深度分析到位"},
-        {"submission": "Submission_B", "raw_score": 72, "cap_applied": True,
-         "final_score": 40, "evidence": "有价值但真实性存疑"},
-        {"submission": "Submission_C", "raw_score": 60, "cap_applied": False,
+        {"submission": "Submission_B", "raw_score": 72,
+         "final_score": 72, "evidence": "有价值但深度不足"},
+        {"submission": "Submission_C", "raw_score": 60,
          "final_score": 60, "evidence": "基本满足"},
     ]
 }
@@ -268,15 +268,16 @@ MOCK_DIM_SCORE = {
 def test_dimension_score():
     import dimension_score
     input_data = {
-        "mode": "dimension_score",
         "task_title": "市场调研",
         "task_description": "调研竞品",
         "dimension": {
             "id": "substantiveness", "name": "实质性",
             "description": "内容质量", "scoring_guidance": "guide",
         },
-        "constraint_caps": {
-            "Submission_A": None, "Submission_B": 40, "Submission_C": None,
+        "individual_ir": {
+            "Submission_A": {"band": "B", "evidence": "较充实"},
+            "Submission_B": {"band": "C", "evidence": "基本满足"},
+            "Submission_C": {"band": "C", "evidence": "一般"},
         },
         "submissions": [
             {"label": "Submission_A", "payload": "content A"},
@@ -288,5 +289,6 @@ def test_dimension_score():
         output = dimension_score.run(input_data)
     assert output["dimension_id"] == "substantiveness"
     assert len(output["scores"]) == 3
-    assert output["scores"][1]["cap_applied"] is True
-    assert output["scores"][1]["final_score"] == 40
+    # No cap_applied in output
+    for s in output["scores"]:
+        assert "cap_applied" not in s
