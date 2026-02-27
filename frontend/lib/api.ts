@@ -8,7 +8,7 @@ const fetcher = (url: string) =>
 
 export type PayoutStatus = 'pending' | 'paid' | 'failed' | 'refunded'
 export type UserRole = 'publisher' | 'worker'
-export type TaskStatus = 'open' | 'scoring' | 'challenge_window' | 'arbitrating' | 'closed'
+export type TaskStatus = 'open' | 'scoring' | 'challenge_window' | 'arbitrating' | 'closed' | 'voided'
 export type ChallengeVerdict = 'upheld' | 'rejected' | 'malicious'
 export type ChallengeStatus = 'pending' | 'judged'
 export type TrustTier = 'S' | 'A' | 'B' | 'C'
@@ -153,6 +153,21 @@ export interface TaskDetail extends Task {
   submissions: Submission[]
 }
 
+/* ── Merged Arbitration (Jury Ballots) ── */
+
+export interface JuryBallot {
+  id: string
+  task_id: string
+  arbiter_user_id: string
+  winner_submission_id: string | null
+  feedback: string | null
+  coherence_status: string | null
+  is_majority: boolean | null
+  created_at: string
+  voted_at: string | null
+  malicious_tags: string[]
+}
+
 export function useTasks() {
   return useSWR<Task[]>('/api/tasks', fetcher, { refreshInterval: 30_000 })
 }
@@ -166,6 +181,14 @@ export function useTask(id: string | null) {
 export function useChallenges(taskId: string | null) {
   return useSWR<Challenge[]>(
     taskId ? `/api/tasks/${taskId}/challenges` : null,
+    fetcher,
+    { refreshInterval: 10_000 },
+  )
+}
+
+export function useJuryBallots(taskId: string | null) {
+  return useSWR<JuryBallot[]>(
+    taskId ? `/api/tasks/${taskId}/jury-ballots` : null,
     fetcher,
     { refreshInterval: 10_000 },
   )
@@ -316,6 +339,27 @@ export async function submitArbiterVote(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(text)
+  }
+  return resp.json()
+}
+
+export async function submitJuryVote(
+  taskId: string,
+  body: {
+    arbiter_user_id: string
+    winner_submission_id: string
+    malicious_submission_ids: string[]
+    feedback: string
+  },
+): Promise<JuryBallot> {
+  const resp = await fetch(`/api/tasks/${taskId}/jury-vote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
   if (!resp.ok) {
     const text = await resp.text()

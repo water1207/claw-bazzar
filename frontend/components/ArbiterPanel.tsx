@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -9,26 +9,16 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  useTasks, useArbiterVotes, submitArbiterVote, registerUser, useUser,
+  useTasks, useJuryBallots, submitJuryVote, registerUser, useUser,
+  useChallenges,
 } from '@/lib/api'
-import type { ChallengeVerdict } from '@/lib/api'
+import type { TaskDetail, Challenge } from '@/lib/api'
 import { TrustBadge } from '@/components/TrustBadge'
 import { getDevWalletAddress } from '@/lib/x402'
 import { fetchUsdcBalance } from '@/lib/utils'
 import { DEV_ARBITERS } from '@/lib/dev-wallets'
 
 const EMPTY_TASKS: never[] = []
-
-function VerdictBadge({ verdict }: { verdict: ChallengeVerdict | null }) {
-  if (!verdict) return <Badge variant="secondary">pending</Badge>
-  const cfg: Record<ChallengeVerdict, { variant: 'default' | 'destructive' | 'outline'; label: string }> = {
-    upheld:    { variant: 'default',     label: 'upheld' },
-    rejected:  { variant: 'outline',     label: 'rejected' },
-    malicious: { variant: 'destructive', label: 'malicious' },
-  }
-  const c = cfg[verdict]
-  return <Badge variant={c.variant}>{c.label}</Badge>
-}
 
 function ArbiterInfo({ userId }: { userId: string }) {
   const { data: user } = useUser(userId)
@@ -41,32 +31,113 @@ function ArbiterInfo({ userId }: { userId: string }) {
   )
 }
 
-function ChallengeVoteCard({ challengeId, arbiterId, onVoted }: {
-  challengeId: string
+/** Build candidate pool: PW (winner) + all challenger submissions */
+function buildCandidatePool(
+  task: TaskDetail,
+  challenges: Challenge[],
+): { id: string; label: string; isPW: boolean }[] {
+  const pool: { id: string; label: string; isPW: boolean }[] = []
+
+  // PW = the current winner submission
+  const pwSub = task.submissions.find((s) => s.id === task.winner_submission_id)
+  if (pwSub) {
+    pool.push({
+      id: pwSub.id,
+      label: `PW: ${pwSub.worker_id.slice(0, 8)}... (score: ${pwSub.score?.toFixed(2) ?? '\u2014'})`,
+      isPW: true,
+    })
+  }
+
+  // Challengers
+  const challengerSubIds = new Set(challenges.map((c) => c.challenger_submission_id))
+  for (const subId of challengerSubIds) {
+    const sub = task.submissions.find((s) => s.id === subId)
+    if (sub) {
+      pool.push({
+        id: sub.id,
+        label: `Challenger: ${sub.worker_id.slice(0, 8)}... (score: ${sub.score?.toFixed(2) ?? '\u2014'})`,
+        isPW: false,
+      })
+    } else {
+      pool.push({
+        id: subId,
+        label: `Challenger: ${subId.slice(0, 8)}...`,
+        isPW: false,
+      })
+    }
+  }
+  return pool
+}
+
+export { buildCandidatePool }
+
+interface MergedVoteCardProps {
+  task: TaskDetail
+  challenges: Challenge[]
   arbiterId: string
   onVoted: () => void
-}) {
-  const { data: votes = [], mutate } = useArbiterVotes(challengeId, arbiterId)
-  const [verdict, setVerdict] = useState<ChallengeVerdict | ''>('')
+}
+
+export function MergedVoteCard({ task, challenges, arbiterId, onVoted }: MergedVoteCardProps) {
+  const { data: ballots = [], mutate } = useJuryBallots(task.id)
+  const [winnerId, setWinnerId] = useState('')
+  const [maliciousIds, setMaliciousIds] = useState<Set<string>>(new Set())
   const [feedback, setFeedback] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const myVote = votes.find((v) => v.arbiter_user_id === arbiterId)
-  const votedCount = votes.filter((v) => v.vote !== null).length
+  const candidates = useMemo(
+    () => buildCandidatePool(task, challenges),
+    [task, challenges],
+  )
 
-  async function handleVote(e: React.FormEvent) {
+  const myBallot = ballots.find((b) => b.arbiter_user_id === arbiterId)
+  const votedCount = ballots.filter((b) => b.voted_at !== null).length
+  const totalCount = ballots.length
+  const allVoted = totalCount > 0 && votedCount === totalCount
+  const alreadyVoted = myBallot?.voted_at !== null && myBallot?.voted_at !== undefined
+
+  // Mutual exclusion: selecting winner removes them from malicious
+  const handleWinnerChange = useCallback((subId: string) => {
+    setWinnerId(subId)
+    setMaliciousIds((prev) => {
+      if (prev.has(subId)) {
+        const next = new Set(prev)
+        next.delete(subId)
+        return next
+      }
+      return prev
+    })
+  }, [])
+
+  const handleMaliciousToggle = useCallback((subId: string) => {
+    // Cannot tag winner as malicious
+    if (subId === winnerId) return
+    setMaliciousIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(subId)) {
+        next.delete(subId)
+      } else {
+        next.add(subId)
+      }
+      return next
+    })
+  }, [winnerId])
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!verdict || !feedback) return
+    if (!winnerId || !feedback.trim()) return
     setError(null)
     setSubmitting(true)
     try {
-      await submitArbiterVote(challengeId, {
+      await submitJuryVote(task.id, {
         arbiter_user_id: arbiterId,
-        verdict,
-        feedback,
+        winner_submission_id: winnerId,
+        malicious_submission_ids: Array.from(maliciousIds),
+        feedback: feedback.trim(),
       })
-      setVerdict('')
+      setWinnerId('')
+      setMaliciousIds(new Set())
       setFeedback('')
       mutate()
       onVoted()
@@ -78,28 +149,32 @@ function ChallengeVoteCard({ challengeId, arbiterId, onVoted }: {
   }
 
   return (
-    <div className="p-3 bg-zinc-900 border border-zinc-700 rounded space-y-2">
+    <div className="p-3 bg-zinc-900 border border-zinc-700 rounded space-y-3">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <span className="font-mono text-xs text-muted-foreground" title={challengeId}>
-          Challenge: {challengeId.slice(0, 8)}...
+        <span className="font-mono text-xs text-muted-foreground" title={task.id}>
+          Task: {task.title}
         </span>
-        <span className="text-xs text-muted-foreground">{votedCount}/{votes.length} voted</span>
+        <span className="text-xs text-muted-foreground">{votedCount}/{totalCount} voted</span>
       </div>
 
-      {/* Vote status list */}
+      {/* Ballot status list */}
       <div className="space-y-1">
-        {votes.map((v) => (
-          <div key={v.id} className="flex items-center justify-between text-xs">
-            <span className={`font-mono ${v.arbiter_user_id === arbiterId ? 'text-blue-400' : 'text-muted-foreground'}`}>
-              {v.arbiter_user_id === arbiterId ? '(you)' : v.arbiter_user_id.slice(0, 8) + '...'}
+        {ballots.map((b) => (
+          <div key={b.id} className="flex items-center justify-between text-xs">
+            <span className={`font-mono ${b.arbiter_user_id === arbiterId ? 'text-blue-400' : 'text-muted-foreground'}`}>
+              {b.arbiter_user_id === arbiterId ? '(you)' : b.arbiter_user_id.slice(0, 8) + '...'}
             </span>
-            {v.vote ? (
+            {b.voted_at ? (
               <div className="flex items-center gap-1.5">
-                <VerdictBadge verdict={v.vote} />
-                {v.feedback && (
-                  <span className="text-muted-foreground max-w-[120px] truncate" title={v.feedback}>
-                    {v.feedback}
+                <Badge variant="default">voted</Badge>
+                {allVoted && b.winner_submission_id && (
+                  <span className="text-muted-foreground">
+                    winner: {b.winner_submission_id.slice(0, 8)}...
                   </span>
+                )}
+                {allVoted && b.malicious_tags && b.malicious_tags.length > 0 && (
+                  <Badge variant="destructive">{b.malicious_tags.length} malicious</Badge>
                 )}
               </div>
             ) : (
@@ -109,19 +184,61 @@ function ChallengeVoteCard({ challengeId, arbiterId, onVoted }: {
         ))}
       </div>
 
-      {/* Vote form - only show if this arbiter hasn't voted yet */}
-      {myVote && !myVote.vote && (
-        <form onSubmit={handleVote} className="flex flex-col gap-2 pt-2 border-t border-zinc-700">
-          <Select value={verdict} onValueChange={(v) => setVerdict(v as ChallengeVerdict)}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Select verdict" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="upheld">Upheld</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-              <SelectItem value="malicious">Malicious</SelectItem>
-            </SelectContent>
-          </Select>
+      {/* Vote form */}
+      {myBallot && !alreadyVoted && (
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3 pt-2 border-t border-zinc-700">
+          {/* Winner selection (radio group) */}
+          <div>
+            <Label className="text-xs mb-1.5 block">Pick Winner</Label>
+            <div className="space-y-1.5" role="radiogroup" aria-label="Pick winner">
+              {candidates.map((c) => (
+                <label
+                  key={c.id}
+                  className="flex items-center gap-2 text-xs cursor-pointer hover:bg-zinc-800 p-1.5 rounded"
+                >
+                  <input
+                    type="radio"
+                    name={`winner-${task.id}`}
+                    value={c.id}
+                    checked={winnerId === c.id}
+                    onChange={() => handleWinnerChange(c.id)}
+                    className="accent-blue-500"
+                  />
+                  <span>{c.label}</span>
+                  {c.isPW && <Badge variant="outline" className="text-[10px] px-1">PW</Badge>}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Malicious tags (checkbox group) */}
+          <div>
+            <Label className="text-xs mb-1.5 block">Tag Malicious (optional)</Label>
+            <div className="space-y-1.5" role="group" aria-label="Tag malicious submissions">
+              {candidates.map((c) => {
+                const isWinner = winnerId === c.id
+                return (
+                  <label
+                    key={c.id}
+                    className={`flex items-center gap-2 text-xs p-1.5 rounded ${
+                      isWinner ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-zinc-800'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={maliciousIds.has(c.id)}
+                      disabled={isWinner}
+                      onChange={() => handleMaliciousToggle(c.id)}
+                      className="accent-red-500"
+                    />
+                    <span>{c.label}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Feedback */}
           <Textarea
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
@@ -130,22 +247,47 @@ function ChallengeVoteCard({ challengeId, arbiterId, onVoted }: {
             className="text-xs"
             required
           />
-          <Button type="submit" size="sm" disabled={submitting || !verdict || !feedback}>
-            {submitting ? 'Voting...' : 'Submit Vote'}
+
+          <Button type="submit" size="sm" disabled={submitting || !winnerId || !feedback.trim()}>
+            {submitting ? 'Voting...' : 'Submit Merged Vote'}
           </Button>
           {error && <p className="text-xs text-red-400 break-all">{error}</p>}
         </form>
       )}
 
-      {myVote?.vote && (
-        <p className="text-xs text-green-400 pt-1 border-t border-zinc-700">You voted: {myVote.vote}</p>
-      )}
-
-      {!myVote && votes.length > 0 && (
-        <p className="text-xs text-muted-foreground pt-1 border-t border-zinc-700">
-          Not assigned to this challenge
+      {alreadyVoted && (
+        <p className="text-xs text-green-400 pt-1 border-t border-zinc-700">
+          You voted: winner = {myBallot?.winner_submission_id?.slice(0, 8)}...
         </p>
       )}
+
+      {!myBallot && totalCount > 0 && (
+        <p className="text-xs text-muted-foreground pt-1 border-t border-zinc-700">
+          Not assigned to this task&#39;s jury
+        </p>
+      )}
+    </div>
+  )
+}
+
+function TaskVoteSection({ task, arbiterId, onVoted }: {
+  task: TaskDetail
+  arbiterId: string
+  onVoted: () => void
+}) {
+  const { data: challenges = [] } = useChallenges(task.id)
+
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground mb-1">
+        Task: <span className="text-white">{task.title}</span>
+      </p>
+      <MergedVoteCard
+        task={task}
+        challenges={challenges}
+        arbiterId={arbiterId}
+        onVoted={onVoted}
+      />
     </div>
   )
 }
@@ -153,7 +295,6 @@ function ChallengeVoteCard({ challengeId, arbiterId, onVoted }: {
 export function ArbiterPanel() {
   const [activeIdx, setActiveIdx] = useState(0)
   const [arbiterIds, setArbiterIds] = useState<string[]>(() => DEV_ARBITERS.map(() => ''))
-  const [challenges, setChallenges] = useState<Array<{ challenge_id: string; task_id: string; task_title: string }>>([])
   const [pollKey, setPollKey] = useState(0)
   const [balances, setBalances] = useState<string[]>(() => DEV_ARBITERS.map(() => '...'))
   const [balRefreshing, setBalRefreshing] = useState(false)
@@ -166,9 +307,12 @@ export function ArbiterPanel() {
   )
 
   const { data: tasks = EMPTY_TASKS } = useTasks()
-  const arbitratingTasks = useMemo(() => tasks.filter((t) => t.status === 'arbitrating'), [tasks])
+  const arbitratingTasks = useMemo(
+    () => tasks.filter((t) => t.status === 'arbitrating') as TaskDetail[],
+    [tasks],
+  )
 
-  // Auto-register arbiters (reuse existing DB users)
+  // Auto-register arbiters
   useEffect(() => {
     async function init() {
       const ids: string[] = []
@@ -182,7 +326,6 @@ export function ArbiterPanel() {
             id = user.id
             localStorage.setItem(a.storageKey, id)
           } catch {
-            // Already exists — fetch by trying to get from API
             try {
               const resp = await fetch(`/api/users?nickname=${a.nickname}`)
               if (resp.ok) {
@@ -202,26 +345,6 @@ export function ArbiterPanel() {
     init().catch(console.error)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Fetch challenges for arbitrating tasks
-  useEffect(() => {
-    async function fetchChallenges() {
-      const results: typeof challenges = []
-      for (const task of arbitratingTasks) {
-        try {
-          const resp = await fetch(`/api/tasks/${task.id}/challenges`)
-          if (resp.ok) {
-            const chs = await resp.json()
-            for (const c of chs) {
-              results.push({ challenge_id: c.id, task_id: task.id, task_title: task.title })
-            }
-          }
-        } catch {}
-      }
-      setChallenges(results)
-    }
-    fetchChallenges()
-  }, [arbitratingTasks, pollKey])
 
   async function refreshBalance() {
     const addr = arbiterAddresses[activeIdx]
@@ -289,7 +412,7 @@ export function ArbiterPanel() {
           ↻
         </button>
         <p className="text-muted-foreground mb-1">{activeArbiter?.nickname}</p>
-        <p className="font-mono text-xs break-all">{arbiterAddresses[activeIdx] ?? '—'}</p>
+        <p className="font-mono text-xs break-all">{arbiterAddresses[activeIdx] ?? '\u2014'}</p>
         <p className="text-xs text-muted-foreground mt-1">
           Balance: <span className="text-white">{balances[activeIdx]} USDC</span>
         </p>
@@ -307,10 +430,10 @@ export function ArbiterPanel() {
         )}
       </div>
 
-      {/* Pending challenges */}
+      {/* Pending arbitration tasks */}
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium">
-          Pending Challenges ({challenges.length})
+          Tasks in Arbitration ({arbitratingTasks.length})
         </h3>
         <button
           onClick={() => setPollKey((k) => k + 1)}
@@ -327,18 +450,14 @@ export function ArbiterPanel() {
         </p>
       )}
 
-      <div className="space-y-3">
-        {challenges.map((c) => (
-          <div key={c.challenge_id}>
-            <p className="text-xs text-muted-foreground mb-1">
-              Task: <span className="text-white">{c.task_title}</span>
-            </p>
-            <ChallengeVoteCard
-              challengeId={c.challenge_id}
-              arbiterId={activeArbiterId}
-              onVoted={() => setPollKey((k) => k + 1)}
-            />
-          </div>
+      <div className="space-y-3" key={pollKey}>
+        {arbitratingTasks.map((task) => (
+          <TaskVoteSection
+            key={task.id}
+            task={task}
+            arbiterId={activeArbiterId}
+            onVoted={() => setPollKey((k) => k + 1)}
+          />
         ))}
       </div>
     </div>
