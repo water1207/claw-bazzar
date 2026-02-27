@@ -384,6 +384,24 @@ export function DevPanel() {
   // Worker IDs (one per worker)
   const [workerIds, setWorkerIds] = useState<string[]>(() => DEV_WORKERS.map(() => ''))
 
+  // Auto-detect submission ID for challenge
+  useEffect(() => {
+    if (!challengeTaskId) { setChallengeSubId(''); return }
+    const wId = workerIds[activeWorkerIdx]
+    if (!wId) { setChallengeSubId(''); return }
+    let cancelled = false
+    fetch(`/api/tasks/${challengeTaskId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((task: TaskDetail | null) => {
+        if (cancelled || !task) return
+        const sub = task.submissions.find((s) => s.worker_id === wId)
+        setChallengeSubId(sub?.id ?? '')
+      })
+      .catch(() => { if (!cancelled) setChallengeSubId('') })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challengeTaskId, activeWorkerIdx, workerIds])
+
   // Countdowns
   const deadlineCountdown = useCountdown(publishedTask?.deadline)
   const challengeCountdown = useCountdown(publishedTask?.challenge_window_end)
@@ -424,15 +442,16 @@ export function DevPanel() {
 
   async function autoRegister() {
     // Helper: resolve a user ID — validate cached, else register or fetch by nickname
+    // Returns { id, isNew } where isNew=true only when freshly registered
     async function resolveUser(
       storageKey: string, nickname: string, wallet: string, role: UserRole,
-    ): Promise<string | null> {
+    ): Promise<{ id: string; isNew: boolean } | null> {
       // Check if cached ID is still valid
       const cached = localStorage.getItem(storageKey)
       if (cached) {
         try {
           const resp = await fetch(`/api/users/${cached}`)
-          if (resp.ok) return cached
+          if (resp.ok) return { id: cached, isNew: false }
         } catch {}
         localStorage.removeItem(storageKey)
       }
@@ -440,22 +459,22 @@ export function DevPanel() {
       try {
         const user = await registerUser({ nickname, wallet, role })
         localStorage.setItem(storageKey, user.id)
-        return user.id
+        return { id: user.id, isNew: true }
       } catch {
         try {
           const resp = await fetch(`/api/users?nickname=${nickname}`)
           if (resp.ok) {
             const u = await resp.json()
             localStorage.setItem(storageKey, u.id)
-            return u.id
+            return { id: u.id, isNew: false }
           }
         } catch {}
       }
       return null
     }
 
-    // Helper: ensure trust score is set (idempotent)
-    async function ensureTrustScore(userId: string, score: number) {
+    // Helper: set initial trust score (only for newly registered users)
+    async function initTrustScore(userId: string, score: number) {
       try {
         await fetch(`/api/internal/users/${userId}/trust`, {
           method: 'PATCH',
@@ -468,8 +487,11 @@ export function DevPanel() {
     // Publisher
     let pubId: string | null = null
     if (DEV_PUBLISHER) {
-      pubId = await resolveUser(DEV_PUBLISHER.storageKey, DEV_PUBLISHER.nickname, publisherAddress!, 'publisher')
-      if (pubId) await ensureTrustScore(pubId, DEV_PUBLISHER.trustScore ?? 850)
+      const result = await resolveUser(DEV_PUBLISHER.storageKey, DEV_PUBLISHER.nickname, publisherAddress!, 'publisher')
+      if (result) {
+        pubId = result.id
+        if (result.isNew) await initTrustScore(pubId, DEV_PUBLISHER.trustScore ?? 850)
+      }
     }
     if (pubId) setPublisherId(pubId)
 
@@ -479,8 +501,11 @@ export function DevPanel() {
       const addr = workerAddresses[i]
       let wrkId: string | null = null
       if (addr) {
-        wrkId = await resolveUser(w.storageKey, w.nickname, addr, 'worker')
-        if (wrkId) await ensureTrustScore(wrkId, w.trustScore ?? 500)
+        const result = await resolveUser(w.storageKey, w.nickname, addr, 'worker')
+        if (result) {
+          wrkId = result.id
+          if (result.isNew) await initTrustScore(wrkId, w.trustScore ?? 500)
+        }
       }
       ids.push(wrkId || '')
     }
@@ -634,8 +659,12 @@ export function DevPanel() {
     try {
       const workerKey = activeWorker?.key
       if (ESCROW_ADDRESS && workerKey) {
-        const bountyAmount = publishedTask?.bounty ?? 0
-        const depositAmount = publishedTask?.submission_deposit ?? bountyAmount * 0.1
+        // Fetch actual task to get correct bounty for deposit calculation
+        const taskResp = await fetch(`/api/tasks/${challengeTaskId}`)
+        if (!taskResp.ok) throw new Error('Failed to fetch task details')
+        const challengeTask: TaskDetail = await taskResp.json()
+        const bountyAmount = challengeTask.bounty ?? 0
+        const depositAmount = challengeTask.submission_deposit ?? bountyAmount * 0.1
         const totalAmount = depositAmount + 0.01 // + service fee
 
         const permit = await signChallengePermit({
@@ -1102,17 +1131,18 @@ export function DevPanel() {
               />
             </div>
 
-            {challengeSubId ? (
-              <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs">
-                <p className="text-muted-foreground">
-                  Submission: <span className="font-mono text-white break-all">{challengeSubId}</span>
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Submit a result above first — Submission ID will be auto-filled.
+            <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs">
+              <p className="text-muted-foreground">
+                Submission:{' '}
+                {challengeSubId ? (
+                  <span className="font-mono text-white break-all">{challengeSubId}</span>
+                ) : challengeTaskId ? (
+                  <span className="text-yellow-400">No submission found for {activeWorker?.nickname ?? 'worker'} on this task</span>
+                ) : (
+                  <span className="text-muted-foreground">Enter a Task ID to auto-detect</span>
+                )}
               </p>
-            )}
+            </div>
 
             <div className="flex flex-col gap-1.5">
               <Label>Reason</Label>
