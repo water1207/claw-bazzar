@@ -1,7 +1,7 @@
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone, timedelta
 from app.models import (
-    User, Task, Submission, Challenge, ArbiterVote,
+    User, Task, Submission, Challenge, ArbiterVote, JuryBallot,
     UserRole, TaskType, TaskStatus, ChallengeStatus,
     TrustTier, ChallengeVerdict, TrustEvent, TrustEventType,
 )
@@ -67,8 +67,9 @@ def test_scheduler_selects_jury_on_challenge_window_expiry(client):
     db.refresh(task)
     assert task.status == TaskStatus.arbitrating
 
-    votes = db.query(ArbiterVote).filter_by(challenge_id=ch.id).all()
-    assert len(votes) == 3
+    # select_jury now creates JuryBallot records (per-task, not per-challenge)
+    ballots = db.query(JuryBallot).filter_by(task_id=task.id).all()
+    assert len(ballots) == 3
 
 
 def test_scheduler_falls_back_to_stub_when_no_arbiters(client):
