@@ -80,8 +80,17 @@ def main():
                     print(json.dumps(result))
                     return
 
-        result = V2_MODES[mode](payload)
-        result["_token_usage"] = get_accumulated_usage()
+        try:
+            result = V2_MODES[mode](payload)
+            result["_token_usage"] = get_accumulated_usage()
+        except Exception as e:
+            result = {
+                "injection_detected": False,
+                "error": str(e),
+                "_token_usage": get_accumulated_usage(),
+            }
+            print(json.dumps(result))
+            return
     else:
         result = _legacy_handler(payload)
 
