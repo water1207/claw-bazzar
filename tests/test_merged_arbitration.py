@@ -241,3 +241,70 @@ def test_jury_vote_endpoint_rejects_winner_in_malicious(client_with_db):
         },
     )
     assert resp.status_code == 422  # Pydantic validation error
+
+
+# --- Vote helper ---
+
+def _vote_all(db, task, ballots, winner_ids, malicious_map=None):
+    """
+    Helper: submit votes for all ballots.
+    winner_ids: list of submission IDs (one per arbiter).
+    malicious_map: dict {arbiter_index: [sub_ids]} -- optional.
+    """
+    from app.services.arbiter_pool import submit_merged_vote
+    malicious_map = malicious_map or {}
+    for i, ballot in enumerate(ballots):
+        submit_merged_vote(
+            db,
+            task_id=task.id,
+            arbiter_user_id=ballot.arbiter_user_id,
+            winner_submission_id=winner_ids[i],
+            malicious_submission_ids=malicious_map.get(i, []),
+            feedback=f"vote {i}",
+        )
+
+
+# --- Scheduler tests ---
+
+def test_scheduler_resolves_merged_jury(db_session):
+    """Scheduler calls resolve_merged_jury and applies trust events."""
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All 3 vote for ch1 (3:0 consensus)
+    _vote_all(db_session, task, ballots, [ch1_sub.id] * 3)
+
+    # Mock on-chain call
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    db_session.refresh(task)
+    assert task.status == TaskStatus.closed
+    assert task.winner_submission_id == ch1_sub.id  # switched to ch1
+
+
+def test_scheduler_voided_path(db_session):
+    """Scheduler handles voided task (PW malicious)."""
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All vote ch1, tag PW malicious
+    _vote_all(
+        db_session, task, ballots,
+        [ch1_sub.id] * 3,
+        malicious_map={0: [pw_sub.id], 1: [pw_sub.id], 2: [pw_sub.id]},
+    )
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    db_session.refresh(task)
+    assert task.status == TaskStatus.voided

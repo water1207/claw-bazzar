@@ -4,11 +4,14 @@ from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from .database import SessionLocal
 from .models import (
-    Task, Submission, Challenge, ArbiterVote,
+    Task, Submission, Challenge, ArbiterVote, JuryBallot,
     TaskType, TaskStatus, SubmissionStatus, ChallengeStatus,
 )
 from .services.arbiter import run_arbitration
-from .services.arbiter_pool import select_jury, resolve_jury, check_jury_ready
+from .services.arbiter_pool import (
+    select_jury, resolve_jury, check_jury_ready,
+    resolve_merged_jury, check_merged_jury_ready,
+)
 from .services.oracle import batch_score_submissions
 from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
 from .services.payout import refund_publisher
@@ -273,29 +276,49 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     db.commit()
                     run_arbitration(db, task.id)
 
-        # Phase 4: arbitrating -> closed (all challenges judged)
+        # Phase 4: arbitrating -> closed/voided (merged jury resolution)
         arbitrating_tasks = (
             db.query(Task)
             .filter(Task.id.in_(arbitrating_task_ids))
             .all()
         ) if arbitrating_task_ids else []
         for task in arbitrating_tasks:
-            pending_challenges = db.query(Challenge).filter(
-                Challenge.task_id == task.id,
-                Challenge.status == ChallengeStatus.pending,
-            ).all()
-
-            # Try to resolve pending challenges via jury voting
-            for challenge in pending_challenges:
-                _try_resolve_challenge_jury(db, challenge, task, now)
-
-            # Re-check: if still pending challenges remain, wait
-            still_pending = db.query(Challenge).filter(
-                Challenge.task_id == task.id,
-                Challenge.status == ChallengeStatus.pending,
-            ).count()
-            if still_pending > 0:
+            ballots = db.query(JuryBallot).filter_by(task_id=task.id).all()
+            if not ballots:
+                # Legacy path: per-challenge jury
+                pending_challenges = db.query(Challenge).filter(
+                    Challenge.task_id == task.id,
+                    Challenge.status == ChallengeStatus.pending,
+                ).all()
+                for challenge in pending_challenges:
+                    _try_resolve_challenge_jury(db, challenge, task, now)
+                still_pending = db.query(Challenge).filter(
+                    Challenge.task_id == task.id,
+                    Challenge.status == ChallengeStatus.pending,
+                ).count()
+                if still_pending > 0:
+                    continue
+                _settle_after_arbitration(db, task)
                 continue
+
+            # Merged jury path
+            all_voted = all(b.winner_submission_id is not None for b in ballots)
+            first_created = min(b.created_at for b in ballots)
+            if first_created.tzinfo is None:
+                first_created = first_created.replace(tzinfo=timezone.utc)
+            timed_out = (now - first_created) >= JURY_VOTING_TIMEOUT
+
+            if not all_voted and not timed_out:
+                continue
+
+            # Handle timeouts for non-voters
+            if timed_out and not all_voted:
+                from .services.trust import apply_event as _te_apply
+                from .models import TrustEventType as _TET
+                for b in ballots:
+                    if b.winner_submission_id is None:
+                        _te_apply(db, b.arbiter_user_id, _TET.arbiter_timeout,
+                                  task_id=task.id)
 
             _settle_after_arbitration(db, task)
 
@@ -305,13 +328,164 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
 
 
 def _settle_after_arbitration(db: Session, task: Task) -> None:
-    """Settle a task after all challenges are judged."""
+    """Settle a task after all challenges are judged.
+
+    Uses merged jury resolution (JuryBallot) if ballots exist,
+    otherwise falls back to legacy per-challenge ArbiterVote path.
+    """
     from .models import ChallengeVerdict, PayoutStatus, User
-    from .services.trust import apply_event, TrustEventType
+    from .services.trust import apply_event, TrustEventType, compute_coherence_delta
     from .services.staking import check_and_slash
+
+    # Check if merged jury ballots exist for this task
+    ballots = db.query(JuryBallot).filter_by(task_id=task.id).all()
+
+    if ballots:
+        # --- Merged jury path ---
+        result = resolve_merged_jury(db, task.id)
+
+        if result["is_voided"]:
+            # PW is malicious -> task voided
+            pw_sub = db.query(Submission).filter_by(
+                id=task.winner_submission_id
+            ).first()
+            if pw_sub:
+                pw_worker = db.query(User).filter_by(id=pw_sub.worker_id).first()
+                if pw_worker:
+                    apply_event(db, pw_worker.id, TrustEventType.pw_malicious,
+                                task_id=task.id)
+                    check_and_slash(db, pw_worker.id)
+
+            # Process challenger trust events based on verdicts set by resolve_merged_jury
+            challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
+            for c in challenges:
+                challenger_sub = db.query(Submission).filter_by(
+                    id=c.challenger_submission_id
+                ).first()
+                worker = db.query(User).filter_by(
+                    id=challenger_sub.worker_id
+                ).first() if challenger_sub else None
+                if worker:
+                    if c.verdict == ChallengeVerdict.malicious:
+                        apply_event(db, worker.id, TrustEventType.challenger_malicious,
+                                    task_id=task.id)
+                        check_and_slash(db, worker.id)
+                    else:
+                        # Justified challenger (verdict=rejected in voided scenario)
+                        apply_event(db, worker.id, TrustEventType.challenger_justified,
+                                    task_id=task.id)
+
+            # Publisher trust
+            if db.query(User).filter_by(id=task.publisher_id).first():
+                apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
+                            task_bounty=task.bounty, task_id=task.id)
+
+            _resolve_via_contract(db, task, verdicts=[])
+            # task.status already set to voided by resolve_merged_jury
+            db.commit()
+            return
+
+        # --- Non-voided merged path ---
+        challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
+        elected_winner = result["winner_submission_id"]
+
+        # If an upheld challenger won, switch winner
+        upheld = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]
+        if upheld:
+            task.winner_submission_id = upheld[0].challenger_submission_id
+
+        # Process challenger trust events
+        for c in challenges:
+            challenger_sub = db.query(Submission).filter_by(
+                id=c.challenger_submission_id
+            ).first()
+            worker = db.query(User).filter_by(
+                id=challenger_sub.worker_id
+            ).first() if challenger_sub else None
+
+            if c.verdict == ChallengeVerdict.upheld:
+                if worker:
+                    apply_event(db, worker.id, TrustEventType.challenger_won,
+                                task_bounty=task.bounty, task_id=task.id)
+            elif c.verdict == ChallengeVerdict.malicious:
+                if worker:
+                    apply_event(db, worker.id, TrustEventType.challenger_malicious,
+                                task_id=task.id)
+                    check_and_slash(db, worker.id)
+
+        # Apply worker_won trust event to the final winner
+        winner_sub = db.query(Submission).filter_by(
+            id=task.winner_submission_id
+        ).first() if task.winner_submission_id else None
+        if winner_sub:
+            apply_event(db, winner_sub.worker_id, TrustEventType.worker_won,
+                        task_bounty=task.bounty, task_id=task.id)
+
+        # Apply worker_consolation to non-winning submitters with scored submissions
+        if task.winner_submission_id:
+            consolation_subs = db.query(Submission).filter(
+                Submission.task_id == task.id,
+                Submission.id != task.winner_submission_id,
+                Submission.score.isnot(None),
+            ).all()
+            malicious_ids = {
+                c.challenger_submission_id for c in challenges
+                if c.verdict == ChallengeVerdict.malicious
+            }
+            for sub in consolation_subs:
+                if sub.id not in malicious_ids:
+                    apply_event(db, sub.worker_id, TrustEventType.worker_consolation,
+                                task_id=task.id)
+
+        task.status = TaskStatus.closed
+
+        # Publisher trust reward
+        if db.query(User).filter_by(id=task.publisher_id).first():
+            apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
+                        task_bounty=task.bounty, task_id=task.id)
+
+        # Build verdicts for contract using JuryBallot coherence
+        voted_ballots = [b for b in ballots if b.winner_submission_id is not None]
+        is_deadlock = any(b.coherence_status == "neutral" for b in voted_ballots)
+        if is_deadlock:
+            arbiter_ids = [b.arbiter_user_id for b in voted_ballots]
+        else:
+            arbiter_ids = [b.arbiter_user_id for b in voted_ballots
+                           if b.coherence_status == "coherent"]
+        arbiter_users = db.query(User).filter(User.id.in_(arbiter_ids)).all() if arbiter_ids else []
+        arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
+
+        verdicts = []
+        for c in challenges:
+            if c.challenger_wallet:
+                result_map = {
+                    ChallengeVerdict.upheld: 0,
+                    ChallengeVerdict.rejected: 1,
+                    ChallengeVerdict.malicious: 2,
+                }
+                verdicts.append({
+                    "challenger": c.challenger_wallet,
+                    "result": result_map.get(c.verdict, 1),
+                    "arbiters": arbiter_wallets,
+                })
+        _resolve_via_contract(db, task, verdicts)
+
+        # Settle arbiter reputation via coherence from JuryBallot
+        for b in voted_ballots:
+            if b.coherence_status in ("coherent", "incoherent"):
+                coherent = 1 if b.coherence_status == "coherent" else 0
+                delta = compute_coherence_delta(coherent, 1)
+                if delta is not None:
+                    apply_event(db, b.arbiter_user_id, TrustEventType.arbiter_coherence,
+                                task_id=task.id, coherence_delta=delta)
+
+        db.commit()
+        return
+
+    # --- Legacy per-challenge ArbiterVote path ---
     challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
 
-    # Process trust events for challengers (deposits handled on-chain by escrow contract)
+    # Process trust events for challengers
     for c in challenges:
         challenger_sub = db.query(Submission).filter(
             Submission.id == c.challenger_submission_id
@@ -353,7 +527,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             Submission.score.isnot(None),
         ).all()
         for sub in consolation_subs:
-            # Skip challengers who were found malicious
             malicious_ids = {
                 c.challenger_submission_id for c in challenges
                 if c.verdict == ChallengeVerdict.malicious
@@ -378,7 +551,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                 ChallengeVerdict.rejected: 1,
                 ChallengeVerdict.malicious: 2,
             }
-            # Per-challenge arbiter wallets
             jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
             is_deadlock = any(v.coherence_status == "neutral" for v in jury_votes)
             if is_deadlock:
@@ -397,7 +569,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     _resolve_via_contract(db, task, verdicts)
 
     # Settle arbiter reputation via coherence rate
-    from .services.trust import compute_coherence_delta
     all_votes = []
     for c in challenges:
         all_votes.extend(
