@@ -38,8 +38,7 @@ export interface Task {
   payout_amount: number | null
   submission_deposit: number | null
   challenge_duration: number | null
-  challenge_window_end: string | null
-  acceptance_criteria: string | null
+  acceptance_criteria: string[]
   escrow_tx_hash: string | null
   scoring_dimensions: ScoringDimension[]
 }
@@ -207,7 +206,8 @@ export function useWeeklyLeaderboard() {
 
 export async function createTask(
   data: Pick<Task, 'title' | 'description' | 'type' | 'threshold' | 'max_revisions' | 'deadline' | 'publisher_id' | 'bounty'>
-    & Partial<Pick<Task, 'challenge_duration' | 'acceptance_criteria' | 'submission_deposit'>>,
+    & Partial<Pick<Task, 'challenge_duration' | 'submission_deposit'>>
+    & { acceptance_criteria: string[] },
   paymentHeader?: string,
 ): Promise<Task> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }

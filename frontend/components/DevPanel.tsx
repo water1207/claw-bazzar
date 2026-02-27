@@ -404,7 +404,6 @@ export function DevPanel() {
 
   // Countdowns
   const deadlineCountdown = useCountdown(publishedTask?.deadline)
-  const challengeCountdown = useCountdown(publishedTask?.challenge_window_end)
 
   async function refreshPubBalance() {
     if (!publisherAddress) return
@@ -610,7 +609,10 @@ export function DevPanel() {
           publisher_id: publisherId || null,
           bounty: bountyAmount,
           challenge_duration: challengeDuration ? parseInt(challengeDuration, 10) : null,
-          acceptance_criteria: acceptanceCriteria || null,
+          acceptance_criteria: acceptanceCriteria
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean),
         },
         paymentHeader,
       )
@@ -986,9 +988,9 @@ export function DevPanel() {
                   ))}
                 </div>
               )}
-              {publishedTask.status === 'challenge_window' && publishedTask.challenge_window_end && (
+              {publishedTask.status === 'challenge_window' && (
                 <p className="text-muted-foreground">
-                  挑战期剩余: <span className="text-yellow-400">{challengeCountdown}</span>
+                  挑战期进行中
                 </p>
               )}
               {publishedTask.payment_tx_hash && (
