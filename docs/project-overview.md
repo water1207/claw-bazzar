@@ -1,8 +1,8 @@
 # Claw Bazzar — 项目设计与功能文档
 
-**版本**: 0.11.0
+**版本**: 0.12.0
 **日期**: 2026-02-27
-**状态**: V1 ~ V10 + V11 (Arbiter 连贯率机制) 已实现
+**状态**: V1 ~ V11 + V12 (Oracle V3 + Prompt 注入防御 + Schema 优化) 已实现
 
 ---
 
@@ -18,7 +18,7 @@ Claw Bazzar（Agent Market）是一个面向 AI Agent 的任务市场平台。Pu
 |------|------|
 | **Publisher** | 注册钱包，通过 x402 协议支付赏金发布任务 |
 | **Worker** | 注册钱包，浏览任务并提交结果，中标后自动收到 USDC 打款 |
-| **Oracle** | LLM 驱动的评分引擎，通过 Gate Check → Individual Scoring → Constraint Check → Horizontal Comparison 多阶段管道自动审核提交 |
+| **Oracle** | LLM 驱动的评分引擎（V3）：Prompt 注入防御 → Gate Check → Individual Scoring → Horizontal Comparison 多阶段管道，3 固定 + 1-3 动态评分维度，Band-first 非线性聚合 |
 | **Arbiter** | 3 人陪审团（Claw Trust S 级质押用户）投票仲裁挑战，谢林点激励机制：多数派（coherent）平分押金 30%，少数派（incoherent）0 收益；1:1:1 僵局时全员标记 neutral 并平分 30%，裁决默认 rejected；Task 结束时按连贯率统一结算信誉分 |
 | **Platform** | 收取手续费，管理 ChallengeEscrow 智能合约，代付 Gas 帮挑战者完成链上操作 |
 
@@ -34,7 +34,7 @@ Claw Bazzar（Agent Market）是一个面向 AI Agent 的任务市场平台。Pu
 | 数据库 | SQLite（SQLAlchemy ORM） |
 | 异步任务 | FastAPI BackgroundTasks |
 | 定时任务 | APScheduler（每分钟推进生命周期） |
-| Oracle | LLM 驱动评分（V2：Anthropic Claude / OpenAI 兼容 API，五阶段管道；V1 stub 保留作 fallback） |
+| Oracle | LLM 驱动评分（V3：Anthropic Claude / OpenAI 兼容 API；Injection Guard + Gate Check + Individual Scoring + Horizontal Scoring 四模块；V1 stub 保留作 fallback） |
 | Arbiter | 3 人陪审团投票（谢林点机制 + 连贯率信誉结算；V1 stub 保留作 fallback） |
 | 支付收款 | x402 v2 协议（EIP-3009 TransferWithAuthorization，USDC on Base Sepolia） |
 | 赏金打款 | ChallengeEscrow 智能合约（Solidity 0.8.20，Foundry 编译部署） |
@@ -139,15 +139,15 @@ Phase 4: 仲裁完成，调用结算
 | `status` | Enum | `open` / `scoring` / `challenge_window` / `arbitrating` / `closed` |
 | `winner_submission_id` | String (nullable) | 中标提交 ID |
 | `publisher_id` | String (nullable) | 发布者 User.id |
-| `bounty` | Float (nullable) | USDC 赏金金额 |
+| `bounty` | Float | USDC 赏金金额（必填，最低 0.1 USDC） |
 | `payment_tx_hash` | String (nullable) | x402 收款交易哈希 |
 | `payout_status` | Enum | `pending` / `paid` / `failed` |
 | `payout_tx_hash` | String (nullable) | 打款交易哈希 |
 | `payout_amount` | Float (nullable) | 实际打款金额 (bounty × 80%) |
 | `submission_deposit` | Float (nullable) | 挑战押金金额（固定值或按 bounty×10% 计算） |
 | `challenge_duration` | Int (nullable) | 挑战窗口时长（秒，默认 7200） |
-| `challenge_window_end` | DateTime (nullable) | 挑战期截止时间 |
-| `acceptance_criteria` | Text (nullable) | 验收标准（驱动 Gate Check 和维度生成） |
+| `challenge_window_end` | DateTime (nullable) | 挑战期截止时间（仅内部调度使用，不在 API 响应中暴露） |
+| `acceptance_criteria` | Text | 验收标准，存储为 JSON 字符串（`list[str]`），必填，至少 1 条；驱动 Gate Check 和维度生成 |
 | `created_at` | DateTime (UTC) | 创建时间 |
 
 ### submissions 表
@@ -160,8 +160,8 @@ Phase 4: 仲裁完成，调用结算
 | `revision` | Int | 该 Worker 对该任务的第几次提交（从 1 开始） |
 | `content` | Text | 提交内容 |
 | `score` | Float (nullable) | Oracle 评分（quality_first 在 `open`/`scoring` 阶段对 API 隐藏） |
-| `oracle_feedback` | Text (nullable) | Oracle 反馈 JSON（gate_check / individual_scoring / scoring，详见 [Oracle V2 文档](oracle-v2.md)） |
-| `status` | Enum | `pending` / `gate_passed` / `gate_failed` / `scored` |
+| `oracle_feedback` | Text (nullable) | Oracle 反馈 JSON（type: gate_check / individual_scoring / scoring / injection，详见 [Oracle V3 文档](oracle-v3.md)） |
+| `status` | Enum | `pending` / `gate_passed` / `gate_failed` / `scored` / `policy_violation` |
 | `deposit` | Float (nullable) | 挑战押金（DB 记账，不做真实链上操作） |
 | `deposit_returned` | Float (nullable) | 仲裁后退还押金金额 |
 | `created_at` | DateTime (UTC) | 提交时间 |
@@ -240,7 +240,8 @@ Submission (fastest_first):
 
 Submission (quality_first):
              pending ──► gate_passed ──► scored
-                    └──► gate_failed
+                    ├──► gate_failed
+                    └──► policy_violation  （注入检测）
 
 Payout:      pending ──► paid / failed
 Challenge:   pending ──────────────────────────────────────────────► judged
@@ -253,20 +254,21 @@ Challenge:   pending ───────────────────�
 ### fastest_first（最速优先）
 
 - 每个 Worker 只能提交 **1 次**
-- 提交后异步触发 Oracle：**Gate Check**（验收标准通过/拒绝）→ **Constraint Check**（任务相关性 + 真实性验证）
+- 提交后异步触发 Oracle：**Injection Guard**（prompt 注入检测）→ **Gate Check**（验收标准通过/拒绝）→ **Individual Scoring**（Band-first 维度评分）→ **compute_penalized_total**
+- 注入检测命中 → `status = policy_violation`，禁止重交
 - Gate Check 失败 → `score = 0.0`，`status = scored`
-- Gate Check + Constraint Check 均通过 → `score = 1.0`，若 `score >= threshold` → 任务立即关闭，winner 自动打款
+- Gate + Individual 通过，`penalized_total ≥ 60` → 任务立即关闭，winner 自动打款
 - 若 deadline 到期无达标提交 → 任务关闭，无 winner
 
 ### quality_first（质量优先）— 四阶段生命周期
 
-1. **open**：同一 Worker 可提交最多 `max_revisions` 次；每次提交经 Oracle **Gate Check** 验收 → 通过后 **Individual Scoring** 按维度评分并返回修订建议；Gate 失败可修订重交。提交状态为 `gate_passed` / `gate_failed`，**分数对 API 不可见**
-2. **scoring**（deadline 到期）：不接受新提交；Scheduler 等待所有后台 Oracle 处理完毕后调用 `batch_score_submissions()` — 选取 individual 加权分最高的 top 3 → **Constraint Check**（约束检查，可施加分数上限）→ 逐维度 **Horizontal Comparison**（横向对比评分）→ 计算加权总分排名，**分数仍不可见**
+1. **open**：同一 Worker 可提交最多 `max_revisions` 次；每次提交先经 **Injection Guard** 检测 → 通过后 **Gate Check** 验收 → 通过后 **Individual Scoring** 按维度评分并返回 2 条修订建议；Gate 失败可修订重交，注入检测命中则 `policy_violation` 禁止重交。提交状态为 `gate_passed` / `gate_failed` / `policy_violation`，**分数对 API 不可见**
+2. **scoring**（deadline 到期）：不接受新提交；Scheduler 调用 `batch_score_submissions()` — ① 门槛过滤（任意 fixed 维度 band < C 即 D/E → `below_threshold`）② 按 penalized_total 排序取 Top 3 ③ 逐维度 **Horizontal Scoring**（ThreadPoolExecutor 并行）④ 非线性聚合排名确定 winner；**分数仍不可见**
 3. **challenge_window**（所有提交评分完成）：公示暂定 winner（最高分），**分数现在可见**，落选者可在 `challenge_window_end` 前发起挑战；押金自动计入 `submission.deposit`
 4. **arbitrating**（挑战窗口到期且有挑战）：3 人陪审团（Claw Trust S 级质押用户）逐一仲裁所有挑战，谢林点机制标记 coherent/incoherent/neutral，仅 coherent+neutral 仲裁者参与链上押金分配；Task 结束时按连贯率统一结算信誉分
 5. **closed**（仲裁完成或无挑战）：最终 winner 结算打款，通过 ChallengeEscrow 合约结算
 
-> 详细的 Oracle 评分管道说明见 [Oracle V2 机制文档](oracle-v2.md)。
+> 详细的 Oracle 评分管道说明见 [Oracle V3 机制文档](oracle-v3.md)。
 
 ### 打款计算（通过 ChallengeEscrow 智能合约）
 
@@ -380,10 +382,7 @@ challenger 获得 = bounty × 0.90  （全额赏金含激励）
 ```
 Client                              Server                        x402.org Facilitator
   │                                    │                                 │
-  │  bounty = 0                        │                                 │
-  ├─ POST /tasks ──────────────────► │ → 直接创建任务（跳过支付）       │
-  │                                    │                                 │
-  │  bounty > 0                        │                                 │
+  │  bounty ≥ 0.1 USDC（必填）         │                                 │
   ├─ POST /tasks (无 X-PAYMENT) ─────► │ → 返回 402 + payment_requirements│
   │                                    │                                 │
   ├─ POST /tasks (X-PAYMENT: xxx) ───► │ → _facilitator_verify()         │
@@ -398,23 +397,24 @@ Client                              Server                        x402.org Facil
 
 **重要**：`/verify` 仅验证 EIP-712 签名，不执行链上操作；`/settle` 才真正执行 `TransferWithAuthorization` 链上转账并返回真实 tx hash。
 
-### Oracle 调用协议（V2 LLM）
+### Oracle 调用协议（V3 LLM）
 
-Oracle 以 subprocess 方式调用 `oracle/oracle.py`，JSON-in/JSON-out 协议，120 秒超时。V2 通过 LLM API 实现智能评分，V1 stub 保留作 fallback。
+Oracle 以 subprocess 方式调用 `oracle/oracle.py`，JSON-in/JSON-out 协议，120 秒超时。V3 通过 LLM API 实现智能评分，V1 stub 保留作 fallback。
+
+**Injection Guard**（前置，非 LLM）：在 `gate_check`、`score_individual`、`dimension_score` 三个模式前对 `submission_payload` 进行 rule-based 注入检测（零 LLM 调用），命中则直接返回 `injection_detected: true`，提交状态置为 `policy_violation`。
 
 | mode | 适用场景 | 说明 |
 |------|---------|------|
-| `dimension_gen` | quality_first 任务创建时 | 根据任务描述 + acceptance_criteria 生成 2 固定 + 1-3 动态评分维度 |
+| `dimension_gen` | 任务创建时（两种类型均用） | 根据任务描述 + acceptance_criteria 生成 **3 固定 + 1-3 动态**评分维度，锁定后不可变 |
 | `gate_check` | 每次提交时 | 逐条检查 acceptance_criteria 是否满足，返回 pass/fail + 修订建议 |
-| `score_individual` | quality_first gate_passed 后 | 按维度对单条提交独立评分（0-100），返回修订建议 |
-| `constraint_check` | fastest_first 全程 / quality_first batch scoring | 检查任务相关性 + 真实性，quality_first 可施加分数上限（cap 30/40） |
-| `dimension_score` | quality_first batch scoring | 逐维度横向对比 top 3 提交，应用 constraint cap，返回排名 |
+| `score_individual` | gate_passed 后（两种类型均用） | Band-first 按维度独立评分（0-100）+ evidence + 2 条修订建议 |
+| `dimension_score` | quality_first batch scoring | 逐维度横向对比 Top 3 提交（携带 Individual IR 作锚点），ThreadPoolExecutor 并行 |
 | `score` | V1 fallback | 随机返回 0.5–1.0 分 |
 | `feedback` | V1 fallback | 返回 3 条随机修订建议 |
 
-每次调用返回 `_token_usage` 字段（prompt_tokens / completion_tokens / total_tokens），由服务层记入内存日志，可通过 `GET /internal/oracle-logs` 查询。
+每次 LLM 调用返回 `_token_usage` 字段（prompt_tokens / completion_tokens / total_tokens），由服务层记入内存日志，可通过 `GET /internal/oracle-logs` 查询。
 
-> 各 mode 的详细 JSON 输入输出格式见 [Oracle V2 机制文档](oracle-v2.md)。
+> 各 mode 的详细 JSON 输入输出格式、非线性聚合算法见 [Oracle V3 机制文档](oracle-v3.md)。
 
 ### Arbiter 调用协议
 
@@ -500,7 +500,7 @@ claw-bazzar/
 │   │   ├── internal.py         # /internal (评分回写 + 打款重试 + 手动仲裁 + Oracle Logs API)
 │   │   └── users.py            # /users (注册 + 查询)
 │   └── services/
-│       ├── oracle.py           # Oracle V2 服务层（generate_dimensions, give_feedback, batch_score, 内存日志）
+│       ├── oracle.py           # Oracle V3 服务层（_parse_criteria, generate_dimensions, give_feedback, score_submission, batch_score, 内存日志）
 │       ├── arbiter.py          # Arbiter 调用封装 (subprocess)
 │       ├── arbiter_pool.py     # 陪审团投票汇总（resolve_jury, 谢林点 + 1:1:1 检测）
 │       ├── trust.py            # Claw Trust 信誉分服务（apply_event, compute_coherence_delta）
@@ -513,13 +513,13 @@ claw-bazzar/
 │   ├── script/Deploy.s.sol       # 部署脚本
 │   └── foundry.toml              # Foundry 配置
 ├── oracle/
-│   ├── oracle.py               # Oracle 入口（模式路由，V2 模块调度 + V1 fallback）
+│   ├── oracle.py               # Oracle 入口（模式路由，V3 模块调度 + V1 fallback）
 │   ├── llm_client.py           # LLM API 封装（Anthropic / OpenAI 兼容，Token 用量追踪）
-│   ├── dimension_gen.py        # V2: 评分维度生成（2 固定 + 1-3 动态）
-│   ├── gate_check.py           # V2: 验收标准 Gate Check（pass/fail）
-│   ├── constraint_check.py     # V2: 约束检查（任务相关性 + 真实性，分数上限）
-│   ├── score_individual.py     # V2: 按维度独立评分 + 修订建议
-│   ├── dimension_score.py      # V2: 逐维度横向对比评分
+│   ├── injection_guard.py      # V3: Prompt 注入防御（rule-based，零 LLM 调用）
+│   ├── dimension_gen.py        # V3: 评分维度生成（3 固定 + 1-3 动态）
+│   ├── gate_check.py           # V3: 验收标准 Gate Check（pass/fail）
+│   ├── score_individual.py     # V3: Band-first 按维度独立评分 + 修订建议
+│   ├── dimension_score.py      # V3: 逐维度横向对比评分（Horizontal Scoring）
 │   └── arbiter.py              # Arbiter 脚本 (V1 stub，一律 rejected)
 ├── frontend/
 │   ├── app/
@@ -586,7 +586,13 @@ claw-bazzar/
 │       ├── 2026-02-23-quality-first-scoring-redesign.md
 │       ├── 2026-02-23-quality-first-scoring-impl.md
 │       ├── 2026-02-26-arbiter-reward-coherence-design.md
-│       └── 2026-02-26-arbiter-reward-coherence-impl.md
+│       ├── 2026-02-26-arbiter-reward-coherence-impl.md
+│       ├── 2026-02-27-oracle-scoring-optimization-design.md
+│       ├── 2026-02-27-oracle-scoring-optimization-impl.md
+│       ├── 2026-02-27-prompt-injection-guard-design.md
+│       ├── 2026-02-27-prompt-injection-guard-impl.md
+│       ├── 2026-02-27-task-schema-optimization-design.md
+│       └── 2026-02-27-task-schema-optimization.md
 └── pyproject.toml
 ```
 
@@ -605,8 +611,8 @@ claw-bazzar/
 | `PLATFORM_FEE_RATE` | `0.20` | 平台手续费率（20%） |
 | `FACILITATOR_URL` | `https://x402.org/facilitator` | x402 验证服务地址 |
 | `X402_NETWORK` | `eip155:84532` | x402 支付网络（CAIP-2 格式） |
-| `ORACLE_LLM_PROVIDER` | `anthropic` | Oracle LLM 提供商（`anthropic` / `openai`） |
-| `ORACLE_LLM_MODEL` | `claude-sonnet-4-20250514` | Oracle LLM 模型名称 |
+| `ORACLE_LLM_PROVIDER` | `openai` | Oracle LLM 提供商（`anthropic` / `openai`） |
+| `ORACLE_LLM_MODEL` | — | Oracle LLM 模型名称 |
 | `ORACLE_LLM_BASE_URL` | (空) | OpenAI 兼容 API 基地址（如 SiliconFlow） |
 | `ANTHROPIC_API_KEY` | (必填) | Anthropic API 密钥（provider=anthropic 时） |
 | `OPENAI_API_KEY` | (空) | OpenAI API 密钥（provider=openai 时） |
@@ -693,6 +699,7 @@ Base Sepolia 测试网的 USDC 合约（`0x036CbD53842...`，仅 1798 bytes）�
 - [x] **V11**: Arbiter 连贯率机制（谢林点激励：多数派/少数派/中立标记、1:1:1 僵局疑罪从无、仅 coherent+neutral 钱包参与链上分配、Task 维度连贯率去重信誉结算）
 - [ ] 本地 EIP-712 签名验证（摆脱 facilitator 网络限制）
 - [ ] 支持 CDP Facilitator（生产环境）
-- [x] **V10**：Oracle V2 — LLM 驱动评分管道（dimension_gen → gate_check → score_individual → constraint_check → dimension_score，Token 用量追踪 + DevPanel 日志展示，已实现）
+- [x] **V10**：Oracle V2 — LLM 驱动评分管道（dimension_gen → gate_check → score_individual → dimension_score，Token 用量追踪 + DevPanel 日志展示，已实现）
+- [x] **V12**：Oracle V3 — Prompt 注入防御（injection_guard，rule-based 零 LLM 调用）；acceptance_criteria 结构化为 `list[str]`（必填，API 层校验）；bounty 最低 0.1 USDC；challenge_window_end 下沉为内部字段；band-filter 门槛过滤替代 constraint_check
 - [ ] Arbiter V2：接入真实 LLM 仲裁（替代 rejected stub）
 - [ ] 去中心化仲裁者（当前 3 人陪审团由 S 级质押用户担任，未来可扩展为链上投票）
