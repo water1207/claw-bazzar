@@ -414,8 +414,12 @@ def test_settle_only_majority_wallets_passed(client):
         _settle_after_arbitration(db, task)
         mock_resolve.assert_called_once()
         args, kwargs = mock_resolve.call_args
-        # arbiter_wallets is the 4th positional arg
-        passed_wallets = args[3] if len(args) > 3 else kwargs.get("arbiter_wallets")
+        # V2: arbiters are per-verdict inside verdicts (3rd positional arg)
+        verdicts = args[2]
+        # Collect all arbiter wallets across verdicts
+        passed_wallets = []
+        for v in verdicts:
+            passed_wallets.extend(v.get("arbiters", []))
         # a3 (incoherent) should NOT be in the wallet list
         assert arbiters[2].wallet not in passed_wallets
         # a1, a2 (coherent) should be present
