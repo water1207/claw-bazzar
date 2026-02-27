@@ -173,7 +173,7 @@ def get_balance_events(user_id: str, db: Session = Depends(get_db)):
                 "role": "worker",
                 "task_id": c.task_id,
                 "task_title": task.title if task else None,
-                "amount": task.submission_deposit or round((task.bounty or 0) * 0.10, 6),
+                "amount": c.deposit_amount or task.submission_deposit or round((task.bounty or 0) * 0.10, 6),
                 "direction": "outflow",
                 "tx_hash": c.deposit_tx_hash,
                 "created_at": c.created_at,

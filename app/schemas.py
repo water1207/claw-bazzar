@@ -141,6 +141,7 @@ class ChallengeOut(BaseModel):
     status: ChallengeStatus
     challenger_wallet: Optional[str] = None
     deposit_tx_hash: Optional[str] = None
+    deposit_amount: Optional[float] = None
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}

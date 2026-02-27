@@ -60,6 +60,7 @@ def create_challenge(
 
     # --- Escrow integration (only when permit params provided) ---
     deposit_tx_hash = None
+    deposit_amount = None
     if data.challenger_wallet and data.permit_v is not None:
         # Dynamic deposit rate based on trust tier (fallback to 10%)
         deposit_rate = 0.10
@@ -108,6 +109,7 @@ def create_challenge(
         reason=data.reason,
         challenger_wallet=data.challenger_wallet,
         deposit_tx_hash=deposit_tx_hash,
+        deposit_amount=deposit_amount if deposit_tx_hash else None,
     )
     db.add(challenge)
     db.commit()

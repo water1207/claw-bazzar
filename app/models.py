@@ -179,6 +179,7 @@ class Challenge(Base):
     status = Column(Enum(ChallengeStatus), nullable=False, default=ChallengeStatus.pending)
     challenger_wallet = Column(String, nullable=True)
     deposit_tx_hash = Column(String, nullable=True)
+    deposit_amount = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
