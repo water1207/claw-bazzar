@@ -15,7 +15,7 @@ from .services.payout import refund_publisher
 
 
 def _resolve_via_contract(
-    db: Session, task: Task, verdicts: list, arbiter_wallets: list[str] | None = None
+    db: Session, task: Task, verdicts: list,
 ) -> None:
     """Call resolveChallenge on-chain to distribute bounty + deposits."""
     from .models import User, PayoutStatus
@@ -34,8 +34,12 @@ def _resolve_via_contract(
             except ValueError:
                 rate = 0.80
             payout_amount = round(task.bounty * rate, 6)
+            # When upheld: cap at mainBounty (= locked - incentive = 85% of task bounty)
+            if has_upheld:
+                main_bounty = round(task.bounty * 0.85, 6)
+                payout_amount = min(payout_amount, main_bounty)
             tx_hash = resolve_challenge_onchain(
-                task.id, winner_user.wallet, payout_amount, verdicts, arbiter_wallets
+                task.id, winner_user.wallet, payout_amount, verdicts,
             )
             task.payout_status = PayoutStatus.paid
             task.payout_tx_hash = tx_hash
@@ -377,26 +381,23 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                     ChallengeVerdict.rejected: 1,
                     ChallengeVerdict.malicious: 2,
                 }
+                # Per-challenge arbiter wallets
+                jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
+                is_deadlock = any(v.coherence_status == "neutral" for v in jury_votes)
+                if is_deadlock:
+                    arbiter_ids = [v.arbiter_user_id for v in jury_votes if v.vote is not None]
+                else:
+                    arbiter_ids = [v.arbiter_user_id for v in jury_votes
+                                   if v.coherence_status == "coherent"]
+                arbiter_users = db.query(User).filter(User.id.in_(arbiter_ids)).all() if arbiter_ids else []
+                arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
+
                 verdicts.append({
                     "challenger": c.challenger_wallet,
                     "result": result_map.get(c.verdict, 1),
+                    "arbiters": arbiter_wallets,
                 })
-        # Collect arbiter wallets: only coherent + neutral (not incoherent)
-        from .models import User
-        arbiter_wallet_ids = set()
-        for c in challenges:
-            jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
-            for v in jury_votes:
-                if v.coherence_status in ("coherent", "neutral"):
-                    arbiter_wallet_ids.add(v.arbiter_user_id)
-        if arbiter_wallet_ids:
-            arbiter_users = db.query(User).filter(User.id.in_(arbiter_wallet_ids)).all()
-            arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
-        else:
-            import os
-            platform_wallet = os.environ.get("PLATFORM_WALLET", "")
-            arbiter_wallets = [platform_wallet] if platform_wallet else []
-        _resolve_via_contract(db, task, verdicts, arbiter_wallets)
+        _resolve_via_contract(db, task, verdicts)
 
     # Settle arbiter reputation via coherence rate
     from .services.trust import compute_coherence_delta
