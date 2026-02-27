@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -13,39 +14,37 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 @router.post("", response_model=TaskOut, status_code=201)
 def create_task(data: TaskCreate, request: Request, db: Session = Depends(get_db)):
-    tx_hash = None
-    if data.bounty and data.bounty > 0:
-        payment_header = request.headers.get("x-payment")
-        if not payment_header:
-            return JSONResponse(
-                status_code=402,
-                content=build_payment_requirements(data.bounty),
-            )
-        result = verify_payment(payment_header, data.bounty)
-        if not result["valid"]:
-            reqs = build_payment_requirements(data.bounty)
-            reqs["error"] = result.get("reason", "payment verification failed")
-            return JSONResponse(status_code=402, content=reqs)
-        tx_hash = result.get("tx_hash")
-    task = Task(**data.model_dump(), payment_tx_hash=tx_hash)
+    payment_header = request.headers.get("x-payment")
+    if not payment_header:
+        return JSONResponse(
+            status_code=402,
+            content=build_payment_requirements(data.bounty),
+        )
+    result = verify_payment(payment_header, data.bounty)
+    if not result["valid"]:
+        reqs = build_payment_requirements(data.bounty)
+        reqs["error"] = result.get("reason", "payment verification failed")
+        return JSONResponse(status_code=402, content=reqs)
+    tx_hash = result.get("tx_hash")
+
+    task_data = data.model_dump()
+    task_data['acceptance_criteria'] = json.dumps(data.acceptance_criteria, ensure_ascii=False)
+    task = Task(**task_data, payment_tx_hash=tx_hash)
     db.add(task)
     db.commit()
     db.refresh(task)
 
-    # Generate scoring dimensions if acceptance_criteria provided
-    if task.acceptance_criteria:
-        try:
-            generate_dimensions(db, task)
-        except Exception as e:
-            print(f"[tasks] dimension generation failed: {e}", flush=True)
+    try:
+        generate_dimensions(db, task)
+    except Exception as e:
+        print(f"[tasks] dimension generation failed: {e}", flush=True)
 
-    # Attach dimensions to response
     dims = db.query(ScoringDimension).filter(ScoringDimension.task_id == task.id).all()
-    result = TaskOut.model_validate(task)
-    result.scoring_dimensions = [
+    result_out = TaskOut.model_validate(task)
+    result_out.scoring_dimensions = [
         ScoringDimensionPublic(name=d.name, description=d.description) for d in dims
     ]
-    return result
+    return result_out
 
 
 @router.get("", response_model=List[TaskOut])

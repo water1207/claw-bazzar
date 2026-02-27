@@ -133,19 +133,6 @@ def test_create_task_with_invalid_payment(client):
     assert resp.status_code == 402
 
 
-def test_create_task_zero_bounty_skips_payment(client):
-    resp = client.post("/tasks", json={
-        "title": "Free task",
-        "description": "No bounty needed",
-        "type": "fastest_first",
-        "threshold": 0.8,
-        "deadline": future(),
-        "publisher_id": "test-pub",
-        "bounty": 0,
-    })
-    assert resp.status_code == 201
-    assert resp.json()["payment_tx_hash"] is None
-
 
 def test_submission_status_has_policy_violation():
     from app.models import SubmissionStatus

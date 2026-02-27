@@ -105,15 +105,38 @@ class TaskOut(BaseModel):
     escrow_tx_hash: Optional[str] = None
     created_at: UTCDatetime
 
-    @model_validator(mode='after')
-    def parse_acceptance_criteria(self) -> "TaskOut":
-        if isinstance(self.acceptance_criteria, str):
+    @model_validator(mode='before')
+    @classmethod
+    def parse_acceptance_criteria(cls, values):
+        if isinstance(values, dict):
+            raw = values.get('acceptance_criteria')
+            if isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    values['acceptance_criteria'] = parsed if isinstance(parsed, list) else []
+                except (json.JSONDecodeError, ValueError):
+                    values['acceptance_criteria'] = []
+            return values
+        else:
+            # ORM object: convert to dict without modifying original object
+            raw = getattr(values, 'acceptance_criteria', None)
+            if isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    parsed = parsed if isinstance(parsed, list) else []
+                except (json.JSONDecodeError, ValueError):
+                    parsed = []
+            else:
+                parsed = raw if isinstance(raw, list) else []
+            # Extract all fields from ORM object into a dict
+            from sqlalchemy.inspection import inspect as sa_inspect
             try:
-                parsed = json.loads(self.acceptance_criteria)
-                self.acceptance_criteria = parsed if isinstance(parsed, list) else []
-            except (json.JSONDecodeError, ValueError):
-                self.acceptance_criteria = []
-        return self
+                mapper = sa_inspect(values.__class__)
+                d = {c.key: getattr(values, c.key) for c in mapper.mapper.column_attrs}
+            except Exception:
+                d = {k: v for k, v in values.__dict__.items() if not k.startswith('_')}
+            d['acceptance_criteria'] = parsed
+            return d
 
     model_config = {"from_attributes": True}
 
