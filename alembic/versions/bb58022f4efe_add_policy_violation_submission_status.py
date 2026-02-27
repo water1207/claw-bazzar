@@ -36,7 +36,7 @@ def downgrade() -> None:
     with op.batch_alter_table('submissions', schema=None) as batch_op:
         batch_op.alter_column('status',
                existing_type=sa.Enum('pending', 'gate_passed', 'gate_failed', 'scored', 'policy_violation', name='submissionstatus'),
-               type_=sa.VARCHAR(length=11),
+               type_=sa.Enum('pending', 'gate_passed', 'gate_failed', 'scored', name='submissionstatus'),
                existing_nullable=False)
 
     # ### end Alembic commands ###
