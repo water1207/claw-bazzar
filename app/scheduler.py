@@ -258,7 +258,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 from .models import TrustEventType as _TET, User as _User
                 if db.query(_User).filter_by(id=task.publisher_id).first():
                     _apply_event(db, task.publisher_id, _TET.publisher_completed,
-                                 task_bounty=task.bounty or 0.0, task_id=task.id)
+                                 task_bounty=task.bounty, task_id=task.id)
                 # Release bounty via contract (no challengers, empty verdicts)
                 _resolve_via_contract(db, task, verdicts=[])
                 db.commit()
@@ -323,7 +323,7 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
         if c.verdict == ChallengeVerdict.upheld:
             if worker:
                 apply_event(db, worker.id, TrustEventType.challenger_won,
-                            task_bounty=task.bounty or 0.0, task_id=task.id)
+                            task_bounty=task.bounty, task_id=task.id)
 
         elif c.verdict == ChallengeVerdict.malicious:
             if worker:
@@ -343,7 +343,7 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     ).first() if task.winner_submission_id else None
     if winner_sub:
         apply_event(db, winner_sub.worker_id, TrustEventType.worker_won,
-                    task_bounty=task.bounty or 0.0, task_id=task.id)
+                    task_bounty=task.bounty, task_id=task.id)
 
     # Apply worker_consolation to non-winning submitters with scored submissions
     if task.winner_submission_id:
@@ -367,7 +367,7 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     # Publisher trust reward for successful task completion
     if db.query(User).filter_by(id=task.publisher_id).first():
         apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
-                    task_bounty=task.bounty or 0.0, task_id=task.id)
+                    task_bounty=task.bounty, task_id=task.id)
 
     # Resolve on-chain: distribute bounty + deposits + arbiter rewards
     verdicts = []
@@ -493,12 +493,11 @@ def fastest_first_refund(db: Optional[Session] = None) -> None:
                 Submission.task_id == task.id
             ).count()
             task.status = TaskStatus.closed
-            if task.bounty and task.bounty > 0:
-                if sub_count == 0:
-                    refund_publisher(db, task.id, rate=1.0)
-                else:
-                    # Submissions exist but none passed threshold → 95% refund
-                    refund_publisher(db, task.id, rate=0.95)
+            if sub_count == 0:
+                refund_publisher(db, task.id, rate=1.0)
+            else:
+                # Submissions exist but none passed threshold → 95% refund
+                refund_publisher(db, task.id, rate=0.95)
         if expired:
             db.commit()
     finally:
