@@ -51,13 +51,12 @@ contract ChallengeEscrowTest is Test {
     address public arbiter2 = address(0xA2);
 
     // Default amounts: task bounty = 10 USDC
-    // escrow gets 95% = 9.5 USDC, incentive = 0 (no longer used in resolve)
-    uint256 constant BOUNTY = 9_500_000;     // 95% of task bounty locked in contract
-    uint256 constant INCENTIVE = 0;          // kept for struct compat, unused in resolve
-    uint256 constant DEPOSIT = 1 * 1e6;      // per-challenger deposit
-    // Payout amounts by tier (base task bounty = 10 USDC)
+    uint256 constant TASK_BOUNTY = 10 * 1e6;
+    uint256 constant BOUNTY = 9_500_000;     // 95% locked
+    uint256 constant INCENTIVE = 1_000_000;  // 10% incentive (was 0 in V1)
+    uint256 constant DEPOSIT = 1 * 1e6;
     uint256 constant PAYOUT_A = 8 * 1e6;             // A-tier: 80%
-    uint256 constant PAYOUT_A_CHALLENGE = 9 * 1e6;   // A-tier challenger win: 80%+10%=90%
+    uint256 constant PAYOUT_A_CHALLENGE = 8_500_000;  // A-tier challenger: min(90%, mainBounty=85%)=85%
 
     function setUp() public {
         platform = address(this);
@@ -79,8 +78,10 @@ contract ChallengeEscrowTest is Test {
         escrow.joinChallenge(taskId, challenger, deposit, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
     }
 
-    function _noArbiters() internal pure returns (address[] memory) {
-        return new address[](0);
+    function _verdict(address challenger, uint8 result, address[] memory arbiters)
+        internal pure returns (ChallengeEscrow.Verdict memory)
+    {
+        return ChallengeEscrow.Verdict(challenger, result, arbiters);
     }
 
     function _singleArbiter(address a) internal pure returns (address[] memory) {
@@ -94,6 +95,10 @@ contract ChallengeEscrowTest is Test {
         arr[0] = arbiter1;
         arr[1] = arbiter2;
         return arr;
+    }
+
+    function _noArbitersArr() internal pure returns (address[] memory) {
+        return new address[](0);
     }
 
     // --- createChallenge tests ---
@@ -171,7 +176,7 @@ contract ChallengeEscrowTest is Test {
         uint256 platformBefore = usdc.balanceOf(platform);
 
         ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](0);
-        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts, _noArbiters());
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts);
 
         // Winner gets 80% of original = 8 USDC (A-tier, no challenge bonus)
         assertEq(usdc.balanceOf(winner) - winnerBefore, PAYOUT_A);
@@ -179,9 +184,9 @@ contract ChallengeEscrowTest is Test {
         assertEq(usdc.balanceOf(platform) - platformBefore, BOUNTY - PAYOUT_A);
     }
 
-    // --- resolveChallenge: rejected (no upheld) ---
+    // --- resolveChallenge: rejected (no upheld) → winner gets 10% compensation ---
 
-    function test_resolve_rejected() public {
+    function test_resolve_rejected_no_upheld() public {
         bytes32 taskId = keccak256("task-1");
         address challenger = address(0x2);
 
@@ -189,28 +194,31 @@ contract ChallengeEscrowTest is Test {
         _joinChallenger(taskId, challenger);
 
         ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](1);
-        verdicts[0] = ChallengeEscrow.Verdict(challenger, 1); // rejected
+        verdicts[0] = _verdict(challenger, 1, _singleArbiter(arbiter1)); // rejected
 
         uint256 winnerBefore = usdc.balanceOf(winner);
         uint256 platformBefore = usdc.balanceOf(platform);
         uint256 challengerBefore = usdc.balanceOf(challenger);
 
-        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts, _singleArbiter(arbiter1));
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts);
 
-        // Winner gets 80% = 8 USDC (A-tier, no challenge bonus)
-        assertEq(usdc.balanceOf(winner) - winnerBefore, PAYOUT_A);
-        // Challenger gets nothing (rejected: 30% to arbiter, 70% to platform)
-        assertEq(usdc.balanceOf(challenger), challengerBefore);
-        // Arbiter gets 30% of deposit
+        // Arbiter gets 30% of deposit = 300_000
         uint256 arbiterShare = DEPOSIT * 30 / 100;
         assertEq(usdc.balanceOf(arbiter1), arbiterShare);
-        // Platform gets: (locked - payout) + 70% deposit + service fee
-        uint256 remaining = DEPOSIT - arbiterShare;
-        uint256 platformExpected = (BOUNTY - PAYOUT_A) + remaining + escrow.SERVICE_FEE();
-        assertEq(usdc.balanceOf(platform) - platformBefore, platformExpected);
+        // Challenger gets nothing (rejected)
+        assertEq(usdc.balanceOf(challenger), challengerBefore);
+        // Winner gets payout + 10% deposit compensation = 8_000_000 + 100_000
+        uint256 winnerComp = DEPOSIT * 10 / 100;
+        assertEq(usdc.balanceOf(winner) - winnerBefore, PAYOUT_A + winnerComp);
+        // Platform gets everything remaining
+        // totalFunds = BOUNTY + DEPOSIT + SERVICE_FEE = 9_500_000 + 1_000_000 + 10_000
+        // totalSent = PAYOUT_A + arbiterShare + winnerComp = 8_000_000 + 300_000 + 100_000
+        uint256 totalFunds = BOUNTY + DEPOSIT + escrow.SERVICE_FEE();
+        uint256 totalSent = PAYOUT_A + arbiterShare + winnerComp;
+        assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
     }
 
-    // --- resolveChallenge: upheld (challenger wins) ---
+    // --- resolveChallenge: upheld → 100% deposit refund, arbiter from incentive ---
 
     function test_resolve_upheld() public {
         bytes32 taskId = keccak256("task-1");
@@ -220,51 +228,81 @@ contract ChallengeEscrowTest is Test {
         _joinChallenger(taskId, challenger);
 
         ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](1);
-        verdicts[0] = ChallengeEscrow.Verdict(challenger, 0); // upheld
+        verdicts[0] = _verdict(challenger, 0, _singleArbiter(arbiter1)); // upheld
 
         uint256 challengerBefore = usdc.balanceOf(challenger);
+        uint256 winnerBefore = usdc.balanceOf(winner);
+        uint256 platformBefore = usdc.balanceOf(platform);
 
-        // Challenger is the finalWinner (A-tier + 10% challenge bonus = 90%)
-        escrow.resolveChallenge(taskId, challenger, PAYOUT_A_CHALLENGE, verdicts, _singleArbiter(arbiter1));
+        // finalWinner = winner (original), winnerPayout = PAYOUT_A_CHALLENGE (85% of task bounty, capped at mainBounty)
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A_CHALLENGE, verdicts);
 
-        // Challenger gets 90% = 9 USDC + 70% deposit back
-        uint256 arbiterShare = DEPOSIT * 30 / 100;
-        uint256 depositBack = DEPOSIT - arbiterShare;
-        assertEq(usdc.balanceOf(challenger) - challengerBefore, PAYOUT_A_CHALLENGE + depositBack);
-        // Arbiter gets 30% of deposit
-        assertEq(usdc.balanceOf(arbiter1), arbiterShare);
+        // Challenger gets 100% deposit refund
+        assertEq(usdc.balanceOf(challenger) - challengerBefore, DEPOSIT);
+        // Arbiter reward = deposit * 30% = 300_000 (from incentive)
+        uint256 arbReward = DEPOSIT * 30 / 100;
+        assertEq(usdc.balanceOf(arbiter1), arbReward);
+        // Winner gets winnerPayout + incentive remainder = 8_500_000 + (1_000_000 - 300_000) = 9_200_000
+        uint256 incentiveRemainder = INCENTIVE - arbReward;
+        assertEq(usdc.balanceOf(winner) - winnerBefore, PAYOUT_A_CHALLENGE + incentiveRemainder);
+        // Platform gets: totalFunds - totalSent
+        // totalFunds = BOUNTY + DEPOSIT + SERVICE_FEE = 9_500_000 + 1_000_000 + 10_000
+        // totalSent = PAYOUT_A_CHALLENGE + DEPOSIT + arbReward + incentiveRemainder
+        //           = 8_500_000 + 1_000_000 + 300_000 + 700_000 = 10_500_000
+        uint256 totalFunds = BOUNTY + DEPOSIT + escrow.SERVICE_FEE();
+        uint256 totalSent = PAYOUT_A_CHALLENGE + DEPOSIT + arbReward + incentiveRemainder;
+        assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
     }
 
-    // --- resolveChallenge: malicious ---
+    // --- resolveChallenge: upheld + rejected (hasUpheld=true) ---
 
-    function test_resolve_malicious() public {
+    function test_resolve_upheld_plus_rejected() public {
         bytes32 taskId = keccak256("task-1");
-        address challenger = address(0x2);
+        address c1 = address(0x2); // upheld
+        address c2 = address(0x3); // rejected
 
         _createChallenge(taskId);
-        _joinChallenger(taskId, challenger);
+        _joinChallenger(taskId, c1);
+        _joinChallenger(taskId, c2);
 
-        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](1);
-        verdicts[0] = ChallengeEscrow.Verdict(challenger, 2); // malicious
+        // Each challenge has independent arbiters
+        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](2);
+        verdicts[0] = _verdict(c1, 0, _singleArbiter(arbiter1)); // upheld, arbiter1
+        verdicts[1] = _verdict(c2, 1, _singleArbiter(arbiter2)); // rejected, arbiter2
 
+        uint256 c1Before = usdc.balanceOf(c1);
+        uint256 c2Before = usdc.balanceOf(c2);
+        uint256 winnerBefore = usdc.balanceOf(winner);
         uint256 platformBefore = usdc.balanceOf(platform);
-        uint256 challengerBefore = usdc.balanceOf(challenger);
 
-        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts, _singleArbiter(arbiter1));
+        // hasUpheld=true so winnerPayout must be <= bounty - incentive = 8_500_000
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A_CHALLENGE, verdicts);
 
-        // Challenger gets nothing
-        assertEq(usdc.balanceOf(challenger), challengerBefore);
-        // Arbiter gets 30% of deposit
-        uint256 arbiterShare = DEPOSIT * 30 / 100;
-        assertEq(usdc.balanceOf(arbiter1), arbiterShare);
-        // Platform gets: (locked - payout) + 70% deposit + service fee
-        uint256 remaining = DEPOSIT - arbiterShare;
-        assertEq(usdc.balanceOf(platform) - platformBefore, (BOUNTY - PAYOUT_A) + remaining + escrow.SERVICE_FEE());
+        // c1 (upheld): gets 100% deposit refund
+        assertEq(usdc.balanceOf(c1) - c1Before, DEPOSIT);
+        // c2 (rejected): gets nothing
+        assertEq(usdc.balanceOf(c2), c2Before);
+
+        // arbiter1 (upheld challenge): reward from incentive = DEPOSIT * 30% = 300_000
+        uint256 arbRewardUpheld = DEPOSIT * 30 / 100;
+        assertEq(usdc.balanceOf(arbiter1), arbRewardUpheld);
+        // arbiter2 (rejected challenge): reward from deposit = DEPOSIT * 30% = 300_000
+        uint256 arbShareRejected = DEPOSIT * 30 / 100;
+        assertEq(usdc.balanceOf(arbiter2), arbShareRejected);
+
+        // Winner gets winnerPayout + incentive remainder (no winner compensation when hasUpheld)
+        uint256 incentiveRemainder = INCENTIVE - arbRewardUpheld;
+        assertEq(usdc.balanceOf(winner) - winnerBefore, PAYOUT_A_CHALLENGE + incentiveRemainder);
+
+        // Platform gets totalFunds - totalSent
+        uint256 totalFunds = BOUNTY + DEPOSIT * 2 + escrow.SERVICE_FEE() * 2;
+        uint256 totalSent = PAYOUT_A_CHALLENGE + DEPOSIT + arbRewardUpheld + arbShareRejected + incentiveRemainder;
+        assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
     }
 
-    // --- resolveChallenge: multiple challengers, mixed verdicts ---
+    // --- resolveChallenge: multiple rejected, no upheld → winner compensation ---
 
-    function test_resolve_multiple_challengers() public {
+    function test_resolve_multiple_rejected_no_upheld() public {
         bytes32 taskId = keccak256("task-1");
         address c1 = address(0x2);
         address c2 = address(0x3);
@@ -273,85 +311,110 @@ contract ChallengeEscrowTest is Test {
         _joinChallenger(taskId, c1);
         _joinChallenger(taskId, c2);
 
-        // c1 upheld, c2 rejected. finalWinner = c1
         ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](2);
-        verdicts[0] = ChallengeEscrow.Verdict(c1, 0); // upheld
-        verdicts[1] = ChallengeEscrow.Verdict(c2, 1); // rejected
+        verdicts[0] = _verdict(c1, 1, _singleArbiter(arbiter1)); // rejected
+        verdicts[1] = _verdict(c2, 1, _singleArbiter(arbiter2)); // rejected
+
+        uint256 winnerBefore = usdc.balanceOf(winner);
+        uint256 platformBefore = usdc.balanceOf(platform);
+
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts);
+
+        // Each deposit: 30% arbiter + 10% winner comp + 60% platform
+        uint256 arbiterShare = DEPOSIT * 30 / 100;
+        uint256 winnerComp = DEPOSIT * 10 / 100;
+
+        assertEq(usdc.balanceOf(arbiter1), arbiterShare);
+        assertEq(usdc.balanceOf(arbiter2), arbiterShare);
+        // Winner gets payout + sum of compensations
+        assertEq(usdc.balanceOf(winner) - winnerBefore, PAYOUT_A + winnerComp * 2);
+        // Platform gets remainder
+        uint256 totalFunds = BOUNTY + DEPOSIT * 2 + escrow.SERVICE_FEE() * 2;
+        uint256 totalSent = PAYOUT_A + arbiterShare * 2 + winnerComp * 2;
+        assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
+    }
+
+    // --- resolveChallenge: dynamic deposits V2 (design doc Example 1) ---
+
+    function test_resolve_dynamic_deposits_v2() public {
+        bytes32 taskId = keccak256("task-dyn");
+        address c1 = address(0x2); // B-tier: dep=1.5 USDC, upheld
+        address c2 = address(0x3); // A-tier: dep=0.5 USDC, rejected
+
+        uint256 dep1 = 1_500_000;  // 1.5 USDC
+        uint256 dep2 = 500_000;    // 0.5 USDC
+
+        _createChallenge(taskId);
+        _joinChallengerWithDeposit(taskId, c1, dep1);
+        _joinChallengerWithDeposit(taskId, c2, dep2);
+
+        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](2);
+        verdicts[0] = _verdict(c1, 0, _singleArbiter(arbiter1)); // upheld
+        verdicts[1] = _verdict(c2, 1, _singleArbiter(arbiter2)); // rejected
 
         uint256 c1Before = usdc.balanceOf(c1);
         uint256 c2Before = usdc.balanceOf(c2);
-
-        escrow.resolveChallenge(taskId, c1, PAYOUT_A_CHALLENGE, verdicts, _singleArbiter(arbiter1));
-
-        uint256 arbiterSharePer = DEPOSIT * 30 / 100;
-
-        // c1 (finalWinner): gets 90% (A-tier + 10% bonus) + 70% deposit
-        assertEq(usdc.balanceOf(c1) - c1Before, PAYOUT_A_CHALLENGE + (DEPOSIT - arbiterSharePer));
-        // c2 (rejected): gets nothing
-        assertEq(usdc.balanceOf(c2), c2Before);
-        // Arbiter gets 30% * 2 deposits
-        assertEq(usdc.balanceOf(arbiter1), arbiterSharePer * 2);
-    }
-
-    // --- resolveChallenge: arbiter reward split ---
-
-    function test_resolve_arbiter_split() public {
-        bytes32 taskId = keccak256("task-1");
-        address challenger = address(0x2);
-
-        _createChallenge(taskId);
-        _joinChallenger(taskId, challenger);
-
-        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](1);
-        verdicts[0] = ChallengeEscrow.Verdict(challenger, 1); // rejected
-
-        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts, _twoArbiters());
-
-        uint256 arbiterTotal = DEPOSIT * 30 / 100;
-        uint256 perArbiter = arbiterTotal / 2;
-        assertEq(usdc.balanceOf(arbiter1), perArbiter);
-        assertEq(usdc.balanceOf(arbiter2), perArbiter);
-    }
-
-    // --- resolveChallenge: no arbiters → pool to platform ---
-
-    function test_resolve_no_arbiters_pool_to_platform() public {
-        bytes32 taskId = keccak256("task-1");
-        address challenger = address(0x2);
-
-        _createChallenge(taskId);
-        _joinChallenger(taskId, challenger);
-
-        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](1);
-        verdicts[0] = ChallengeEscrow.Verdict(challenger, 1); // rejected
-
+        uint256 winnerBefore = usdc.balanceOf(winner);
         uint256 platformBefore = usdc.balanceOf(platform);
 
-        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts, _noArbiters());
+        // hasUpheld=true; winnerPayout capped at bounty - incentive = 8_500_000
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A_CHALLENGE, verdicts);
 
-        // Platform gets: (locked - payout) + full deposit (no arbiters) + service fee
-        uint256 platformExpected = (BOUNTY - PAYOUT_A) + DEPOSIT + escrow.SERVICE_FEE();
-        assertEq(usdc.balanceOf(platform) - platformBefore, platformExpected);
+        // c1 (upheld): 100% deposit refund = 1_500_000
+        assertEq(usdc.balanceOf(c1) - c1Before, dep1);
+        // c2 (rejected): nothing
+        assertEq(usdc.balanceOf(c2), c2Before);
+
+        // arbiter1 (upheld): reward from incentive = dep1 * 30% = 450_000
+        uint256 arb1Reward = dep1 * 30 / 100;
+        assertEq(usdc.balanceOf(arbiter1), arb1Reward);
+        // arbiter2 (rejected): reward from deposit = dep2 * 30% = 150_000
+        uint256 arb2Reward = dep2 * 30 / 100;
+        assertEq(usdc.balanceOf(arbiter2), arb2Reward);
+
+        // Winner: winnerPayout + incentive remainder
+        uint256 incentiveRemainder = INCENTIVE - arb1Reward;
+        assertEq(usdc.balanceOf(winner) - winnerBefore, PAYOUT_A_CHALLENGE + incentiveRemainder);
+
+        // Platform: totalFunds - totalSent
+        uint256 totalFunds = BOUNTY + dep1 + dep2 + escrow.SERVICE_FEE() * 2;
+        uint256 totalSent = PAYOUT_A_CHALLENGE + dep1 + arb1Reward + arb2Reward + incentiveRemainder;
+        assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
+    }
+
+    // --- resolveChallenge: payout capped with upheld ---
+
+    function test_resolve_payout_capped_with_upheld() public {
+        bytes32 taskId = keccak256("task-1");
+        address challenger = address(0x2);
+
+        _createChallenge(taskId);
+        _joinChallenger(taskId, challenger);
+
+        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](1);
+        verdicts[0] = _verdict(challenger, 0, _singleArbiter(arbiter1)); // upheld
+
+        // When upheld, winnerPayout must be <= bounty - incentive = 8_500_000
+        // Try with bounty - incentive + 1 (should revert)
+        uint256 mainBounty = BOUNTY - INCENTIVE;
+        vm.expectRevert("Payout exceeds main bounty");
+        escrow.resolveChallenge(taskId, winner, mainBounty + 1, verdicts);
     }
 
     // --- double resolve reverts ---
 
     function test_resolve_reverts_already_resolved() public {
         bytes32 taskId = keccak256("task-1");
-        address challenger = address(0x2);
-
         _createChallenge(taskId);
-        _joinChallenger(taskId, challenger);
 
-        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](1);
-        verdicts[0] = ChallengeEscrow.Verdict(challenger, 1);
-        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts, _noArbiters());
+        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](0);
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts);
 
         vm.expectRevert("Already resolved");
-        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts, _noArbiters());
+        escrow.resolveChallenge(taskId, winner, PAYOUT_A, verdicts);
     }
 
-    // --- resolveChallenge: winnerPayout exceeds bounty ---
+    // --- resolveChallenge: winnerPayout exceeds bounty (no upheld) ---
 
     function test_resolve_reverts_payout_exceeds_bounty() public {
         bytes32 taskId = keccak256("task-1");
@@ -359,7 +422,7 @@ contract ChallengeEscrowTest is Test {
 
         ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](0);
         vm.expectRevert("Payout exceeds bounty");
-        escrow.resolveChallenge(taskId, winner, BOUNTY + 1, verdicts, _noArbiters());
+        escrow.resolveChallenge(taskId, winner, BOUNTY + 1, verdicts);
     }
 
     // --- resolveChallenge: dynamic tier split (B-tier winner gets 75%) ---
@@ -374,7 +437,7 @@ contract ChallengeEscrowTest is Test {
         // B-tier winner: 75% of 10 USDC = 7.5 USDC
         uint256 bTierPayout = 7_500_000;
         ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](0);
-        escrow.resolveChallenge(taskId, winner, bTierPayout, verdicts, _noArbiters());
+        escrow.resolveChallenge(taskId, winner, bTierPayout, verdicts);
 
         assertEq(usdc.balanceOf(winner) - winnerBefore, bTierPayout);
         // Platform gets locked - payout = 9.5 - 7.5 = 2.0 USDC
@@ -403,47 +466,6 @@ contract ChallengeEscrowTest is Test {
 
         vm.expectRevert("Too early for emergency withdrawal");
         escrow.emergencyWithdraw(taskId);
-    }
-
-    // --- Dynamic deposit: two challengers with different deposit amounts ---
-
-    function test_resolve_dynamic_deposits() public {
-        bytes32 taskId = keccak256("task-dyn");
-        address c1 = address(0x2); // S-tier: 5% of 10 USDC = 0.5 USDC
-        address c2 = address(0x3); // B-tier: 30% of 10 USDC = 3.0 USDC
-
-        uint256 dep1 = 500_000;    // 0.5 USDC
-        uint256 dep2 = 3_000_000;  // 3.0 USDC
-
-        _createChallenge(taskId);
-        _joinChallengerWithDeposit(taskId, c1, dep1);
-        _joinChallengerWithDeposit(taskId, c2, dep2);
-
-        // Verify per-challenger deposits stored correctly
-        assertEq(escrow.challengerDeposits(taskId, c1), dep1);
-        assertEq(escrow.challengerDeposits(taskId, c2), dep2);
-
-        // c1 upheld (S-tier), c2 rejected (B-tier)
-        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](2);
-        verdicts[0] = ChallengeEscrow.Verdict(c1, 0); // upheld
-        verdicts[1] = ChallengeEscrow.Verdict(c2, 1); // rejected
-
-        uint256 c1Before = usdc.balanceOf(c1);
-        uint256 c2Before = usdc.balanceOf(c2);
-
-        escrow.resolveChallenge(taskId, c1, PAYOUT_A_CHALLENGE, verdicts, _singleArbiter(arbiter1));
-
-        // c1: gets bounty payout + 70% of own deposit (0.5 * 0.7 = 0.35)
-        uint256 c1ArbiterShare = dep1 * 30 / 100;
-        uint256 c1Back = dep1 - c1ArbiterShare;
-        assertEq(usdc.balanceOf(c1) - c1Before, PAYOUT_A_CHALLENGE + c1Back);
-
-        // c2: gets nothing (rejected)
-        assertEq(usdc.balanceOf(c2), c2Before);
-
-        // Arbiter gets 30% of both deposits
-        uint256 totalArbiterPool = (dep1 * 30 / 100) + (dep2 * 30 / 100);
-        assertEq(usdc.balanceOf(arbiter1), totalArbiterPool);
     }
 
     function test_emergency_with_dynamic_deposits() public {
