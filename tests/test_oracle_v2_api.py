@@ -24,9 +24,25 @@ MOCK_DIM_GEN_STDOUT = json.dumps({
 
 def test_create_task_with_acceptance_criteria(client):
     """Creating a task with acceptance_criteria should trigger dimension generation."""
-    mock_result = type("R", (), {"stdout": MOCK_DIM_GEN_STDOUT, "returncode": 0})()
+    from app.models import ScoringDimension
+
+    def _mock_gen_dims(db, task):
+        """Side-effect: directly insert dimension rows, overriding conftest's no-op mock."""
+        dims_data = json.loads(MOCK_DIM_GEN_STDOUT)["dimensions"]
+        for d in dims_data:
+            db.add(ScoringDimension(
+                task_id=task.id,
+                dim_id=d["id"],
+                name=d["name"],
+                dim_type=d["type"],
+                description=d["description"],
+                weight=d["weight"],
+                scoring_guidance=d["scoring_guidance"],
+            ))
+        db.commit()
+
     with PAYMENT_MOCK, \
-         patch("app.services.oracle.subprocess.run", return_value=mock_result):
+         patch("app.routers.tasks.generate_dimensions", side_effect=_mock_gen_dims):
         resp = client.post("/tasks", json={
             "title": "调研", "description": "调研竞品",
             "type": "quality_first", "deadline": "2026-12-31T00:00:00Z",

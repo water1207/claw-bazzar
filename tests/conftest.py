@@ -43,8 +43,10 @@ def client():
     app.dependency_overrides[get_db] = override_db
 
     # Prevent lifespan from touching the real DB or starting scheduler
+    # Also mock generate_dimensions to avoid real LLM subprocess calls in tests
     with patch("app.main.create_scheduler", return_value=MagicMock()), \
-         patch("app.main.run_migrations"):
+         patch("app.main.run_migrations"), \
+         patch("app.routers.tasks.generate_dimensions"):
         with TestClient(app) as c:
             yield c
 
@@ -74,7 +76,8 @@ def client_with_db():
     app.dependency_overrides[get_db] = override_db
 
     with patch("app.main.create_scheduler", return_value=MagicMock()), \
-         patch("app.main.run_migrations"):
+         patch("app.main.run_migrations"), \
+         patch("app.routers.tasks.generate_dimensions"):
         with TestClient(app) as c:
             db = TestSession()
             try:
