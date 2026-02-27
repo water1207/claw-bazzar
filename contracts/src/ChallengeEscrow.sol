@@ -12,6 +12,7 @@ contract ChallengeEscrow is Ownable {
     uint256 public constant SERVICE_FEE = 10_000; // 0.01 USDC (6 decimals)
     uint256 public constant EMERGENCY_TIMEOUT = 30 days;
     uint256 public constant ARBITER_DEPOSIT_BPS = 3000; // 30% of each deposit → arbiters
+    uint256 public constant WINNER_COMPENSATION_BPS = 1000; // 10% of deposit → original winner
 
     struct ChallengeInfo {
         address winner;
@@ -27,6 +28,7 @@ contract ChallengeEscrow is Ownable {
     struct Verdict {
         address challenger;
         uint8   result;      // 0=upheld, 1=rejected, 2=malicious
+        address[] arbiters;  // per-challenge majority arbiter addresses
     }
 
     mapping(bytes32 => ChallengeInfo) public challenges;
@@ -105,68 +107,96 @@ contract ChallengeEscrow is Ownable {
         emit ChallengerJoined(taskId, challenger);
     }
 
-    /// @notice Resolve challenge: distribute bounty + deposits + arbiter rewards.
-    /// @param winnerPayout Amount of locked bounty to send to finalWinner (rest → platform).
-    /// @param arbiters Addresses that judged this challenge (receive deposit share).
+    /// @dev Split amount equally among addresses. Returns actual amount sent (may be less due to rounding).
+    function _splitAmong(address[] memory addrs, uint256 amount) internal returns (uint256 sent) {
+        if (addrs.length == 0 || amount == 0) return 0;
+        uint256 per = amount / addrs.length;
+        for (uint256 i = 0; i < addrs.length; i++) {
+            require(usdc.transfer(addrs[i], per), "Arbiter transfer failed");
+        }
+        return per * addrs.length;
+    }
+
+    /// @notice Resolve challenge: distribute bounty + deposits per new V2 rules.
+    /// @param winnerPayout Amount from main bounty for finalWinner (backend-computed by trust tier).
+    ///        When hasUpheld: must be <= bounty - incentive (incentive reserved for arbiter + winner bonus).
+    ///        When !hasUpheld: must be <= bounty.
     function resolveChallenge(
         bytes32 taskId,
         address finalWinner,
         uint256 winnerPayout,
-        Verdict[] calldata verdicts,
-        address[] calldata arbiters
+        Verdict[] memory verdicts
     ) external onlyOwner {
         ChallengeInfo storage info = challenges[taskId];
         require(info.bounty > 0, "Challenge not found");
         require(!info.resolved, "Already resolved");
 
-        uint256 platformTotal = 0;
+        // Detect if any verdict is upheld
+        bool hasUpheld = false;
+        for (uint256 i = 0; i < verdicts.length; i++) {
+            if (verdicts[i].result == 0) { hasUpheld = true; break; }
+        }
 
-        // 1. Bounty distribution: caller decides split based on winner trust tier
-        require(winnerPayout <= info.bounty, "Payout exceeds bounty");
+        // Validate payout cap
+        if (hasUpheld) {
+            require(winnerPayout <= info.bounty - info.incentive, "Payout exceeds main bounty");
+        } else {
+            require(winnerPayout <= info.bounty, "Payout exceeds bounty");
+        }
+
+        uint256 totalFunds = info.bounty + info.totalDeposits + info.serviceFee * info.challengerCount;
+        uint256 totalSent = 0;
+
+        // 1. Main bounty → finalWinner
         if (winnerPayout > 0) {
             require(usdc.transfer(finalWinner, winnerPayout), "Bounty transfer failed");
+            totalSent += winnerPayout;
         }
-        platformTotal += info.bounty - winnerPayout;
 
-        // 2. Deposit distribution: 30% of each deposit → arbiters, rest by verdict
-        uint256 arbiterPool = 0;
+        uint256 incentiveUsed = 0;
+        uint256 winnerBonus = 0;
+
+        // 2. Per-verdict deposit distribution
         for (uint256 i = 0; i < verdicts.length; i++) {
             require(challengers[taskId][verdicts[i].challenger], "Not a challenger");
-
             uint256 dep = challengerDeposits[taskId][verdicts[i].challenger];
-            uint256 arbiterShare = dep * ARBITER_DEPOSIT_BPS / 10000;
-            arbiterPool += arbiterShare;
-            uint256 remaining = dep - arbiterShare;
 
             if (verdicts[i].result == 0) {
-                // upheld: remaining 70% back to challenger
-                require(
-                    usdc.transfer(verdicts[i].challenger, remaining),
-                    "Deposit refund failed"
-                );
+                // UPHELD: 100% deposit refund to challenger
+                require(usdc.transfer(verdicts[i].challenger, dep), "Deposit refund failed");
+                totalSent += dep;
+                // Arbiter reward from incentive
+                uint256 arbReward = dep * ARBITER_DEPOSIT_BPS / 10000;
+                incentiveUsed += arbReward;
+                totalSent += _splitAmong(verdicts[i].arbiters, arbReward);
             } else {
-                // rejected / malicious: remaining 70% to platform
-                platformTotal += remaining;
+                // REJECTED or MALICIOUS
+                uint256 arbShare = dep * ARBITER_DEPOSIT_BPS / 10000;
+                totalSent += _splitAmong(verdicts[i].arbiters, arbShare);
+                if (!hasUpheld) {
+                    // 10% winner compensation
+                    uint256 comp = dep * WINNER_COMPENSATION_BPS / 10000;
+                    winnerBonus += comp;
+                }
+                // Remaining goes to platform (via totalFunds - totalSent)
             }
         }
 
-        // 3. Split arbiter pool equally among arbiters
-        if (arbiters.length > 0 && arbiterPool > 0) {
-            uint256 perArbiter = arbiterPool / arbiters.length;
-            for (uint256 i = 0; i < arbiters.length; i++) {
-                require(usdc.transfer(arbiters[i], perArbiter), "Arbiter transfer failed");
-            }
-            // Rounding remainder → platform
-            platformTotal += arbiterPool - perArbiter * arbiters.length;
-        } else {
-            // No arbiters specified → pool goes to platform
-            platformTotal += arbiterPool;
+        // 3. Incentive remainder → winner bonus (only when upheld)
+        if (hasUpheld && info.incentive > incentiveUsed) {
+            winnerBonus += info.incentive - incentiveUsed;
         }
 
-        // 4. Service fees + forfeited amounts → platform
-        platformTotal += info.serviceFee * info.challengerCount;
-        if (platformTotal > 0) {
-            require(usdc.transfer(owner(), platformTotal), "Platform transfer failed");
+        // 4. Send accumulated winner bonus
+        if (winnerBonus > 0) {
+            require(usdc.transfer(finalWinner, winnerBonus), "Winner bonus transfer failed");
+            totalSent += winnerBonus;
+        }
+
+        // 5. Platform gets everything remaining (service fees + forfeited deposits + rounding)
+        uint256 platformAmount = totalFunds - totalSent;
+        if (platformAmount > 0) {
+            require(usdc.transfer(owner(), platformAmount), "Platform transfer failed");
         }
 
         info.resolved = true;
