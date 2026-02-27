@@ -169,3 +169,75 @@ def test_challenger_justified_trust_event(db_session):
     db_session.refresh(user)
     assert event.delta == 5
     assert user.trust_score == 505
+
+
+# --- API endpoint tests ---
+
+def test_jury_vote_endpoint_happy_path(client_with_db):
+    """POST /tasks/{task_id}/jury-vote accepts a merged vote."""
+    client, db = client_with_db
+
+    users = _make_users(db, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db, task.id)
+    arbiter_id = ballots[0].arbiter_user_id
+
+    resp = client.post(
+        f"/tasks/{task.id}/jury-vote",
+        json={
+            "arbiter_user_id": arbiter_id,
+            "winner_submission_id": ch1_sub.id,
+            "malicious_submission_ids": [ch2_sub.id],
+            "feedback": "ch1 is best",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["winner_submission_id"] == ch1_sub.id
+    assert data["voted_at"] is not None
+
+
+def test_jury_vote_endpoint_rejects_non_candidate(client_with_db):
+    """POST /tasks/{task_id}/jury-vote rejects non-candidate winner."""
+    client, db = client_with_db
+    users = _make_users(db, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db, task.id)
+    arbiter_id = ballots[0].arbiter_user_id
+
+    resp = client.post(
+        f"/tasks/{task.id}/jury-vote",
+        json={
+            "arbiter_user_id": arbiter_id,
+            "winner_submission_id": "nonexistent-id",
+            "malicious_submission_ids": [],
+            "feedback": "",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_jury_vote_endpoint_rejects_winner_in_malicious(client_with_db):
+    """POST /tasks/{task_id}/jury-vote rejects winner in malicious list."""
+    client, db = client_with_db
+    users = _make_users(db, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db, task.id)
+    arbiter_id = ballots[0].arbiter_user_id
+
+    resp = client.post(
+        f"/tasks/{task.id}/jury-vote",
+        json={
+            "arbiter_user_id": arbiter_id,
+            "winner_submission_id": ch1_sub.id,
+            "malicious_submission_ids": [ch1_sub.id],
+            "feedback": "",
+        },
+    )
+    assert resp.status_code == 422  # Pydantic validation error

@@ -3,10 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
-from ..models import Task, Submission, Challenge, User, TaskStatus
-from ..schemas import ChallengeCreate, ChallengeOut
+from ..models import Task, Submission, Challenge, User, TaskStatus, JuryBallot
+from ..schemas import ChallengeCreate, ChallengeOut, JuryVoteIn, JuryBallotOut
 from ..services.escrow import check_usdc_balance, join_challenge_onchain
 from ..services.trust import check_permissions, get_challenge_deposit_rate
+from ..services.arbiter_pool import submit_merged_vote
 
 SERVICE_FEE = 0.01  # 0.01 USDC
 
@@ -132,3 +133,42 @@ def get_challenge(task_id: str, challenge_id: str, db: Session = Depends(get_db)
     if not challenge:
         raise HTTPException(status_code=404, detail="Challenge not found")
     return challenge
+
+
+@router.post("/tasks/{task_id}/jury-vote", response_model=JuryBallotOut)
+def jury_vote(task_id: str, body: JuryVoteIn, db: Session = Depends(get_db)):
+    """Submit a merged arbitration vote (pick winner + tag malicious)."""
+    task = db.query(Task).filter_by(id=task_id).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    # Build candidate pool
+    candidate_ids = set()
+    if task.winner_submission_id:
+        candidate_ids.add(task.winner_submission_id)
+    challenges = db.query(Challenge).filter_by(task_id=task_id).all()
+    for c in challenges:
+        candidate_ids.add(c.challenger_submission_id)
+
+    # Validate winner is in candidate pool
+    if body.winner_submission_id not in candidate_ids:
+        raise HTTPException(400, "Winner must be in candidate pool")
+
+    # Validate malicious targets are in candidate pool
+    for mid in body.malicious_submission_ids:
+        if mid not in candidate_ids:
+            raise HTTPException(400, f"Malicious target {mid} not in candidate pool")
+
+    try:
+        ballot = submit_merged_vote(
+            db,
+            task_id=task_id,
+            arbiter_user_id=body.arbiter_user_id,
+            winner_submission_id=body.winner_submission_id,
+            malicious_submission_ids=body.malicious_submission_ids,
+            feedback=body.feedback,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return ballot
