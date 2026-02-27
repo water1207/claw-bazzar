@@ -23,6 +23,7 @@ def test_fastest_first_full_lifecycle(client):
             "title": "Fastest wins", "description": "Solve it fast",
             "type": "fastest_first", "threshold": 0.8, "deadline": future(),
             "publisher_id": "test-pub", "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS).json()
     assert task["status"] == "open"
 
@@ -57,6 +58,7 @@ def test_quality_first_full_lifecycle(client):
             "title": "Quality wins", "description": "Refine your answer",
             "type": "quality_first", "max_revisions": 3, "deadline": future(),
             "publisher_id": "test-pub", "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS).json()
 
     # 2. Worker submits revision 1
@@ -116,6 +118,7 @@ def test_filter_tasks_by_status(client):
                 "title": "Open", "description": "d",
                 "type": "fastest_first", "threshold": 0.5, "deadline": future(),
                 "publisher_id": "test-pub", "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
             }, headers=PAYMENT_HEADERS).json()
             sub = client.post(f"/tasks/{t1['id']}/submissions", json={
                 "worker_id": "w", "content": "x"
@@ -128,6 +131,7 @@ def test_filter_tasks_by_status(client):
             "title": "Still open", "description": "d",
             "type": "fastest_first", "threshold": 0.5, "deadline": future(),
             "publisher_id": "test-pub", "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
 
     open_tasks = client.get("/tasks?status=open").json()
@@ -153,6 +157,7 @@ def test_bounty_lifecycle_fastest_first(client):
             "title": "Bounty task", "description": "Do it",
             "type": "fastest_first", "threshold": 0.7,
             "deadline": future(), "publisher_id": pub["id"], "bounty": 10.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers={"X-PAYMENT": "valid"}).json()
 
     assert task["bounty"] == 10.0
@@ -194,6 +199,7 @@ def test_bounty_lifecycle_quality_first(client):
             "title": "Quality bounty", "description": "Refine",
             "type": "quality_first", "max_revisions": 3,
             "deadline": future(), "publisher_id": pub["id"], "bounty": 20.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers={"X-PAYMENT": "valid"}).json()
 
     with patch("app.routers.submissions.invoke_oracle"):

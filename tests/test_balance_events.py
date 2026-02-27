@@ -35,6 +35,7 @@ def test_balance_events_publisher_bounty(client):
             "deadline": "2099-01-01T00:00:00Z",
             "publisher_id": pub_id,
             "bounty": 5.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
     assert task.status_code == 201
 
@@ -67,6 +68,7 @@ def test_balance_events_worker_payout(client):
             "deadline": "2099-01-01T00:00:00Z",
             "publisher_id": pub_id,
             "bounty": 10.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
     task_id = task_resp.json()["id"]
 
@@ -109,6 +111,7 @@ def test_balance_events_no_submission_deposit(client):
             "deadline": "2099-01-01T00:00:00Z",
             "publisher_id": pub_id,
             "bounty": 10.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
     task_id = task_resp.json()["id"]
 

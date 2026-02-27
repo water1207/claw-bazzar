@@ -20,7 +20,7 @@ def test_dimension_score_calls_run_in_parallel():
     task = Task(
         title="Test", description="Desc", type=TaskType.quality_first,
         deadline=datetime(2026, 1, 1, tzinfo=timezone.utc), bounty=10.0,
-        acceptance_criteria="AC",
+        acceptance_criteria=json.dumps(["AC"]),
     )
     db.add(task)
     db.commit()

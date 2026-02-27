@@ -103,18 +103,21 @@ def test_task_create_accepts_acceptance_criteria():
     data = TaskCreate(
         title="Test", description="Desc", type="quality_first",
         deadline="2026-12-31T00:00:00Z", publisher_id="p1", bounty=10.0,
-        acceptance_criteria="Must include 10 items"
+        acceptance_criteria=["Must include 10 items"]
     )
-    assert data.acceptance_criteria == "Must include 10 items"
+    assert data.acceptance_criteria == ["Must include 10 items"]
 
 
-def test_task_create_acceptance_criteria_optional():
-    data = TaskCreate(
-        title="Test", description="Desc", type="fastest_first",
-        threshold=0.8, deadline="2026-12-31T00:00:00Z",
-        publisher_id="p1", bounty=5.0,
-    )
-    assert data.acceptance_criteria is None
+def test_task_create_acceptance_criteria_required():
+    """acceptance_criteria is now required — omitting it should raise ValidationError."""
+    import pytest
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        TaskCreate(
+            title="Test", description="Desc", type="fastest_first",
+            threshold=0.8, deadline="2026-12-31T00:00:00Z",
+            publisher_id="p1", bounty=5.0,
+        )
 
 
 def test_scoring_dimension_public_schema():

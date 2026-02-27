@@ -18,6 +18,7 @@ def make_quality_task(client, bounty=10.0, submission_deposit=1.0):
         "max_revisions": 3, "deadline": future(),
         "publisher_id": "pub", "bounty": bounty,
         "submission_deposit": submission_deposit,
+        "acceptance_criteria": ["验收标准"],
     }
     with PAYMENT_MOCK:
         return client.post("/tasks", json=body, headers=PAYMENT_HEADERS).json()
@@ -41,6 +42,7 @@ def test_fastest_first_no_deposit(client):
         "title": "F", "description": "d", "type": "fastest_first",
         "threshold": 0.8, "deadline": future(),
         "publisher_id": "pub", "bounty": 10.0,
+        "acceptance_criteria": ["验收标准"],
     }
     with PAYMENT_MOCK:
         task = client.post("/tasks", json=body, headers=PAYMENT_HEADERS).json()

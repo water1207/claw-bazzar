@@ -31,12 +31,12 @@ def test_create_task_with_acceptance_criteria(client):
             "title": "调研", "description": "调研竞品",
             "type": "quality_first", "deadline": "2026-12-31T00:00:00Z",
             "publisher_id": "p1", "bounty": 10.0,
-            "acceptance_criteria": "至少覆盖10个产品",
+            "acceptance_criteria": ["至少覆盖10个产品"],
         }, headers=PAYMENT_HEADERS)
 
     assert resp.status_code == 201
     data = resp.json()
-    assert data["acceptance_criteria"] == "至少覆盖10个产品"
+    assert data["acceptance_criteria"] == ["至少覆盖10个产品"]
     assert len(data["scoring_dimensions"]) == 3
     assert data["scoring_dimensions"][0]["name"] == "实质性"
     # weight and scoring_guidance should NOT be in public response
@@ -45,7 +45,7 @@ def test_create_task_with_acceptance_criteria(client):
 
 
 def test_create_task_without_acceptance_criteria(client):
-    """Tasks without acceptance_criteria should still work (no dimensions generated)."""
+    """Tasks without acceptance_criteria should return 422 (required field)."""
     with PAYMENT_MOCK:
         resp = client.post("/tasks", json={
             "title": "Test", "description": "Desc",
@@ -54,7 +54,4 @@ def test_create_task_without_acceptance_criteria(client):
             "publisher_id": "p1", "bounty": 5.0,
         }, headers=PAYMENT_HEADERS)
 
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["acceptance_criteria"] is None
-    assert data["scoring_dimensions"] == []
+    assert resp.status_code == 422

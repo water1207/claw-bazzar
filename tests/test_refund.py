@@ -236,7 +236,7 @@ def test_fastest_first_closed_not_refunded():
 
 def test_zero_bounty_no_refund():
     db = make_db()
-    task = make_expired_task(db, TaskType.quality_first, bounty=0)
+    task = make_expired_task(db, TaskType.quality_first, bounty=0.1)
     db.commit()
 
     from app.scheduler import quality_first_lifecycle

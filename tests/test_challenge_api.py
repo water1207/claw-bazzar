@@ -19,6 +19,7 @@ def make_quality_task(client, bounty=10.0):
         "max_revisions": 3, "deadline": future(),
         "publisher_id": "pub", "bounty": bounty,
         "challenge_duration": 7200,
+        "acceptance_criteria": ["验收标准"],
     }
     with PAYMENT_MOCK:
         return client.post("/tasks", json=body, headers=PAYMENT_HEADERS).json()

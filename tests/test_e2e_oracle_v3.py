@@ -267,7 +267,7 @@ class TestFastestFirstE2E:
             title="写测试", description="编写单元测试",
             type=TaskType.fastest_first, threshold=0.6,
             deadline=datetime(2026, 12, 31, tzinfo=timezone.utc),
-            bounty=0, acceptance_criteria="覆盖率达到80%",
+            bounty=0.1, acceptance_criteria=json.dumps(["覆盖率达到80%"]),
         )
         db.add(task)
         db.commit()
@@ -302,7 +302,7 @@ class TestFastestFirstE2E:
             title="写文档", description="编写API文档",
             type=TaskType.fastest_first, threshold=0.6,
             deadline=datetime(2026, 12, 31, tzinfo=timezone.utc),
-            bounty=0, acceptance_criteria="覆盖所有接口",
+            bounty=0.1, acceptance_criteria=json.dumps(["覆盖所有接口"]),
         )
         db.add(task)
         db.commit()
@@ -335,7 +335,7 @@ class TestFastestFirstE2E:
             title="分析", description="竞品分析",
             type=TaskType.fastest_first, threshold=0.6,
             deadline=datetime(2026, 12, 31, tzinfo=timezone.utc),
-            bounty=0, acceptance_criteria="至少5个竞品",
+            bounty=0.1, acceptance_criteria=json.dumps(["至少5个竞品"]),
         )
         db.add(task)
         db.commit()
@@ -400,7 +400,7 @@ class TestQualityFirstE2E:
             title="市场调研", description="调研10个竞品",
             type=TaskType.quality_first,
             deadline=deadline, bounty=10.0,
-            acceptance_criteria="至少覆盖10个产品",
+            acceptance_criteria=json.dumps(["至少覆盖10个产品"]),
             challenge_duration=7200,
         )
         db.add(task)
@@ -589,7 +589,7 @@ class TestQualityFirstE2E:
             title="调研", description="竞品调研",
             type=TaskType.quality_first,
             deadline=datetime(2026, 12, 31, tzinfo=timezone.utc),
-            bounty=0, acceptance_criteria="10个产品",
+            bounty=0.1, acceptance_criteria=json.dumps(["10个产品"]),
             publisher_id=pub.id,
         )
         s.add(task)
@@ -638,7 +638,7 @@ class TestQualityFirstChallengeE2E:
             deadline=datetime(2025, 1, 1, tzinfo=timezone.utc),
             bounty=10.0, status=TaskStatus.challenge_window,
             challenge_window_end=datetime(2020, 1, 1, tzinfo=timezone.utc),
-            acceptance_criteria="AC",
+            acceptance_criteria=json.dumps(["AC"]),
         )
         db.add(task)
         db.commit()
@@ -716,7 +716,7 @@ class TestQualityFirstChallengeE2E:
             deadline=datetime(2025, 1, 1, tzinfo=timezone.utc),
             bounty=10.0, status=TaskStatus.challenge_window,
             challenge_window_end=datetime(2020, 1, 1, tzinfo=timezone.utc),
-            acceptance_criteria="AC",
+            acceptance_criteria=json.dumps(["AC"]),
             publisher_id=pub_user.id,
         )
         db.add(task)
@@ -760,16 +760,17 @@ class TestHTTPE2E:
         assert resp.status_code == 201
         pub_id = resp.json()["id"]
 
-        # Create fastest_first task (bounty=0, skip payment)
+        # Create fastest_first task
         dim_mock = _oracle_subprocess_factory([MOCK_DIMENSIONS])
-        with patch("app.services.oracle.subprocess.run", side_effect=dim_mock):
+        with patch("app.services.oracle.subprocess.run", side_effect=dim_mock), \
+             PAYMENT_MOCK:
             resp = client.post("/tasks", json={
                 "title": "写测试", "description": "编写单元测试",
                 "type": "fastest_first", "threshold": 0.6,
                 "deadline": "2026-12-31T00:00:00Z",
-                "publisher_id": pub_id, "bounty": 0,
-                "acceptance_criteria": "覆盖率达到80%",
-            })
+                "publisher_id": pub_id, "bounty": 0.1,
+                "acceptance_criteria": ["覆盖率达到80%"],
+            }, headers=PAYMENT_HEADERS)
         assert resp.status_code == 201
         task_data = resp.json()
         task_id = task_data["id"]
@@ -818,15 +819,16 @@ class TestHTTPE2E:
 
         # Create quality_first task
         dim_mock = _oracle_subprocess_factory([MOCK_DIMENSIONS])
-        with patch("app.services.oracle.subprocess.run", side_effect=dim_mock):
+        with patch("app.services.oracle.subprocess.run", side_effect=dim_mock), \
+             PAYMENT_MOCK:
             resp = client.post("/tasks", json={
                 "title": "竞品调研", "description": "调研10个竞品产品",
                 "type": "quality_first",
                 "deadline": "2026-12-31T00:00:00Z",
-                "publisher_id": pub_id, "bounty": 0,
-                "acceptance_criteria": "至少覆盖10个产品",
+                "publisher_id": pub_id, "bounty": 0.1,
+                "acceptance_criteria": ["至少覆盖10个产品"],
                 "challenge_duration": 7200,
-            })
+            }, headers=PAYMENT_HEADERS)
         assert resp.status_code == 201
         task_id = resp.json()["id"]
 
@@ -862,7 +864,7 @@ class TestParallelDimensionScore:
             title="调研", description="调研竞品",
             type=TaskType.quality_first,
             deadline=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            bounty=10.0, acceptance_criteria="AC",
+            bounty=10.0, acceptance_criteria=json.dumps(["AC"]),
         )
         db.add(task)
         db.commit()
@@ -917,7 +919,7 @@ class TestIndividualIRReference:
             title="调研", description="调研竞品",
             type=TaskType.quality_first,
             deadline=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            bounty=10.0, acceptance_criteria="AC",
+            bounty=10.0, acceptance_criteria=json.dumps(["AC"]),
         )
         db.add(task)
         db.commit()
@@ -994,7 +996,7 @@ class TestEdgeCases:
             title="调研", description="调研竞品",
             type=TaskType.quality_first,
             deadline=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            bounty=10.0, acceptance_criteria="AC",
+            bounty=10.0, acceptance_criteria=json.dumps(["AC"]),
         )
         db.add(task)
         db.commit()
@@ -1058,7 +1060,7 @@ class TestEdgeCases:
             title="调研", description="调研竞品",
             type=TaskType.quality_first,
             deadline=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            bounty=10.0, acceptance_criteria="AC",
+            bounty=10.0, acceptance_criteria=json.dumps(["AC"]),
         )
         db.add(task)
         db.commit()
@@ -1110,7 +1112,7 @@ class TestEdgeCases:
             type=TaskType.quality_first,
             deadline=datetime(2025, 1, 1, tzinfo=timezone.utc),
             bounty=10.0, status=TaskStatus.open,
-            acceptance_criteria="AC",
+            acceptance_criteria=json.dumps(["AC"]),
         )
         db.add(task)
         db.commit()

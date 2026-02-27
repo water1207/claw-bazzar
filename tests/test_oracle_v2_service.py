@@ -49,7 +49,7 @@ def test_generate_dimensions(db):
     task = Task(
         title="市场调研", description="调研竞品", type=TaskType.quality_first,
         deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=10.0,
-        acceptance_criteria="至少覆盖10个产品",
+        acceptance_criteria=json.dumps(["至少覆盖10个产品"]),
     )
     db.add(task)
     db.commit()
@@ -105,8 +105,8 @@ def test_score_submission_fastest_first_pass(db):
 
     task = Task(
         title="Test", description="Desc", type=TaskType.fastest_first,
-        threshold=0.6, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0,
-        acceptance_criteria="AC",
+        threshold=0.6, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0.1,
+        acceptance_criteria=json.dumps(["AC"]),
     )
     db.add(task)
     db.commit()
@@ -159,8 +159,8 @@ def test_score_submission_fastest_first_low_score(db):
 
     task = Task(
         title="Test", description="Desc", type=TaskType.fastest_first,
-        threshold=0.6, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0,
-        acceptance_criteria="AC",
+        threshold=0.6, deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=0.1,
+        acceptance_criteria=json.dumps(["AC"]),
     )
     db.add(task)
     db.commit()
@@ -229,7 +229,7 @@ def test_give_feedback_gate_fail(db):
     task = Task(
         title="调研", description="调研竞品", type=TaskType.quality_first,
         deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=10.0,
-        acceptance_criteria="至少覆盖10个产品",
+        acceptance_criteria=json.dumps(["至少覆盖10个产品"]),
     )
     db.add(task)
     db.commit()
@@ -256,7 +256,7 @@ def test_give_feedback_gate_pass_then_individual_score(db):
     task = Task(
         title="调研", description="调研竞品", type=TaskType.quality_first,
         deadline=datetime(2026, 12, 31, tzinfo=timezone.utc), bounty=10.0,
-        acceptance_criteria="至少覆盖10个产品",
+        acceptance_criteria=json.dumps(["至少覆盖10个产品"]),
     )
     db.add(task)
     db.commit()
@@ -334,7 +334,7 @@ def test_batch_score_submissions_horizontal(db):
     task = Task(
         title="调研", description="调研竞品", type=TaskType.quality_first,
         deadline=datetime(2026, 1, 1, tzinfo=timezone.utc), bounty=10.0,
-        acceptance_criteria="至少10个产品",
+        acceptance_criteria=json.dumps(["至少10个产品"]),
     )
     db.add(task)
     db.commit()
@@ -424,7 +424,7 @@ def test_batch_score_threshold_filter(db):
     task = Task(
         title="调研", description="调研竞品", type=TaskType.quality_first,
         deadline=datetime(2026, 1, 1, tzinfo=timezone.utc), bounty=10.0,
-        acceptance_criteria="至少10个产品",
+        acceptance_criteria=json.dumps(["至少10个产品"]),
     )
     db.add(task)
     db.commit()
@@ -520,7 +520,7 @@ def test_lifecycle_phase1_scoring_with_gate_passed_subs(db):
         title="调研", description="调研竞品", type=TaskType.quality_first,
         deadline=datetime(2025, 1, 1, tzinfo=timezone.utc), bounty=10.0,
         status=TaskStatus.open,
-        acceptance_criteria="至少10个产品",
+        acceptance_criteria=json.dumps(["至少10个产品"]),
     )
     db.add(task)
     db.commit()

@@ -23,6 +23,7 @@ def test_create_task_with_bounty(client):
             "deadline": future(),
             "publisher_id": "pub-001",
             "bounty": 2.5,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
     assert resp.status_code == 201
     data = resp.json()
@@ -44,6 +45,7 @@ def test_bounty_fields_in_task_detail(client):
             "deadline": future(),
             "publisher_id": "pub-002",
             "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
     task_id = create_resp.json()["id"]
     resp = client.get(f"/tasks/{task_id}")
@@ -64,6 +66,7 @@ def test_bounty_fields_in_task_list(client):
             "deadline": future(),
             "publisher_id": "pub-003",
             "bounty": 3.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
     resp = client.get("/tasks")
     assert resp.status_code == 200
@@ -94,6 +97,7 @@ def test_payout_fields_default_values(client):
             "deadline": future(),
             "publisher_id": "pub-def",
             "bounty": 0.5,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS)
 
     task = db.query(TaskModel).first()

@@ -22,6 +22,7 @@ def test_manual_arbitrate_endpoint(client):
             "max_revisions": 3, "deadline": future(),
             "publisher_id": "pub", "bounty": 10.0,
             "challenge_duration": 7200,
+            "acceptance_criteria": ["验收标准"],
         }, headers=PAYMENT_HEADERS).json()
 
     # Submit

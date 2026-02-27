@@ -14,6 +14,7 @@ def test_retry_payout_for_failed_task(client):
             "title": "T", "description": "d", "type": "fastest_first",
             "threshold": 0.5, "deadline": future(),
             "publisher_id": "test-pub", "bounty": 10.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers={"X-PAYMENT": "test"}).json()
 
     with patch("app.routers.submissions.invoke_oracle"):
@@ -49,6 +50,7 @@ def test_retry_payout_rejects_already_paid(client):
             "title": "T", "description": "d", "type": "fastest_first",
             "threshold": 0.5, "deadline": future(),
             "publisher_id": "test-pub", "bounty": 10.0,
+            "acceptance_criteria": ["验收标准"],
         }, headers={"X-PAYMENT": "test"}).json()
 
     with patch("app.routers.submissions.invoke_oracle"):

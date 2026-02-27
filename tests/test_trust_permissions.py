@@ -21,6 +21,7 @@ def _create_quality_task(client, bounty=100.0):
             "deadline": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
             "publisher_id": pub.id,
             "bounty": bounty,
+            "acceptance_criteria": ["验收标准"],
         }, headers={"X-PAYMENT": "test"})
     return resp.json()["id"], pub, db
 

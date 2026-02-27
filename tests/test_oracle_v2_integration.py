@@ -25,7 +25,7 @@ def test_quality_first_full_lifecycle():
     task = Task(
         title="市场调研", description="调研竞品", type=TaskType.quality_first,
         deadline=datetime(2026, 1, 1, tzinfo=timezone.utc), bounty=100.0,
-        acceptance_criteria="至少覆盖10个产品", max_revisions=3,
+        acceptance_criteria=json.dumps(["至少覆盖10个产品"]), max_revisions=3,
     )
     db.add(task)
     db.commit()

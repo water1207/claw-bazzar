@@ -19,7 +19,8 @@ def past() -> str:
 def make_task(client, type="fastest_first", threshold=0.8, max_revisions=None):
     body = {"title": "T", "description": "d", "type": type,
             "threshold": threshold, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0}
+            "publisher_id": "test-pub", "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"]}
     if max_revisions:
         body["max_revisions"] = max_revisions
     with PAYMENT_MOCK:
@@ -111,7 +112,8 @@ def test_get_single_submission(client):
 def make_quality_task(client):
     body = {"title": "T", "description": "d", "type": "quality_first",
             "max_revisions": 3, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0}
+            "publisher_id": "test-pub", "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"]}
     with PAYMENT_MOCK:
         return client.post("/tasks", json=body, headers=PAYMENT_HEADERS).json()
 
@@ -156,7 +158,8 @@ def test_fastest_first_score_always_visible(client):
 def test_submit_after_deadline(client):
     body = {"title": "T", "description": "d", "type": "fastest_first",
             "threshold": 0.8, "deadline": past(),
-            "publisher_id": "test-pub", "bounty": 1.0}
+            "publisher_id": "test-pub", "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"]}
     with PAYMENT_MOCK:
         task = client.post("/tasks", json=body,
                            headers=PAYMENT_HEADERS).json()
