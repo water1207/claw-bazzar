@@ -39,7 +39,6 @@ _MINIMAL_ESCROW_ABI = [
             {"name": "winner_", "type": "address"},
             {"name": "bounty", "type": "uint256"},
             {"name": "incentive", "type": "uint256"},
-            {"name": "depositAmount", "type": "uint256"},
         ],
         "name": "createChallenge",
         "outputs": [],
@@ -49,6 +48,7 @@ _MINIMAL_ESCROW_ABI = [
         "inputs": [
             {"name": "taskId", "type": "bytes32"},
             {"name": "challenger", "type": "address"},
+            {"name": "depositAmount", "type": "uint256"},
             {"name": "deadline", "type": "uint256"},
             {"name": "v", "type": "uint8"},
             {"name": "r", "type": "bytes32"},
@@ -132,23 +132,21 @@ def check_usdc_balance(wallet_address: str) -> float:
 
 
 def create_challenge_onchain(
-    task_id: str, winner_wallet: str, bounty: float, incentive: float, deposit_amount: float
+    task_id: str, winner_wallet: str, bounty: float, incentive: float
 ) -> str:
     """Call ChallengeEscrow.createChallenge(). Locks bounty (90%) into escrow.
-    bounty = task.bounty * 0.90, incentive = task.bounty * 0.10.
+    bounty = task.bounty * 0.95, incentive = 0.
     Returns tx hash."""
     w3, contract = _get_w3_and_contract()
     task_bytes = _task_id_to_bytes32(task_id)
     bounty_wei = int(bounty * 10**6)
     incentive_wei = int(incentive * 10**6)
-    deposit_wei = int(deposit_amount * 10**6)
 
     fn = contract.functions.createChallenge(
         task_bytes,
         Web3.to_checksum_address(winner_wallet),
         bounty_wei,
         incentive_wei,
-        deposit_wei,
     )
     return _send_tx(w3, fn, f"createChallenge({task_id})")
 
@@ -156,19 +154,22 @@ def create_challenge_onchain(
 def join_challenge_onchain(
     task_id: str,
     challenger_wallet: str,
+    deposit_amount: float,
     deadline: int,
     v: int,
     r: str,
     s: str,
 ) -> str:
-    """Call ChallengeEscrow.joinChallenge() with EIP-2612 permit params.
+    """Call ChallengeEscrow.joinChallenge() with per-challenger deposit and EIP-2612 permit params.
     Returns tx hash."""
     w3, contract = _get_w3_and_contract()
     task_bytes = _task_id_to_bytes32(task_id)
+    deposit_wei = int(deposit_amount * 10**6)
 
     fn = contract.functions.joinChallenge(
         task_bytes,
         Web3.to_checksum_address(challenger_wallet),
+        deposit_wei,
         deadline,
         v,
         bytes.fromhex(r[2:]) if r.startswith("0x") else bytes.fromhex(r),

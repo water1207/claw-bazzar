@@ -67,12 +67,16 @@ contract ChallengeEscrowTest is Test {
 
     function _createChallenge(bytes32 taskId) internal {
         usdc.approve(address(escrow), BOUNTY);
-        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE, DEPOSIT);
+        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE);
     }
 
     function _joinChallenger(bytes32 taskId, address challenger) internal {
+        _joinChallengerWithDeposit(taskId, challenger, DEPOSIT);
+    }
+
+    function _joinChallengerWithDeposit(bytes32 taskId, address challenger, uint256 deposit) internal {
         usdc.mint(challenger, 10 * 1e6);
-        escrow.joinChallenge(taskId, challenger, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+        escrow.joinChallenge(taskId, challenger, deposit, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
     }
 
     function _noArbiters() internal pure returns (address[] memory) {
@@ -97,37 +101,37 @@ contract ChallengeEscrowTest is Test {
     function test_createChallenge() public {
         bytes32 taskId = keccak256("task-1");
         usdc.approve(address(escrow), BOUNTY);
-        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE, DEPOSIT);
+        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE);
 
         (
-            address w, uint256 b, uint256 inc, uint256 d, uint256 sf,
-            uint8 cc, bool resolved,
+            address w, uint256 b, uint256 inc, uint256 sf,
+            uint8 cc, bool resolved, , uint256 td
         ) = escrow.challenges(taskId);
 
         assertEq(w, winner);
         assertEq(b, BOUNTY);
         assertEq(inc, INCENTIVE);
-        assertEq(d, DEPOSIT);
         assertEq(sf, escrow.SERVICE_FEE());
         assertEq(cc, 0);
         assertFalse(resolved);
+        assertEq(td, 0);
         assertEq(usdc.balanceOf(address(escrow)), BOUNTY);
     }
 
     function test_createChallenge_reverts_duplicate() public {
         bytes32 taskId = keccak256("task-1");
         usdc.approve(address(escrow), BOUNTY * 2);
-        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE, DEPOSIT);
+        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE);
 
         vm.expectRevert("Challenge already exists");
-        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE, DEPOSIT);
+        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE);
     }
 
     function test_createChallenge_reverts_nonowner() public {
         bytes32 taskId = keccak256("task-1");
         vm.prank(address(0x999));
         vm.expectRevert();
-        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE, DEPOSIT);
+        escrow.createChallenge(taskId, winner, BOUNTY, INCENTIVE);
     }
 
     // --- joinChallenge tests ---
@@ -139,7 +143,7 @@ contract ChallengeEscrowTest is Test {
         _createChallenge(taskId);
         _joinChallenger(taskId, challenger);
 
-        (, , , , , uint8 count, ,) = escrow.challenges(taskId);
+        (, , , , uint8 count, , ,) = escrow.challenges(taskId);
         assertEq(count, 1);
         assertTrue(escrow.challengers(taskId, challenger));
         uint256 totalRequired = DEPOSIT + escrow.SERVICE_FEE();
@@ -154,7 +158,7 @@ contract ChallengeEscrowTest is Test {
         _joinChallenger(taskId, challenger);
 
         vm.expectRevert("Already joined");
-        escrow.joinChallenge(taskId, challenger, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+        escrow.joinChallenge(taskId, challenger, DEPOSIT, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
     }
 
     // --- resolveChallenge: no challengers (empty verdicts) ---
@@ -389,7 +393,7 @@ contract ChallengeEscrowTest is Test {
         escrow.emergencyWithdraw(taskId);
 
         assertEq(usdc.balanceOf(platform) - platformBefore, BOUNTY);
-        (, , , , , , bool resolved,) = escrow.challenges(taskId);
+        (, , , , , bool resolved, ,) = escrow.challenges(taskId);
         assertTrue(resolved);
     }
 
@@ -399,5 +403,68 @@ contract ChallengeEscrowTest is Test {
 
         vm.expectRevert("Too early for emergency withdrawal");
         escrow.emergencyWithdraw(taskId);
+    }
+
+    // --- Dynamic deposit: two challengers with different deposit amounts ---
+
+    function test_resolve_dynamic_deposits() public {
+        bytes32 taskId = keccak256("task-dyn");
+        address c1 = address(0x2); // S-tier: 5% of 10 USDC = 0.5 USDC
+        address c2 = address(0x3); // B-tier: 30% of 10 USDC = 3.0 USDC
+
+        uint256 dep1 = 500_000;    // 0.5 USDC
+        uint256 dep2 = 3_000_000;  // 3.0 USDC
+
+        _createChallenge(taskId);
+        _joinChallengerWithDeposit(taskId, c1, dep1);
+        _joinChallengerWithDeposit(taskId, c2, dep2);
+
+        // Verify per-challenger deposits stored correctly
+        assertEq(escrow.challengerDeposits(taskId, c1), dep1);
+        assertEq(escrow.challengerDeposits(taskId, c2), dep2);
+
+        // c1 upheld (S-tier), c2 rejected (B-tier)
+        ChallengeEscrow.Verdict[] memory verdicts = new ChallengeEscrow.Verdict[](2);
+        verdicts[0] = ChallengeEscrow.Verdict(c1, 0); // upheld
+        verdicts[1] = ChallengeEscrow.Verdict(c2, 1); // rejected
+
+        uint256 c1Before = usdc.balanceOf(c1);
+        uint256 c2Before = usdc.balanceOf(c2);
+
+        escrow.resolveChallenge(taskId, c1, PAYOUT_A_CHALLENGE, verdicts, _singleArbiter(arbiter1));
+
+        // c1: gets bounty payout + 70% of own deposit (0.5 * 0.7 = 0.35)
+        uint256 c1ArbiterShare = dep1 * 30 / 100;
+        uint256 c1Back = dep1 - c1ArbiterShare;
+        assertEq(usdc.balanceOf(c1) - c1Before, PAYOUT_A_CHALLENGE + c1Back);
+
+        // c2: gets nothing (rejected)
+        assertEq(usdc.balanceOf(c2), c2Before);
+
+        // Arbiter gets 30% of both deposits
+        uint256 totalArbiterPool = (dep1 * 30 / 100) + (dep2 * 30 / 100);
+        assertEq(usdc.balanceOf(arbiter1), totalArbiterPool);
+    }
+
+    function test_emergency_with_dynamic_deposits() public {
+        bytes32 taskId = keccak256("task-emg-dyn");
+        address c1 = address(0x2);
+        address c2 = address(0x3);
+
+        uint256 dep1 = 500_000;
+        uint256 dep2 = 3_000_000;
+
+        _createChallenge(taskId);
+        _joinChallengerWithDeposit(taskId, c1, dep1);
+        _joinChallengerWithDeposit(taskId, c2, dep2);
+
+        vm.warp(block.timestamp + 31 days);
+
+        uint256 platformBefore = usdc.balanceOf(platform);
+        escrow.emergencyWithdraw(taskId);
+
+        // Platform gets: bounty + totalDeposits + serviceFee * 2
+        uint256 expected = BOUNTY + dep1 + dep2 + escrow.SERVICE_FEE() * 2;
+        assertEq(usdc.balanceOf(platform) - platformBefore, expected);
     }
 }

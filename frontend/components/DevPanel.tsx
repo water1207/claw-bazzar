@@ -664,7 +664,23 @@ export function DevPanel() {
         if (!taskResp.ok) throw new Error('Failed to fetch task details')
         const challengeTask: TaskDetail = await taskResp.json()
         const bountyAmount = challengeTask.bounty ?? 0
-        const depositAmount = challengeTask.submission_deposit ?? bountyAmount * 0.1
+
+        // Fetch worker trust tier to determine deposit rate (S=5%, A=10%, B=30%)
+        const wId = workerIds[activeWorkerIdx]
+        let depositRate = 0.10 // default A-tier
+        if (wId) {
+          try {
+            const userResp = await fetch(`/api/users/${wId}`)
+            if (userResp.ok) {
+              const userData = await userResp.json()
+              const tier = userData.trust_tier
+              if (tier === 'S') depositRate = 0.05
+              else if (tier === 'A') depositRate = 0.10
+              else if (tier === 'B') depositRate = 0.30
+            }
+          } catch { /* use default */ }
+        }
+        const depositAmount = challengeTask.submission_deposit ?? bountyAmount * depositRate
         const totalAmount = depositAmount + 0.01 // + service fee
 
         const permit = await signChallengePermit({

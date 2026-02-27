@@ -17,11 +17,11 @@ contract ChallengeEscrow is Ownable {
         address winner;
         uint256 bounty;           // Total locked (90% of task bounty)
         uint256 incentive;        // Challenge incentive (10% of task bounty)
-        uint256 depositAmount;    // Per-challenger deposit
         uint256 serviceFee;
         uint8   challengerCount;
         bool    resolved;
         uint256 createdAt;
+        uint256 totalDeposits;    // Sum of all challenger deposits (for emergencyWithdraw)
     }
 
     struct Verdict {
@@ -31,6 +31,7 @@ contract ChallengeEscrow is Ownable {
 
     mapping(bytes32 => ChallengeInfo) public challenges;
     mapping(bytes32 => mapping(address => bool)) public challengers;
+    mapping(bytes32 => mapping(address => uint256)) public challengerDeposits;
 
     event ChallengeCreated(bytes32 indexed taskId, address winner, uint256 bounty);
     event ChallengerJoined(bytes32 indexed taskId, address challenger);
@@ -47,8 +48,7 @@ contract ChallengeEscrow is Ownable {
         bytes32 taskId,
         address winner_,
         uint256 bounty,
-        uint256 incentive,
-        uint256 depositAmount
+        uint256 incentive
     ) external onlyOwner {
         require(challenges[taskId].bounty == 0, "Challenge already exists");
         require(bounty > 0, "Bounty must be positive");
@@ -58,11 +58,11 @@ contract ChallengeEscrow is Ownable {
             winner: winner_,
             bounty: bounty,
             incentive: incentive,
-            depositAmount: depositAmount,
             serviceFee: SERVICE_FEE,
             challengerCount: 0,
             resolved: false,
-            createdAt: block.timestamp
+            createdAt: block.timestamp,
+            totalDeposits: 0
         });
 
         require(
@@ -76,6 +76,7 @@ contract ChallengeEscrow is Ownable {
     function joinChallenge(
         bytes32 taskId,
         address challenger,
+        uint256 depositAmount,
         uint256 deadline,
         uint8 v,
         bytes32 r,
@@ -86,7 +87,7 @@ contract ChallengeEscrow is Ownable {
         require(!info.resolved, "Already resolved");
         require(!challengers[taskId][challenger], "Already joined");
 
-        uint256 totalAmount = info.depositAmount + info.serviceFee;
+        uint256 totalAmount = depositAmount + info.serviceFee;
 
         // try/catch: permit may fail if token doesn't support EIP-2612,
         // or signature was frontrun, or user pre-approved via approve().
@@ -97,6 +98,8 @@ contract ChallengeEscrow is Ownable {
         );
 
         challengers[taskId][challenger] = true;
+        challengerDeposits[taskId][challenger] = depositAmount;
+        info.totalDeposits += depositAmount;
         info.challengerCount++;
 
         emit ChallengerJoined(taskId, challenger);
@@ -130,9 +133,10 @@ contract ChallengeEscrow is Ownable {
         for (uint256 i = 0; i < verdicts.length; i++) {
             require(challengers[taskId][verdicts[i].challenger], "Not a challenger");
 
-            uint256 arbiterShare = info.depositAmount * ARBITER_DEPOSIT_BPS / 10000;
+            uint256 dep = challengerDeposits[taskId][verdicts[i].challenger];
+            uint256 arbiterShare = dep * ARBITER_DEPOSIT_BPS / 10000;
             arbiterPool += arbiterShare;
-            uint256 remaining = info.depositAmount - arbiterShare;
+            uint256 remaining = dep - arbiterShare;
 
             if (verdicts[i].result == 0) {
                 // upheld: remaining 70% back to challenger
@@ -180,7 +184,7 @@ contract ChallengeEscrow is Ownable {
 
         uint256 balance = usdc.balanceOf(address(this));
         uint256 taskFunds = info.bounty +
-            (info.depositAmount + info.serviceFee) * info.challengerCount;
+            info.totalDeposits + info.serviceFee * info.challengerCount;
         uint256 amount = taskFunds > balance ? balance : taskFunds;
 
         require(usdc.transfer(owner(), amount), "Emergency transfer failed");

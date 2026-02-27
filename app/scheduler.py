@@ -216,9 +216,8 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                         if winner_user:
                             escrow_amount = round(task.bounty * 0.95, 6)
                             incentive = 0
-                            deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
                             tx_hash = create_challenge_onchain(
-                                task.id, winner_user.wallet, escrow_amount, incentive, deposit_amount
+                                task.id, winner_user.wallet, escrow_amount, incentive
                             )
                             task.escrow_tx_hash = tx_hash
                     except Exception as e:

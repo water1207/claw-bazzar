@@ -87,11 +87,12 @@ def create_challenge(
         if recent:
             raise HTTPException(status_code=429, detail="每分钟最多提交一次挑战")
 
-        # 3. Relayer: call joinChallenge on-chain
+        # 3. Relayer: call joinChallenge on-chain (pass per-challenger deposit)
         try:
             deposit_tx_hash = join_challenge_onchain(
                 task_id,
                 data.challenger_wallet,
+                deposit_amount,
                 data.permit_deadline,
                 data.permit_v,
                 data.permit_r,
