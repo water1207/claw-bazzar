@@ -308,3 +308,42 @@ def test_scheduler_voided_path(db_session):
 
     db_session.refresh(task)
     assert task.status == TaskStatus.voided
+
+
+# --- GET jury-ballots endpoint tests ---
+
+def test_get_jury_ballots_hides_votes_before_complete(client_with_db):
+    """GET /tasks/{task_id}/jury-ballots hides details until all voted."""
+    client, db = client_with_db
+    users = _make_users(db, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db, users)
+
+    from app.services.arbiter_pool import select_jury, submit_merged_vote
+    ballots = select_jury(db, task.id)
+
+    # Only 1 of 3 voted
+    submit_merged_vote(db, task.id, ballots[0].arbiter_user_id, ch1_sub.id, [], "ok")
+
+    resp = client.get(f"/tasks/{task.id}/jury-ballots")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 3
+    # All winner_submission_id should be hidden (None)
+    hidden_count = sum(1 for b in data if b["winner_submission_id"] is None)
+    assert hidden_count == 3
+
+
+def test_get_jury_ballots_reveals_after_complete(client_with_db):
+    """GET /tasks/{task_id}/jury-ballots reveals all after 3/3 voted."""
+    client, db = client_with_db
+    users = _make_users(db, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db, task.id)
+    _vote_all(db, task, ballots, [ch1_sub.id] * 3)
+
+    resp = client.get(f"/tasks/{task.id}/jury-ballots")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert all(b["winner_submission_id"] == ch1_sub.id for b in data)

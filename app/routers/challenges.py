@@ -172,3 +172,23 @@ def jury_vote(task_id: str, body: JuryVoteIn, db: Session = Depends(get_db)):
         raise HTTPException(400, str(e))
 
     return ballot
+
+
+@router.get("/tasks/{task_id}/jury-ballots", response_model=list[JuryBallotOut])
+def get_jury_ballots(task_id: str, db: Session = Depends(get_db)):
+    """Get all jury ballots for a task. Hides vote details until all voted."""
+    ballots = db.query(JuryBallot).filter_by(task_id=task_id).all()
+    all_voted = all(b.winner_submission_id is not None for b in ballots)
+
+    if not all_voted:
+        result = []
+        for b in ballots:
+            out = JuryBallotOut.model_validate(b)
+            has_voted = b.winner_submission_id is not None
+            out.winner_submission_id = None
+            out.feedback = None
+            out.voted_at = b.voted_at if has_voted else None
+            result.append(out)
+        return result
+
+    return ballots
