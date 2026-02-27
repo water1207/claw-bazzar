@@ -143,8 +143,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             if sub_count == 0:
                 # No submissions → full refund, close immediately
                 task.status = TaskStatus.closed
-                if task.bounty and task.bounty > 0:
-                    refund_publisher(db, task.id, rate=1.0)
+                refund_publisher(db, task.id, rate=1.0)
             else:
                 task.status = TaskStatus.scoring
         if expired_open:
@@ -208,36 +207,36 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 task.status = TaskStatus.challenge_window
 
                 # Lock 95% bounty into escrow contract at start of challenge window
-                if task.bounty and task.bounty > 0:
-                    try:
-                        from .models import User
-                        winner_sub = db.query(Submission).filter(
-                            Submission.id == best.id
-                        ).first()
-                        winner_user = db.query(User).filter(
-                            User.id == winner_sub.worker_id
-                        ).first() if winner_sub else None
-                        if winner_user:
-                            escrow_amount = round(task.bounty * 0.95, 6)
-                            incentive = 0
-                            tx_hash = create_challenge_onchain(
-                                task.id, winner_user.wallet, escrow_amount, incentive
-                            )
-                            task.escrow_tx_hash = tx_hash
-                    except Exception as e:
-                        print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
-                        # Revert: do NOT enter challenge_window if escrow lock failed
-                        task.winner_submission_id = None
-                        task.challenge_window_end = None
-                        task.status = TaskStatus.scoring
-                        continue
+                try:
+                    from .models import User
+                    winner_sub = db.query(Submission).filter(
+                        Submission.id == best.id
+                    ).first()
+                    winner_user = db.query(User).filter(
+                        User.id == winner_sub.worker_id
+                    ).first() if winner_sub else None
+                    if winner_user:
+                        escrow_amount = round(task.bounty * 0.95, 6)
+                        incentive = 0
+                        deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
+                        tx_hash = create_challenge_onchain(
+                            task.id, winner_user.wallet, escrow_amount, incentive, deposit_amount
+                        )
+                        task.escrow_tx_hash = tx_hash
+                except Exception as e:
+                    print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
+                    # Revert: do NOT enter challenge_window if escrow lock failed
+                    task.winner_submission_id = None
+                    task.challenge_window_end = None
+                    task.status = TaskStatus.scoring
+                    continue
             else:
                 # No qualifying submissions → 95% refund if there were submissions, close
                 task.status = TaskStatus.closed
                 has_subs = db.query(Submission).filter(
                     Submission.task_id == task.id
                 ).count() > 0
-                if task.bounty and task.bounty > 0 and has_subs:
+                if has_subs:
                     refund_publisher(db, task.id, rate=0.95)
         if scoring_tasks:
             db.commit()
@@ -261,8 +260,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     _apply_event(db, task.publisher_id, _TET.publisher_completed,
                                  task_bounty=task.bounty or 0.0, task_id=task.id)
                 # Release bounty via contract (no challengers, empty verdicts)
-                if task.bounty and task.bounty > 0:
-                    _resolve_via_contract(db, task, verdicts=[])
+                _resolve_via_contract(db, task, verdicts=[])
                 db.commit()
             else:
                 # Try jury-based arbitration first; fall back to stub
@@ -372,32 +370,31 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                     task_bounty=task.bounty or 0.0, task_id=task.id)
 
     # Resolve on-chain: distribute bounty + deposits + arbiter rewards
-    if task.bounty and task.bounty > 0:
-        verdicts = []
-        for c in challenges:
-            if c.challenger_wallet:
-                result_map = {
-                    ChallengeVerdict.upheld: 0,
-                    ChallengeVerdict.rejected: 1,
-                    ChallengeVerdict.malicious: 2,
-                }
-                # Per-challenge arbiter wallets
-                jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
-                is_deadlock = any(v.coherence_status == "neutral" for v in jury_votes)
-                if is_deadlock:
-                    arbiter_ids = [v.arbiter_user_id for v in jury_votes if v.vote is not None]
-                else:
-                    arbiter_ids = [v.arbiter_user_id for v in jury_votes
-                                   if v.coherence_status == "coherent"]
-                arbiter_users = db.query(User).filter(User.id.in_(arbiter_ids)).all() if arbiter_ids else []
-                arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
+    verdicts = []
+    for c in challenges:
+        if c.challenger_wallet:
+            result_map = {
+                ChallengeVerdict.upheld: 0,
+                ChallengeVerdict.rejected: 1,
+                ChallengeVerdict.malicious: 2,
+            }
+            # Per-challenge arbiter wallets
+            jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
+            is_deadlock = any(v.coherence_status == "neutral" for v in jury_votes)
+            if is_deadlock:
+                arbiter_ids = [v.arbiter_user_id for v in jury_votes if v.vote is not None]
+            else:
+                arbiter_ids = [v.arbiter_user_id for v in jury_votes
+                               if v.coherence_status == "coherent"]
+            arbiter_users = db.query(User).filter(User.id.in_(arbiter_ids)).all() if arbiter_ids else []
+            arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
 
-                verdicts.append({
-                    "challenger": c.challenger_wallet,
-                    "result": result_map.get(c.verdict, 1),
-                    "arbiters": arbiter_wallets,
-                })
-        _resolve_via_contract(db, task, verdicts)
+            verdicts.append({
+                "challenger": c.challenger_wallet,
+                "result": result_map.get(c.verdict, 1),
+                "arbiters": arbiter_wallets,
+            })
+    _resolve_via_contract(db, task, verdicts)
 
     # Settle arbiter reputation via coherence rate
     from .services.trust import compute_coherence_delta
