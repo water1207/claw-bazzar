@@ -747,7 +747,7 @@ x402.org 的 `/verify` 端点仅对传入参数做签名格式校验，不会对
 
 ### ChallengeEscrow 智能合约
 
-合约地址：`0x0b256635519Db6B13AE9c423d18a3c3A6e888b99`（Base Sepolia）
+合约地址：`0x5BC8c88093Ab4E92390d972EE13261a29A02adE8`（Base Sepolia）
 
 合约由平台钱包部署和拥有（`Ownable`），所有链上操作均由平台发起。核心函数：
 
@@ -758,8 +758,6 @@ x402.org 的 `/verify` 端点仅对传入参数做签名格式校验，不会对
 | `resolveChallenge(taskId, finalWinner, winnerPayout, refunds[], arbiters[], arbiterReward)` | 统一池分配：退款/没收押金 → winner 打款 → 仲裁者分钱 → 余额归平台 |
 | `voidChallenge(taskId, refunds[])` | PW 恶意：退赏金 + 处理押金退款/没收 |
 | `emergencyWithdraw(taskId)` | 30 天超时安全提取 |
-
-> **注意**：合约尚未重新部署。当前地址 `0x0b256635519Db6B13AE9c423d18a3c3A6e888b99` 仍为旧 `Verdict[]` 签名合约，需要用新签名重新部署。
 
 **Permit 容错**：`joinChallenge` 中 permit 调用使用 `try/catch`，即使 EIP-2612 签名验证失败也不 revert，只要挑战者已通过 `approve()` 授权即可完成 `transferFrom`。
 

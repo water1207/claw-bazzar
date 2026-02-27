@@ -69,7 +69,7 @@ quality_first 赏金全程通过 ChallengeEscrow 智能合约结算（统一池�
 5. No challengers → `resolveChallenge(task, winner, payout, [], [], 0)` 空裁决释放赏金
 
 Contract: `contracts/src/ChallengeEscrow.sol` (Foundry, Solidity 0.8.20, OpenZeppelin Ownable)
-Address: `0x0b256635519Db6B13AE9c423d18a3c3A6e888b99` (Base Sepolia)
+Address: `0x5BC8c88093Ab4E92390d972EE13261a29A02adE8` (Base Sepolia)
 
 ### quality_first lifecycle phases
 
