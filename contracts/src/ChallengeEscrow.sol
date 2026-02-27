@@ -31,13 +31,19 @@ contract ChallengeEscrow is Ownable {
         address[] arbiters;  // per-challenge majority arbiter addresses
     }
 
+    struct ChallengerRefund {
+        address challenger;
+        bool refund;  // true = return deposit, false = forfeit (malicious)
+    }
+
     mapping(bytes32 => ChallengeInfo) public challenges;
     mapping(bytes32 => mapping(address => bool)) public challengers;
     mapping(bytes32 => mapping(address => uint256)) public challengerDeposits;
+    mapping(bytes32 => address[]) public challengerList;
 
     event ChallengeCreated(bytes32 indexed taskId, address winner, uint256 bounty);
     event ChallengerJoined(bytes32 indexed taskId, address challenger);
-    event ChallengeResolved(bytes32 indexed taskId, address finalWinner);
+    event ChallengeResolved(bytes32 indexed taskId, address finalWinner, uint8 verdict);
 
     constructor(address _usdc) Ownable(msg.sender) {
         usdc = IERC20(_usdc);
@@ -103,6 +109,7 @@ contract ChallengeEscrow is Ownable {
         challengerDeposits[taskId][challenger] = depositAmount;
         info.totalDeposits += depositAmount;
         info.challengerCount++;
+        challengerList[taskId].push(challenger);
 
         emit ChallengerJoined(taskId, challenger);
     }
@@ -200,7 +207,66 @@ contract ChallengeEscrow is Ownable {
         }
 
         info.resolved = true;
-        emit ChallengeResolved(taskId, finalWinner);
+        emit ChallengeResolved(taskId, finalWinner, hasUpheld ? 0 : 1);
+    }
+
+    /// @dev Process challenger refunds/forfeits. Returns (totalRefunded, totalArbiterBonus).
+    function _processVoidRefunds(
+        bytes32 taskId,
+        ChallengerRefund[] calldata refunds
+    ) internal returns (uint256 totalRefunded, uint256 totalArbiterBonus) {
+        for (uint256 i = 0; i < refunds.length; i++) {
+            address chAddr = refunds[i].challenger;
+            uint256 dep = challengerDeposits[taskId][chAddr];
+            if (dep == 0) continue;
+
+            if (refunds[i].refund) {
+                require(usdc.transfer(chAddr, dep), "Deposit refund failed");
+                totalRefunded += dep;
+            } else {
+                totalArbiterBonus += (dep * ARBITER_DEPOSIT_BPS) / 10000;
+            }
+            challengerDeposits[taskId][chAddr] = 0;
+        }
+    }
+
+    /// @notice Void a challenge: refund publisher, handle challenger deposits, pay arbiters.
+    function voidChallenge(
+        bytes32 taskId,
+        address publisher,
+        uint256 publisherRefund,
+        ChallengerRefund[] calldata refunds,
+        address[] calldata arbiters,
+        uint256 arbiterReward
+    ) external onlyOwner {
+        ChallengeInfo storage info = challenges[taskId];
+        require(info.bounty > 0, "Challenge not found");
+        require(!info.resolved, "Already resolved");
+
+        uint256 totalFunds = info.bounty + info.totalDeposits + info.serviceFee * info.challengerCount;
+        uint256 totalSent = 0;
+
+        // 1. Process each challenger
+        (uint256 refunded, uint256 arbiterBonus) = _processVoidRefunds(taskId, refunds);
+        totalSent += refunded;
+
+        // 2. Refund publisher
+        if (publisherRefund > 0) {
+            require(usdc.transfer(publisher, publisherRefund), "Publisher refund failed");
+            totalSent += publisherRefund;
+        }
+
+        // 3. Pay arbiters (base reward + bonus from malicious deposits)
+        totalSent += _splitAmong(arbiters, arbiterReward + arbiterBonus);
+
+        // 4. Platform gets remainder (service fees + forfeited deposit remainder + rounding)
+        uint256 platformAmount = totalFunds - totalSent;
+        if (platformAmount > 0) {
+            require(usdc.transfer(owner(), platformAmount), "Platform transfer failed");
+        }
+
+        info.resolved = true;
+        emit ChallengeResolved(taskId, address(0), 3); // 3 = voided
     }
 
     function emergencyWithdraw(bytes32 taskId) external onlyOwner {

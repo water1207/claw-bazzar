@@ -184,7 +184,7 @@ contract ChallengeEscrowTest is Test {
         assertEq(usdc.balanceOf(platform) - platformBefore, BOUNTY - PAYOUT_A);
     }
 
-    // --- resolveChallenge: rejected (no upheld) → winner gets 10% compensation ---
+    // --- resolveChallenge: rejected (no upheld) --- winner gets 10% compensation ---
 
     function test_resolve_rejected_no_upheld() public {
         bytes32 taskId = keccak256("task-1");
@@ -218,7 +218,7 @@ contract ChallengeEscrowTest is Test {
         assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
     }
 
-    // --- resolveChallenge: upheld → 100% deposit refund, arbiter from incentive ---
+    // --- resolveChallenge: upheld --- 100% deposit refund, arbiter from incentive ---
 
     function test_resolve_upheld() public {
         bytes32 taskId = keccak256("task-1");
@@ -300,7 +300,7 @@ contract ChallengeEscrowTest is Test {
         assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
     }
 
-    // --- resolveChallenge: multiple rejected, no upheld → winner compensation ---
+    // --- resolveChallenge: multiple rejected, no upheld --- winner compensation ---
 
     function test_resolve_multiple_rejected_no_upheld() public {
         bytes32 taskId = keccak256("task-1");
@@ -488,5 +488,133 @@ contract ChallengeEscrowTest is Test {
         // Platform gets: bounty + totalDeposits + serviceFee * 2
         uint256 expected = BOUNTY + dep1 + dep2 + escrow.SERVICE_FEE() * 2;
         assertEq(usdc.balanceOf(platform) - platformBefore, expected);
+    }
+
+    // --- challengerList tests ---
+
+    function test_challengerList_populated() public {
+        bytes32 taskId = keccak256("task-list");
+        address c1 = address(0x2);
+        address c2 = address(0x3);
+
+        _createChallenge(taskId);
+        _joinChallenger(taskId, c1);
+        _joinChallenger(taskId, c2);
+
+        assertEq(escrow.challengerList(taskId, 0), c1);
+        assertEq(escrow.challengerList(taskId, 1), c2);
+    }
+
+    // --- voidChallenge: all challengers refunded (happy path) ---
+
+    function test_voidChallenge_all_refunded() public {
+        bytes32 taskId = keccak256("task-void-1");
+        address publisher = address(0xBB);
+        address c1 = address(0x2);
+        address c2 = address(0x3);
+
+        _createChallenge(taskId);
+        _joinChallenger(taskId, c1);
+        _joinChallenger(taskId, c2);
+
+        ChallengeEscrow.ChallengerRefund[] memory refunds = new ChallengeEscrow.ChallengerRefund[](2);
+        refunds[0] = ChallengeEscrow.ChallengerRefund(c1, true);
+        refunds[1] = ChallengeEscrow.ChallengerRefund(c2, true);
+
+        uint256 c1Before = usdc.balanceOf(c1);
+        uint256 c2Before = usdc.balanceOf(c2);
+        uint256 publisherBefore = usdc.balanceOf(publisher);
+        uint256 platformBefore = usdc.balanceOf(platform);
+
+        escrow.voidChallenge(taskId, publisher, BOUNTY, refunds, _twoArbiters(), 0);
+
+        // Both challengers get full deposit refund
+        assertEq(usdc.balanceOf(c1) - c1Before, DEPOSIT);
+        assertEq(usdc.balanceOf(c2) - c2Before, DEPOSIT);
+        // Publisher gets bounty refund
+        assertEq(usdc.balanceOf(publisher) - publisherBefore, BOUNTY);
+        // Arbiters get nothing (arbiterReward=0, no malicious forfeit bonus)
+        assertEq(usdc.balanceOf(arbiter1), 0);
+        assertEq(usdc.balanceOf(arbiter2), 0);
+        // Platform gets service fees only
+        assertEq(
+            usdc.balanceOf(platform) - platformBefore,
+            BOUNTY + DEPOSIT * 2 + escrow.SERVICE_FEE() * 2 - BOUNTY - DEPOSIT * 2
+        );
+    }
+
+    // --- voidChallenge: mixed refund/forfeit ---
+
+    function test_voidChallenge_mixed_refund_forfeit() public {
+        bytes32 taskId = keccak256("task-void-2");
+        address publisher = address(0xBB);
+        address c1 = address(0x2); // justified - refund
+        address c2 = address(0x3); // malicious - forfeit
+
+        _createChallenge(taskId);
+        _joinChallenger(taskId, c1);
+        _joinChallenger(taskId, c2);
+
+        ChallengeEscrow.ChallengerRefund[] memory refunds = new ChallengeEscrow.ChallengerRefund[](2);
+        refunds[0] = ChallengeEscrow.ChallengerRefund(c1, true);   // refund
+        refunds[1] = ChallengeEscrow.ChallengerRefund(c2, false);  // forfeit (malicious)
+
+        uint256 c1Before = usdc.balanceOf(c1);
+        uint256 c2Before = usdc.balanceOf(c2);
+        uint256 publisherBefore = usdc.balanceOf(publisher);
+        uint256 platformBefore = usdc.balanceOf(platform);
+
+        // arbiterReward = 500_000 (0.5 USDC base reward)
+        escrow.voidChallenge(taskId, publisher, BOUNTY, refunds, _twoArbiters(), 500_000);
+
+        // c1 (justified): gets full deposit refund
+        assertEq(usdc.balanceOf(c1) - c1Before, DEPOSIT);
+        // c2 (malicious): gets nothing
+        assertEq(usdc.balanceOf(c2), c2Before);
+        // Publisher gets bounty refund
+        assertEq(usdc.balanceOf(publisher) - publisherBefore, BOUNTY);
+
+        // Arbiters: base 500_000 + 30% of c2's deposit 300_000 = 800_000 / 2 = 400_000 each
+        uint256 perArbiter = (500_000 + DEPOSIT * 30 / 100) / 2;
+        assertEq(usdc.balanceOf(arbiter1), perArbiter);
+        assertEq(usdc.balanceOf(arbiter2), perArbiter);
+
+        // Platform gets remainder
+        uint256 totalFunds = BOUNTY + DEPOSIT * 2 + escrow.SERVICE_FEE() * 2;
+        uint256 totalSent = BOUNTY + DEPOSIT + perArbiter * 2;
+        assertEq(usdc.balanceOf(platform) - platformBefore, totalFunds - totalSent);
+    }
+
+    // --- voidChallenge: reverts if already resolved ---
+
+    function test_voidChallenge_reverts_already_resolved() public {
+        bytes32 taskId = keccak256("task-void-3");
+        address publisher = address(0xBB);
+
+        _createChallenge(taskId);
+
+        ChallengeEscrow.ChallengerRefund[] memory refunds = new ChallengeEscrow.ChallengerRefund[](0);
+        address[] memory arbiters = new address[](0);
+
+        // First void succeeds
+        escrow.voidChallenge(taskId, publisher, BOUNTY, refunds, arbiters, 0);
+
+        // Second void reverts
+        vm.expectRevert("Already resolved");
+        escrow.voidChallenge(taskId, publisher, BOUNTY, refunds, arbiters, 0);
+    }
+
+    // --- voidChallenge: reverts for non-owner ---
+
+    function test_voidChallenge_reverts_nonowner() public {
+        bytes32 taskId = keccak256("task-void-4");
+        _createChallenge(taskId);
+
+        ChallengeEscrow.ChallengerRefund[] memory refunds = new ChallengeEscrow.ChallengerRefund[](0);
+        address[] memory arbiters = new address[](0);
+
+        vm.prank(address(0x999));
+        vm.expectRevert();
+        escrow.voidChallenge(taskId, address(0xBB), BOUNTY, refunds, arbiters, 0);
     }
 }
