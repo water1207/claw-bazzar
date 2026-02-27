@@ -62,7 +62,7 @@ def test_join_challenge_onchain():
 
 
 def test_resolve_challenge_onchain():
-    """Should call contract.resolveChallenge with verdicts."""
+    """Should call contract.resolveChallenge with unified pool params."""
     mock_w3 = MagicMock()
     mock_account = MagicMock()
     mock_account.address = "0x" + "aa" * 20
@@ -79,6 +79,9 @@ def test_resolve_challenge_onchain():
             "task-1",
             "0x" + "cc" * 20,
             8.0,
-            [{"challenger": "0x" + "dd" * 20, "result": 0}, {"challenger": "0x" + "ee" * 20, "result": 1}],
+            [{"challenger": "0x" + "dd" * 20, "refund": True},
+             {"challenger": "0x" + "ee" * 20, "refund": False}],
+            ["0x" + "ff" * 20],
+            0.3,
         )
     assert tx is not None

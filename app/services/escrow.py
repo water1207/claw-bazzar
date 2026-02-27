@@ -64,14 +64,15 @@ _MINIMAL_ESCROW_ABI = [
             {"name": "finalWinner", "type": "address"},
             {"name": "winnerPayout", "type": "uint256"},
             {
-                "name": "verdicts",
+                "name": "refunds",
                 "type": "tuple[]",
                 "components": [
                     {"name": "challenger", "type": "address"},
-                    {"name": "result", "type": "uint8"},
-                    {"name": "arbiters", "type": "address[]"},
+                    {"name": "refund", "type": "bool"},
                 ],
             },
+            {"name": "arbiters", "type": "address[]"},
+            {"name": "arbiterReward", "type": "uint256"},
         ],
         "name": "resolveChallenge",
         "outputs": [],
@@ -154,8 +155,8 @@ def check_usdc_balance(wallet_address: str) -> float:
 def create_challenge_onchain(
     task_id: str, winner_wallet: str, bounty: float, incentive: float
 ) -> str:
-    """Call ChallengeEscrow.createChallenge(). Locks bounty (90%) into escrow.
-    bounty = task.bounty * 0.95, incentive = 0.
+    """Call ChallengeEscrow.createChallenge(). Locks bounty + incentive into escrow.
+    bounty = task.bounty * 0.90, incentive = task.bounty * 0.05.
     Returns tx hash."""
     w3, contract = _get_w3_and_contract()
     task_bytes = _task_id_to_bytes32(task_id)
@@ -238,28 +239,33 @@ def resolve_challenge_onchain(
     task_id: str,
     final_winner_wallet: str,
     winner_payout: float,
-    verdicts: list[dict],
+    refunds: list[dict],
+    arbiter_wallets: list[str],
+    arbiter_reward: float,
 ) -> str:
-    """Call ChallengeEscrow.resolveChallenge() V2 with per-challenge arbiter lists.
-    verdicts: [{"challenger": "0x...", "result": 0|1|2, "arbiters": ["0x...", ...]}, ...]
+    """Call ChallengeEscrow.resolveChallenge() with unified pool distribution.
+    refunds: [{"challenger": "0x...", "refund": True/False}, ...]
     Returns tx hash."""
     w3, contract = _get_w3_and_contract()
     task_bytes = _task_id_to_bytes32(task_id)
     winner_payout_wei = int(winner_payout * 10**6)
+    arbiter_reward_wei = int(arbiter_reward * 10**6)
 
-    verdict_tuples = [
+    refund_tuples = [
         (
-            Web3.to_checksum_address(v["challenger"]),
-            v["result"],
-            [Web3.to_checksum_address(a) for a in v.get("arbiters", [])],
+            Web3.to_checksum_address(r["challenger"]),
+            r["refund"],
         )
-        for v in verdicts
+        for r in refunds
     ]
+    arbiter_addrs = [Web3.to_checksum_address(a) for a in arbiter_wallets]
 
     fn = contract.functions.resolveChallenge(
         task_bytes,
         Web3.to_checksum_address(final_winner_wallet),
         winner_payout_wei,
-        verdict_tuples,
+        refund_tuples,
+        arbiter_addrs,
+        arbiter_reward_wei,
     )
     return _send_tx(w3, fn, f"resolveChallenge({task_id})")

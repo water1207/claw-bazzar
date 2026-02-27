@@ -57,13 +57,16 @@ oracle/dimension_score.py  → Parallelized horizontal comparison scoring
 
 ### Challenge escrow (ChallengeEscrow contract)
 
-quality_first 赏金全程通过 ChallengeEscrow 智能合约结算：
-1. `createChallenge()` — Phase 2 结束时，平台锁定 bounty×95% 到合约（含 10% 挑战激励）
+quality_first 赏金全程通过 ChallengeEscrow 智能合约结算（统一池分配模型）：
+1. `createChallenge()` — Phase 2 结束时，平台锁定 bounty×95% 到合约（含 5% 挑战激励 incentive）
 2. `joinChallenge()` — 挑战期内，Relayer 用 try/catch Permit + transferFrom 收取押金 + 0.01 USDC 服务费
-3. `resolveChallenge(verdicts, arbiters)` — 仲裁完成后分配：
-   - 赏金：upheld → 90% 给挑战者；否则 → 80% 给原 winner + 10% 退回平台
-   - 押金：30% 给仲裁者（仅多数方，平分），upheld → 70% 退回挑战者，rejected/malicious → 70% 归平台
-4. No challengers → `resolveChallenge([], [])` 空裁决释放赏金
+3. `resolveChallenge(taskId, finalWinner, winnerPayout, refunds[], arbiters[], arbiterReward)` — 统一池分配：
+   - 押金处理：upheld 挑战者全额退回，其余没收进统一池
+   - 赢家赏金：后端按信誉等级计算 winnerPayout（PW 维持 → bounty×rate，挑战者胜出 → bounty×rate + incentive 余额）
+   - 仲裁者奖励：统一池 30% + incentive 补贴（挑战者胜出时，从 incentive 支付胜出者押金的 30%）
+   - 平台收取剩余（服务费 + 没收池 70% + 平台费差额）
+4. `voidChallenge()` — PW 恶意时：退还 publisher、分配恶意者没收押金
+5. No challengers → `resolveChallenge(task, winner, payout, [], [], 0)` 空裁决释放赏金
 
 Contract: `contracts/src/ChallengeEscrow.sol` (Foundry, Solidity 0.8.20, OpenZeppelin Ownable)
 Address: `0x0b256635519Db6B13AE9c423d18a3c3A6e888b99` (Base Sepolia)
@@ -73,8 +76,9 @@ Address: `0x0b256635519Db6B13AE9c423d18a3c3A6e888b99` (Base Sepolia)
 1. **open**: Accepts submissions; oracle runs gate check + individual scoring per-dimension. Gate pass → status `gate_passed` with structured revision suggestions; gate fail → status `gate_failed`. Scores hidden from API.
 2. **scoring**: Deadline passed; scheduler calls `batch_score_submissions()` which selects top 3 gate_passed submissions by `penalized_total`, then runs horizontal comparison per-dimension (parallelized). Scores still hidden.
 3. **challenge_window**: All scored; winner selected, `challenge_window_end` set. Scores now visible.
-4. **arbitrating**: Jury selected (3 arbiters), 6-hour voting timeout. Coherence-based trust scoring after all challenges resolved.
+4. **arbitrating**: Jury selected (3 arbiters), 6-hour voting timeout. Hawkish trust matrix scoring after all challenges resolved.
 5. **closed**: Challenge resolution or direct close.
+6. **voided**: PW malicious detected (≥2 arbiter tags) → publisher refunded, task voided.
 
 ### Submission status flow
 
@@ -116,19 +120,31 @@ Four-tier system (S/A/B/C) based on `trust_score` (default 500, tier A):
 | B | All | 30% | 25% |
 | C | Banned | — | — |
 
-Trust events: `worker_won`, `worker_consolation`, `challenger_*`, `arbiter_coherence`, `publisher_completed`, `stake_bonus`, `stake_slash`, `weekly_leaderboard`, etc.
+Trust events: `worker_won`, `worker_consolation`, `challenger_*`, `arbiter_majority`, `arbiter_minority`, `arbiter_tp_malicious`, `arbiter_fp_malicious`, `arbiter_fn_malicious`, `publisher_completed`, `stake_bonus`, `stake_slash`, `weekly_leaderboard`, etc.
 
-**Arbiter coherence**: Trust delta deferred to task-level after all challenges resolved. Coherence rate (majority/total votes) determines delta: >80% → +3, 60-80% → +2, 40-60% → 0, <40% → -10, 0% with ≥2 votes → -30.
+**Hawkish trust matrix** (两维谢林点共识，merged jury path):
+- 主维度（选赢家）：`arbiter_majority` +2, `arbiter_minority` -15, deadlock 0（不发事件）
+- 副维度（抓恶意）：基于 MaliciousTag 共识（≥2 票）
+  - TP 精准排雷 `arbiter_tp_malicious` +5/target
+  - FP 防卫过当 `arbiter_fp_malicious` -1/target
+  - FN 严重漏判 `arbiter_fn_malicious` -10/target
+
+**Legacy arbiter coherence** (per-challenge ArbiterVote path): `arbiter_coherence` delta via `compute_coherence_delta()`. >80% → +3, 60-80% → +2, 40-60% → 0, <40% → -10, 0% with ≥2 → -30.
 
 Key services: `app/services/trust.py`, `app/services/arbiter_pool.py`, `app/services/staking.py`
 
 ### Jury-based arbitration
 
-1. `select_jury()` — Selects 3 random arbiters (excluding task participants)
-2. Arbiters submit votes (upheld/rejected/malicious) within 6-hour window
-3. `resolve_jury()` — Detects 2:1, 3:0, or 1:1:1 deadlock (defaults to rejected)
-4. Only majority arbiters' wallets passed to `resolveChallenge()` for on-chain reward
+**Merged jury path** (JuryBallot + MaliciousTag):
+1. `select_jury()` — Selects 3 random arbiters per task (excluding participants)
+2. Arbiters submit merged votes: single-select winner + multi-select malicious tags
+3. `resolve_merged_jury()` — Determines winner, verdicts, PW malicious detection (≥2 tags → VOID)
+4. `_settle_after_arbitration()` — Unified pool financial settlement + hawkish trust matrix
 5. Non-voters penalized with `arbiter_timeout` trust event
+
+**Legacy per-challenge path** (ArbiterVote):
+1. `resolve_jury()` per challenge — Detects 2:1, 3:0, or 1:1:1 deadlock (defaults to rejected)
+2. Coherence-based trust scoring via `compute_coherence_delta()`
 
 ### x402 payment flow
 

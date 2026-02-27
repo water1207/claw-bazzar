@@ -11,8 +11,7 @@ contract ChallengeEscrow is Ownable {
 
     uint256 public constant SERVICE_FEE = 10_000; // 0.01 USDC (6 decimals)
     uint256 public constant EMERGENCY_TIMEOUT = 30 days;
-    uint256 public constant ARBITER_DEPOSIT_BPS = 3000; // 30% of each deposit → arbiters
-    uint256 public constant WINNER_COMPENSATION_BPS = 1000; // 10% of deposit → original winner
+    uint256 public constant ARBITER_DEPOSIT_BPS = 3000; // 30% of forfeited deposits → arbiters
 
     struct ChallengeInfo {
         address winner;
@@ -23,12 +22,6 @@ contract ChallengeEscrow is Ownable {
         bool    resolved;
         uint256 createdAt;
         uint256 totalDeposits;    // Sum of all challenger deposits (for emergencyWithdraw)
-    }
-
-    struct Verdict {
-        address challenger;
-        uint8   result;      // 0=upheld, 1=rejected, 2=malicious
-        address[] arbiters;  // per-challenge majority arbiter addresses
     }
 
     struct ChallengerRefund {
@@ -124,94 +117,51 @@ contract ChallengeEscrow is Ownable {
         return per * addrs.length;
     }
 
-    /// @notice Resolve challenge: distribute bounty + deposits per new V2 rules.
-    /// @param winnerPayout Amount from main bounty for finalWinner (backend-computed by trust tier).
-    ///        When hasUpheld: must be <= bounty - incentive (incentive reserved for arbiter + winner bonus).
-    ///        When !hasUpheld: must be <= bounty.
+    /// @notice Resolve challenge: unified pool distribution.
+    /// @param winnerPayout Backend-computed amount for finalWinner (bounty*rate + incentive remainder).
+    /// @param refunds Per-challenger refund decisions (true=refund deposit, false=forfeit to pool).
+    /// @param arbiters Majority arbiter addresses (or all if deadlock) to split reward.
+    /// @param arbiterReward Total arbiter reward (backend-computed: 30% of forfeited pool + incentive subsidy).
     function resolveChallenge(
         bytes32 taskId,
         address finalWinner,
         uint256 winnerPayout,
-        Verdict[] memory verdicts
+        ChallengerRefund[] calldata refunds,
+        address[] calldata arbiters,
+        uint256 arbiterReward
     ) external onlyOwner {
         ChallengeInfo storage info = challenges[taskId];
         require(info.bounty > 0, "Challenge not found");
         require(!info.resolved, "Already resolved");
 
-        // Detect if any verdict is upheld
-        bool hasUpheld = false;
-        for (uint256 i = 0; i < verdicts.length; i++) {
-            if (verdicts[i].result == 0) { hasUpheld = true; break; }
-        }
-
-        // Validate payout cap
-        if (hasUpheld) {
-            require(winnerPayout <= info.bounty - info.incentive, "Payout exceeds main bounty");
-        } else {
-            require(winnerPayout <= info.bounty, "Payout exceeds bounty");
-        }
-
         uint256 totalFunds = info.bounty + info.totalDeposits + info.serviceFee * info.challengerCount;
         uint256 totalSent = 0;
 
-        // 1. Main bounty → finalWinner
+        // 1. Process challenger refunds/forfeits
+        (uint256 refunded, ) = _processRefunds(taskId, refunds);
+        totalSent += refunded;
+
+        // 2. Winner payout (bounty portion + incentive remainder)
         if (winnerPayout > 0) {
-            require(usdc.transfer(finalWinner, winnerPayout), "Bounty transfer failed");
+            require(usdc.transfer(finalWinner, winnerPayout), "Winner payout failed");
             totalSent += winnerPayout;
         }
 
-        uint256 incentiveUsed = 0;
-        uint256 winnerBonus = 0;
+        // 3. Arbiter reward (from forfeited pool 30% + incentive subsidy)
+        totalSent += _splitAmong(arbiters, arbiterReward);
 
-        // 2. Per-verdict deposit distribution
-        for (uint256 i = 0; i < verdicts.length; i++) {
-            require(challengers[taskId][verdicts[i].challenger], "Not a challenger");
-            uint256 dep = challengerDeposits[taskId][verdicts[i].challenger];
-
-            if (verdicts[i].result == 0) {
-                // UPHELD: 100% deposit refund to challenger
-                require(usdc.transfer(verdicts[i].challenger, dep), "Deposit refund failed");
-                totalSent += dep;
-                // Arbiter reward from incentive
-                uint256 arbReward = dep * ARBITER_DEPOSIT_BPS / 10000;
-                incentiveUsed += arbReward;
-                totalSent += _splitAmong(verdicts[i].arbiters, arbReward);
-            } else {
-                // REJECTED or MALICIOUS
-                uint256 arbShare = dep * ARBITER_DEPOSIT_BPS / 10000;
-                totalSent += _splitAmong(verdicts[i].arbiters, arbShare);
-                if (!hasUpheld) {
-                    // 10% winner compensation
-                    uint256 comp = dep * WINNER_COMPENSATION_BPS / 10000;
-                    winnerBonus += comp;
-                }
-                // Remaining goes to platform (via totalFunds - totalSent)
-            }
-        }
-
-        // 3. Incentive remainder → winner bonus (only when upheld)
-        if (hasUpheld && info.incentive > incentiveUsed) {
-            winnerBonus += info.incentive - incentiveUsed;
-        }
-
-        // 4. Send accumulated winner bonus
-        if (winnerBonus > 0) {
-            require(usdc.transfer(finalWinner, winnerBonus), "Winner bonus transfer failed");
-            totalSent += winnerBonus;
-        }
-
-        // 5. Platform gets everything remaining (service fees + forfeited deposits + rounding)
+        // 4. Platform gets remainder (service fees + forfeited deposit remainder + rounding)
         uint256 platformAmount = totalFunds - totalSent;
         if (platformAmount > 0) {
             require(usdc.transfer(owner(), platformAmount), "Platform transfer failed");
         }
 
         info.resolved = true;
-        emit ChallengeResolved(taskId, finalWinner, hasUpheld ? 0 : 1);
+        emit ChallengeResolved(taskId, finalWinner, refunded > 0 ? 0 : 1);
     }
 
-    /// @dev Process challenger refunds/forfeits. Returns (totalRefunded, totalArbiterBonus).
-    function _processVoidRefunds(
+    /// @dev Process challenger deposit refunds/forfeits. Returns (totalRefunded, totalArbiterBonus).
+    function _processRefunds(
         bytes32 taskId,
         ChallengerRefund[] calldata refunds
     ) internal returns (uint256 totalRefunded, uint256 totalArbiterBonus) {
@@ -247,7 +197,7 @@ contract ChallengeEscrow is Ownable {
         uint256 totalSent = 0;
 
         // 1. Process each challenger
-        (uint256 refunded, uint256 arbiterBonus) = _processVoidRefunds(taskId, refunds);
+        (uint256 refunded, uint256 arbiterBonus) = _processRefunds(taskId, refunds);
         totalSent += refunded;
 
         // 2. Refund publisher

@@ -732,15 +732,17 @@ class TestQualityFirstChallengeE2E:
         task.winner_submission_id = sub.id
         db.commit()
 
-        with patch("app.services.escrow.resolve_challenge_onchain", return_value="0xrelease") as mock_resolve:
+        with patch("app.scheduler.resolve_challenge_onchain", return_value="0xrelease") as mock_resolve:
             quality_first_lifecycle(db=db)
 
         db.refresh(task)
         assert task.status == TaskStatus.closed
-        # resolve_challenge_onchain called with empty verdicts (no challengers)
+        # resolve_challenge_onchain called with empty refunds (no challengers)
         mock_resolve.assert_called_once()
         call_args = mock_resolve.call_args
-        assert call_args[0][3] == []  # verdicts=[]
+        assert call_args[0][3] == []  # refunds=[]
+        assert call_args[0][4] == []  # arbiter_wallets=[]
+        assert call_args[0][5] == 0   # arbiter_reward=0
 
 
 # ===========================================================================

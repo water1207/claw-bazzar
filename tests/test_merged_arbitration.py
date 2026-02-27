@@ -453,3 +453,413 @@ def test_get_jury_ballots_reveals_after_complete(client_with_db):
     assert resp.status_code == 200
     data = resp.json()
     assert all(b["winner_submission_id"] == ch1_sub.id for b in data)
+
+
+# --- Hawkish Trust Matrix Tests ---
+
+def test_hawkish_tp_malicious(db_session):
+    """True Positive: arbiter flags malicious + consensus agrees → +5/target."""
+    from app.models import TrustEvent
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All 3 vote for ch1, all 3 tag ch2 as malicious (consensus ≥2)
+    _vote_all(
+        db_session, task, ballots,
+        [ch1_sub.id] * 3,
+        malicious_map={0: [ch2_sub.id], 1: [ch2_sub.id], 2: [ch2_sub.id]},
+    )
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    # Each arbiter should get 1 TP event (+5)
+    for b in ballots:
+        tp_events = db_session.query(TrustEvent).filter_by(
+            user_id=b.arbiter_user_id,
+            event_type=TrustEventType.arbiter_tp_malicious,
+        ).all()
+        assert len(tp_events) == 1
+        assert tp_events[0].delta == 5.0
+
+
+def test_hawkish_fp_malicious(db_session):
+    """False Positive: arbiter flags malicious but consensus disagrees → -1/target."""
+    from app.models import TrustEvent
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All 3 vote for ch1; only arbiter 0 tags ch2 malicious (no consensus: 1 < 2)
+    _vote_all(
+        db_session, task, ballots,
+        [ch1_sub.id] * 3,
+        malicious_map={0: [ch2_sub.id]},
+    )
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    # Arbiter 0 should get 1 FP event (-1)
+    fp_events = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[0].arbiter_user_id,
+        event_type=TrustEventType.arbiter_fp_malicious,
+    ).all()
+    assert len(fp_events) == 1
+    assert fp_events[0].delta == -1.0
+
+    # Other arbiters should have no FP events
+    for b in ballots[1:]:
+        fp = db_session.query(TrustEvent).filter_by(
+            user_id=b.arbiter_user_id,
+            event_type=TrustEventType.arbiter_fp_malicious,
+        ).all()
+        assert len(fp) == 0
+
+
+def test_hawkish_fn_malicious(db_session):
+    """False Negative: consensus says malicious, arbiter missed it → -10/target."""
+    from app.models import TrustEvent
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All 3 vote for ch1; arbiters 0 and 1 tag ch2 as malicious (consensus).
+    # Arbiter 2 misses it → FN.
+    _vote_all(
+        db_session, task, ballots,
+        [ch1_sub.id] * 3,
+        malicious_map={0: [ch2_sub.id], 1: [ch2_sub.id]},
+    )
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    # Arbiter 2 should get 1 FN event (-10)
+    fn_events = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[2].arbiter_user_id,
+        event_type=TrustEventType.arbiter_fn_malicious,
+    ).all()
+    assert len(fn_events) == 1
+    assert fn_events[0].delta == -10.0
+
+    # Arbiters 0 and 1 should have TP events instead
+    for b in ballots[:2]:
+        tp = db_session.query(TrustEvent).filter_by(
+            user_id=b.arbiter_user_id,
+            event_type=TrustEventType.arbiter_tp_malicious,
+        ).all()
+        assert len(tp) == 1
+
+
+def test_hawkish_mixed_tp_fp_fn(db_session):
+    """Mixed: arbiter has TP + FP + FN in same task, verify total delta."""
+    from app.models import TrustEvent
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All 3 vote for pw_sub (PW maintained); no one wins challenger.
+    # Arbiter 0: tags ch1 malicious (consensus 2 → TP), tags ch2 malicious (consensus 1 → FP)
+    # Arbiter 1: tags ch1 malicious (consensus 2 → TP), misses ch2 (consensus 0 → no FN)
+    # Arbiter 2: misses ch1 (consensus 2 → FN), tags ch2 malicious (consensus 1 → FP)
+    #
+    # ch1 consensus = 2 (arbiter 0 + 1) → malicious
+    # ch2 consensus = 2? No, only arbiter 0 + 2 = 2. → malicious
+    _vote_all(
+        db_session, task, ballots,
+        [pw_sub.id] * 3,
+        malicious_map={
+            0: [ch1_sub.id, ch2_sub.id],  # tags both
+            1: [ch1_sub.id],              # tags ch1 only
+            2: [ch2_sub.id],              # tags ch2 only
+        },
+    )
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    # ch1: consensus=2 (arb0+arb1), ch2: consensus=2 (arb0+arb2)
+    # Arbiter 0: tagged both → TP for ch1, TP for ch2 → 2 TP events (+5 each = +10)
+    a0_tp = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[0].arbiter_user_id,
+        event_type=TrustEventType.arbiter_tp_malicious,
+    ).count()
+    assert a0_tp == 2
+
+    # Arbiter 1: tagged ch1 → TP; missed ch2 → FN
+    a1_tp = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[1].arbiter_user_id,
+        event_type=TrustEventType.arbiter_tp_malicious,
+    ).count()
+    a1_fn = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[1].arbiter_user_id,
+        event_type=TrustEventType.arbiter_fn_malicious,
+    ).count()
+    assert a1_tp == 1
+    assert a1_fn == 1
+
+    # Arbiter 2: tagged ch2 → TP; missed ch1 → FN
+    a2_tp = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[2].arbiter_user_id,
+        event_type=TrustEventType.arbiter_tp_malicious,
+    ).count()
+    a2_fn = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[2].arbiter_user_id,
+        event_type=TrustEventType.arbiter_fn_malicious,
+    ).count()
+    assert a2_tp == 1
+    assert a2_fn == 1
+
+
+def test_hawkish_deadlock_no_majority_events(db_session):
+    """1:1:1 deadlock → no arbiter_majority/minority events, only secondary dim."""
+    from app.models import TrustEvent
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # 1:1:1 deadlock
+    _vote_all(db_session, task, ballots, [pw_sub.id, ch1_sub.id, ch2_sub.id])
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    # No majority/minority events in deadlock
+    majority = db_session.query(TrustEvent).filter_by(
+        event_type=TrustEventType.arbiter_majority).count()
+    minority = db_session.query(TrustEvent).filter_by(
+        event_type=TrustEventType.arbiter_minority).count()
+    assert majority == 0
+    assert minority == 0
+
+
+def test_hawkish_majority_minority_events(db_session):
+    """2:1 consensus → majority get +2, minority get -15."""
+    from app.models import TrustEvent
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # 2:1 vote: arbiter 0,1 → ch1, arbiter 2 → pw
+    _vote_all(db_session, task, ballots, [ch1_sub.id, ch1_sub.id, pw_sub.id])
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    # Arbiter 0, 1 = majority (+2 each)
+    for b in ballots[:2]:
+        maj = db_session.query(TrustEvent).filter_by(
+            user_id=b.arbiter_user_id,
+            event_type=TrustEventType.arbiter_majority,
+        ).all()
+        assert len(maj) == 1
+        assert maj[0].delta == 2.0
+
+    # Arbiter 2 = minority (-15)
+    min_events = db_session.query(TrustEvent).filter_by(
+        user_id=ballots[2].arbiter_user_id,
+        event_type=TrustEventType.arbiter_minority,
+    ).all()
+    assert len(min_events) == 1
+    assert min_events[0].delta == -15.0
+
+
+# --- Unified Pool Distribution Tests ---
+
+def test_pool_distribution_pw_maintained_2_losers(db_session):
+    """PW maintained + 2 losing challengers: deposits pooled, 30% to majority arbiters."""
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    # Set deposit amounts on challenges
+    for c in challenges:
+        c.deposit_amount = 1.0
+        c.challenger_wallet = "0x" + "aa" * 20
+    db_session.commit()
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All 3 vote PW (3:0 consensus, PW maintained)
+    _vote_all(db_session, task, ballots, [pw_sub.id] * 3)
+
+    with patch("app.scheduler._resolve_via_contract") as mock_resolve:
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+        mock_resolve.assert_called_once()
+        args = mock_resolve.call_args[0]
+        # args: (db, task, refunds, arbiter_wallets, arbiter_reward, is_challenger_win)
+        refunds = args[2]
+        arbiter_reward = args[4]
+        is_challenger_win = args[5]
+
+        assert is_challenger_win is False
+
+        # Both challengers should have refund=False (forfeit)
+        assert len(refunds) == 2
+        for r in refunds:
+            assert r["refund"] is False
+
+        # Arbiter reward = losing_deposits * 30% = 2.0 * 0.30 = 0.6
+        assert abs(arbiter_reward - 0.6) < 1e-6
+
+
+def test_pool_distribution_challenger_wins_with_losers(db_session):
+    """Challenger A wins + 1 loser: A refunded, loser pooled, arbiter gets pool+incentive share."""
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    # Set deposit amounts
+    for c in challenges:
+        c.deposit_amount = 1.0
+    challenges[0].challenger_wallet = "0xwinner_chl"
+    challenges[1].challenger_wallet = "0xloser_chl"
+    db_session.commit()
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # 2:1 vote for ch1 → ch1 wins
+    _vote_all(db_session, task, ballots, [ch1_sub.id, ch1_sub.id, pw_sub.id])
+
+    with patch("app.scheduler._resolve_via_contract") as mock_resolve:
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+        mock_resolve.assert_called_once()
+        args = mock_resolve.call_args[0]
+        refunds = args[2]
+        arbiter_reward = args[4]
+        is_challenger_win = args[5]
+
+        assert is_challenger_win is True
+
+        # Upheld challenger refund=True, rejected refund=False
+        upheld_refund = next(r for r in refunds if r["challenger"] == "0xwinner_chl")
+        loser_refund = next(r for r in refunds if r["challenger"] == "0xloser_chl")
+        assert upheld_refund["refund"] is True
+        assert loser_refund["refund"] is False
+
+        # arbiter_reward = losing_deposits*30% + upheld_deposit*30%
+        # = 1.0 * 0.30 + 1.0 * 0.30 = 0.6
+        assert abs(arbiter_reward - 0.6) < 1e-6
+
+
+def test_pool_distribution_single_challenger_wins_no_losers(db_session):
+    """Single challenger wins, 0 losers: pool=0, arbiter gets from incentive only."""
+    from app.models import UserRole
+    users = _make_users(db_session, 6)  # publisher, pw_worker, ch1, arb1, arb2, arb3
+
+    publisher, pw_worker, ch1 = users[0], users[1], users[2]
+    task = Task(
+        title="Single CHL",
+        description="desc",
+        type="quality_first",
+        bounty=100.0,
+        deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        publisher_id=publisher.id,
+        acceptance_criteria='["AC"]',
+        status=TaskStatus.arbitrating,
+    )
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+
+    pw_sub = Submission(task_id=task.id, worker_id=pw_worker.id, content="pw")
+    db_session.add(pw_sub)
+    db_session.commit()
+    db_session.refresh(pw_sub)
+    task.winner_submission_id = pw_sub.id
+
+    ch1_sub = Submission(task_id=task.id, worker_id=ch1.id, content="ch1")
+    db_session.add(ch1_sub)
+    db_session.commit()
+    db_session.refresh(ch1_sub)
+
+    c = Challenge(
+        task_id=task.id, challenger_submission_id=ch1_sub.id,
+        target_submission_id=pw_sub.id, reason="better",
+        deposit_amount=5.0, challenger_wallet="0xCHL1",
+    )
+    db_session.add(c)
+    db_session.commit()
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All 3 vote ch1 → challenger wins (3:0)
+    _vote_all(db_session, task, ballots, [ch1_sub.id] * 3)
+
+    with patch("app.scheduler._resolve_via_contract") as mock_resolve:
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+        mock_resolve.assert_called_once()
+        args = mock_resolve.call_args[0]
+        refunds = args[2]
+        arbiter_reward = args[4]
+        is_challenger_win = args[5]
+
+        assert is_challenger_win is True
+
+        # Single challenger → refund=True (upheld)
+        assert len(refunds) == 1
+        assert refunds[0]["refund"] is True
+
+        # No losers → pool=0, arbiter gets from incentive = upheld_deposit * 30%
+        # = 5.0 * 0.30 = 1.5
+        assert abs(arbiter_reward - 1.5) < 1e-6
+
+
+def test_pool_distribution_deadlock_all_arbiters_paid(db_session):
+    """1:1:1 deadlock: PW maintained, all 3 arbiters get pool 30% split."""
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    for c in challenges:
+        c.deposit_amount = 1.0
+        c.challenger_wallet = "0x" + "bb" * 20
+    db_session.commit()
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # 1:1:1 deadlock
+    _vote_all(db_session, task, ballots, [pw_sub.id, ch1_sub.id, ch2_sub.id])
+
+    with patch("app.scheduler._resolve_via_contract") as mock_resolve:
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+        mock_resolve.assert_called_once()
+        args = mock_resolve.call_args[0]
+        arbiter_wallets = args[3]
+        arbiter_reward = args[4]
+        is_challenger_win = args[5]
+
+        assert is_challenger_win is False
+        # Deadlock → all voted arbiters get paid
+        assert len(arbiter_wallets) == 3
+        # All deposits forfeited (no upheld), losing_deposits=2.0, reward=0.6
+        assert abs(arbiter_reward - 0.6) < 1e-6

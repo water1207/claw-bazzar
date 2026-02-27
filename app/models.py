@@ -77,6 +77,9 @@ class TrustEventType(str, PyEnum):
     arbiter_coherence = "arbiter_coherence"
     pw_malicious = "pw_malicious"
     challenger_justified = "challenger_justified"
+    arbiter_tp_malicious = "arbiter_tp_malicious"
+    arbiter_fp_malicious = "arbiter_fp_malicious"
+    arbiter_fn_malicious = "arbiter_fn_malicious"
 
 
 class StakePurpose(str, PyEnum):

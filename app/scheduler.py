@@ -18,9 +18,13 @@ from .services.payout import refund_publisher
 
 
 def _resolve_via_contract(
-    db: Session, task: Task, verdicts: list,
+    db: Session, task: Task,
+    refunds: list[dict],
+    arbiter_wallets: list[str],
+    arbiter_reward: float,
+    is_challenger_win: bool = False,
 ) -> None:
-    """Call resolveChallenge on-chain to distribute bounty + deposits."""
+    """Call resolveChallenge on-chain with unified pool distribution."""
     from .models import User, PayoutStatus
     from .services.trust import get_winner_payout_rate
     try:
@@ -31,18 +35,27 @@ def _resolve_via_contract(
             User.id == winner_sub.worker_id
         ).first() if winner_sub else None
         if winner_user:
-            has_upheld = any(v.get("result") == 0 for v in verdicts)
             try:
-                rate = get_winner_payout_rate(winner_user.trust_tier, is_challenger_win=has_upheld)
+                rate = get_winner_payout_rate(winner_user.trust_tier,
+                                              is_challenger_win=is_challenger_win)
             except ValueError:
                 rate = 0.80
             payout_amount = round(task.bounty * rate, 6)
-            # When upheld: cap at mainBounty (= locked - incentive = 85% of task bounty)
-            if has_upheld:
-                main_bounty = round(task.bounty * 0.85, 6)
-                payout_amount = min(payout_amount, main_bounty)
+            if is_challenger_win:
+                # Add incentive remainder: incentive - arbiter subsidy from incentive
+                incentive = round(task.bounty * 0.05, 6)
+                # Find upheld challenge to get deposit amount
+                upheld_c = db.query(Challenge).filter(
+                    Challenge.task_id == task.id,
+                    Challenge.verdict == "upheld",
+                ).first()
+                upheld_deposit = (upheld_c.deposit_amount or 0) if upheld_c else 0
+                arbiter_from_incentive = round(upheld_deposit * 0.30, 6)
+                incentive_remainder = round(incentive - arbiter_from_incentive, 6)
+                payout_amount = round(payout_amount + max(incentive_remainder, 0), 6)
             tx_hash = resolve_challenge_onchain(
-                task.id, winner_user.wallet, payout_amount, verdicts,
+                task.id, winner_user.wallet, payout_amount,
+                refunds, arbiter_wallets, arbiter_reward,
             )
             task.payout_status = PayoutStatus.paid
             task.payout_tx_hash = tx_hash
@@ -220,10 +233,9 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     ).first() if winner_sub else None
                     if winner_user:
                         escrow_amount = round(task.bounty * 0.95, 6)
-                        incentive = 0
-                        deposit_amount = task.submission_deposit or round(task.bounty * 0.10, 6)
+                        incentive = round(task.bounty * 0.05, 6)
                         tx_hash = create_challenge_onchain(
-                            task.id, winner_user.wallet, escrow_amount, incentive, deposit_amount
+                            task.id, winner_user.wallet, escrow_amount, incentive
                         )
                         task.escrow_tx_hash = tx_hash
                 except Exception as e:
@@ -262,8 +274,9 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 if db.query(_User).filter_by(id=task.publisher_id).first():
                     _apply_event(db, task.publisher_id, _TET.publisher_completed,
                                  task_bounty=task.bounty, task_id=task.id)
-                # Release bounty via contract (no challengers, empty verdicts)
-                _resolve_via_contract(db, task, verdicts=[])
+                # Release bounty via contract (no challengers)
+                _resolve_via_contract(db, task, refunds=[], arbiter_wallets=[],
+                                      arbiter_reward=0)
                 db.commit()
             else:
                 # Try jury-based arbitration first; fall back to stub
@@ -327,13 +340,71 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
             db.close()
 
 
+def _apply_hawkish_trust(
+    db: Session, task: Task,
+    voted_ballots: list, is_deadlock: bool,
+) -> None:
+    """Apply two-dimensional hawkish trust matrix to arbiters.
+
+    Dimension 1 (Main): Winner pick consensus
+      - Majority (coherent): +2
+      - Minority (incoherent): -15
+      - Deadlock: 0 (no event)
+
+    Dimension 2 (Secondary): Malicious detection accuracy
+      - True Positive (correctly flagged): +5 per target
+      - False Positive (wrongly flagged): -1 per target
+      - False Negative (missed flagging): -10 per target
+    """
+    from .models import MaliciousTag
+    from .services.trust import apply_event, TrustEventType
+
+    # --- Main dimension: winner pick ---
+    for b in voted_ballots:
+        if is_deadlock:
+            pass  # 0 points, no event
+        elif b.coherence_status == "coherent":
+            apply_event(db, b.arbiter_user_id, TrustEventType.arbiter_majority,
+                        task_id=task.id)
+        elif b.coherence_status == "incoherent":
+            apply_event(db, b.arbiter_user_id, TrustEventType.arbiter_minority,
+                        task_id=task.id)
+
+    # --- Secondary dimension: malicious detection accuracy ---
+    # Build consensus malicious set (target_submission_id with ≥2 tags)
+    all_tags = db.query(MaliciousTag).filter_by(task_id=task.id).all()
+    tag_counts: dict[str, int] = {}
+    for t in all_tags:
+        tag_counts[t.target_submission_id] = tag_counts.get(t.target_submission_id, 0) + 1
+    consensus_malicious = {sid for sid, count in tag_counts.items() if count >= 2}
+
+    # Per-arbiter TP/FP/FN
+    for b in voted_ballots:
+        arbiter_tags = {t.target_submission_id for t in all_tags
+                        if t.arbiter_user_id == b.arbiter_user_id}
+
+        tp = arbiter_tags & consensus_malicious       # Correctly flagged
+        fp = arbiter_tags - consensus_malicious       # Wrongly flagged
+        fn = consensus_malicious - arbiter_tags       # Missed flagging
+
+        for _ in tp:
+            apply_event(db, b.arbiter_user_id, TrustEventType.arbiter_tp_malicious,
+                        task_id=task.id)
+        for _ in fp:
+            apply_event(db, b.arbiter_user_id, TrustEventType.arbiter_fp_malicious,
+                        task_id=task.id)
+        for _ in fn:
+            apply_event(db, b.arbiter_user_id, TrustEventType.arbiter_fn_malicious,
+                        task_id=task.id)
+
+
 def _settle_after_arbitration(db: Session, task: Task) -> None:
     """Settle a task after all challenges are judged.
 
     Uses merged jury resolution (JuryBallot) if ballots exist,
     otherwise falls back to legacy per-challenge ArbiterVote path.
     """
-    from .models import ChallengeVerdict, PayoutStatus, User
+    from .models import ChallengeVerdict, PayoutStatus, User, MaliciousTag
     from .services.trust import apply_event, TrustEventType, compute_coherence_delta
     from .services.staking import check_and_slash
 
@@ -412,17 +483,21 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             except Exception as e:
                 print(f"[scheduler] voidChallenge failed for {task.id}: {e}", flush=True)
 
+            # Hawkish trust matrix for arbiters (voided path)
+            voted_bs = [b for b in ballots if b.winner_submission_id is not None]
+            _apply_hawkish_trust(db, task, voted_bs, is_deadlock=False)
+
             # task.status already set to voided by resolve_merged_jury
             db.commit()
             return
 
         # --- Non-voided merged path ---
         challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
-        elected_winner = result["winner_submission_id"]
 
         # If an upheld challenger won, switch winner
         upheld = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]
-        if upheld:
+        is_challenger_win = len(upheld) > 0
+        if is_challenger_win:
             task.winner_submission_id = upheld[0].challenger_submission_id
 
         # Process challenger trust events
@@ -475,9 +550,11 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
                         task_bounty=task.bounty, task_id=task.id)
 
-        # Build verdicts for contract using JuryBallot coherence
+        # --- Unified pool financial settlement ---
         voted_ballots = [b for b in ballots if b.winner_submission_id is not None]
-        is_deadlock = any(b.coherence_status == "neutral" for b in voted_ballots)
+        is_deadlock = result.get("is_deadlock", False)
+
+        # Select arbiter wallets (majority or all if deadlock)
         if is_deadlock:
             arbiter_ids = [b.arbiter_user_id for b in voted_ballots]
         else:
@@ -486,29 +563,33 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
         arbiter_users = db.query(User).filter(User.id.in_(arbiter_ids)).all() if arbiter_ids else []
         arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
 
-        verdicts = []
+        # Build refunds: upheld → refund deposit, others → forfeit
+        refunds = []
         for c in challenges:
             if c.challenger_wallet:
-                result_map = {
-                    ChallengeVerdict.upheld: 0,
-                    ChallengeVerdict.rejected: 1,
-                    ChallengeVerdict.malicious: 2,
-                }
-                verdicts.append({
+                refunds.append({
                     "challenger": c.challenger_wallet,
-                    "result": result_map.get(c.verdict, 1),
-                    "arbiters": arbiter_wallets,
+                    "refund": c.verdict == ChallengeVerdict.upheld,
                 })
-        _resolve_via_contract(db, task, verdicts)
 
-        # Settle arbiter reputation via coherence from JuryBallot
-        for b in voted_ballots:
-            if b.coherence_status in ("coherent", "incoherent"):
-                coherent = 1 if b.coherence_status == "coherent" else 0
-                delta = compute_coherence_delta(coherent, 1)
-                if delta is not None:
-                    apply_event(db, b.arbiter_user_id, TrustEventType.arbiter_coherence,
-                                task_id=task.id, coherence_delta=delta)
+        # Calculate arbiter reward from unified pool
+        losing_deposits = sum(
+            (c.deposit_amount or 0) for c in challenges
+            if c.verdict != ChallengeVerdict.upheld and c.challenger_wallet
+        )
+        arbiter_from_pool = round(losing_deposits * 0.30, 6)
+        if is_challenger_win:
+            upheld_deposit = upheld[0].deposit_amount or 0
+            arbiter_from_incentive = round(upheld_deposit * 0.30, 6)
+        else:
+            arbiter_from_incentive = 0
+        arbiter_reward = round(arbiter_from_pool + arbiter_from_incentive, 6)
+
+        _resolve_via_contract(db, task, refunds, arbiter_wallets,
+                              arbiter_reward, is_challenger_win)
+
+        # --- Hawkish trust matrix for arbiters ---
+        _apply_hawkish_trust(db, task, voted_ballots, is_deadlock)
 
         db.commit()
         return
@@ -573,31 +654,44 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
         apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
                     task_bounty=task.bounty, task_id=task.id)
 
-    # Resolve on-chain: distribute bounty + deposits + arbiter rewards
-    verdicts = []
+    # Resolve on-chain: unified pool distribution (legacy path adapted)
+    is_challenger_win = len(upheld) > 0
+    refunds = []
     for c in challenges:
         if c.challenger_wallet:
-            result_map = {
-                ChallengeVerdict.upheld: 0,
-                ChallengeVerdict.rejected: 1,
-                ChallengeVerdict.malicious: 2,
-            }
-            jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
-            is_deadlock = any(v.coherence_status == "neutral" for v in jury_votes)
-            if is_deadlock:
-                arbiter_ids = [v.arbiter_user_id for v in jury_votes if v.vote is not None]
-            else:
-                arbiter_ids = [v.arbiter_user_id for v in jury_votes
-                               if v.coherence_status == "coherent"]
-            arbiter_users = db.query(User).filter(User.id.in_(arbiter_ids)).all() if arbiter_ids else []
-            arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
-
-            verdicts.append({
+            refunds.append({
                 "challenger": c.challenger_wallet,
-                "result": result_map.get(c.verdict, 1),
-                "arbiters": arbiter_wallets,
+                "refund": c.verdict == ChallengeVerdict.upheld,
             })
-    _resolve_via_contract(db, task, verdicts)
+
+    # Collect arbiter wallets from per-challenge votes
+    all_arbiter_ids = set()
+    for c in challenges:
+        jury_votes = db.query(ArbiterVote).filter_by(challenge_id=c.id).all()
+        is_dl = any(v.coherence_status == "neutral" for v in jury_votes)
+        if is_dl:
+            all_arbiter_ids.update(v.arbiter_user_id for v in jury_votes if v.vote is not None)
+        else:
+            all_arbiter_ids.update(v.arbiter_user_id for v in jury_votes
+                                   if v.coherence_status == "coherent")
+    arbiter_users = db.query(User).filter(User.id.in_(list(all_arbiter_ids))).all() if all_arbiter_ids else []
+    arbiter_wallets = [u.wallet for u in arbiter_users if u.wallet]
+
+    # Calculate arbiter reward from pool
+    losing_deps = sum(
+        (c.deposit_amount or 0) for c in challenges
+        if c.verdict != ChallengeVerdict.upheld and c.challenger_wallet
+    )
+    arb_from_pool = round(losing_deps * 0.30, 6)
+    if is_challenger_win:
+        upheld_dep = upheld[0].deposit_amount or 0 if upheld else 0
+        arb_from_incentive = round(upheld_dep * 0.30, 6)
+    else:
+        arb_from_incentive = 0
+    arbiter_reward = round(arb_from_pool + arb_from_incentive, 6)
+
+    _resolve_via_contract(db, task, refunds, arbiter_wallets,
+                          arbiter_reward, is_challenger_win)
 
     # Settle arbiter reputation via coherence rate
     all_votes = []
