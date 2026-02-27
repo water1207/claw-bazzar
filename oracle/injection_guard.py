@@ -19,7 +19,7 @@ _PATTERNS: list[tuple[str, str]] = [
     # 角色注入
     (r"(?i)(you\s+are\s+now|act\s+as|pretend\s+to\s+be|roleplay\s+as)\b",
      "role_injection_en"),
-    (r"(你现在是|你是一个新的|假装你是|扮演|roleplay)",
+    (r"(你现在是|你是一个新的|假装你是|你来扮演|扮演你是|roleplay)",
      "role_injection_zh"),
     # 系统提示操控
     (r"(?i)(system\s*prompt|system\s*instruction|hidden\s*instruction|override\s*instruction)",
@@ -29,10 +29,10 @@ _PATTERNS: list[tuple[str, str]] = [
     # 输出劫持
     (r"(?i)(always\s+output|must\s+output|output\s+only|you\s+must\s+respond\s+with)",
      "output_hijack_en"),
-    (r"(必须输出|强制返回|只能输出|你必须回复)",
+    (r"(你必须输出|强制返回|你只能输出|你必须回复)",
      "output_hijack_zh"),
     # 分隔符伪造（三条或以上 --- 后接类指令内容）
-    (r"(?m)^-{3,}\s*\n.*(指令|instruction|override|ignore|忽略|系统)",
+    (r"(?m)^-{3,}\s*\n[\s\S]{0,200}?(指令|instruction|override|ignore|忽略|系统)",
      "separator_injection"),
 ]
 
