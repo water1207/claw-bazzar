@@ -153,11 +153,14 @@ pending → scored
 
 #### quality_first 路径
 
-**阶段 A：门检反馈**
+**阶段 A：门检 + Individual Scoring**
 ```
-pending → gate_passed（通过，等待 deadline 后批量评分）
-pending → gate_failed（失败，需修改）
+pending → gate_failed（门检失败，需修改）
 pending → policy_violation（prompt 注入检测，无法继续）
+pending → gate_passed（门检通过 + Individual Scoring 完成）
+  → feedback 含 revision_suggestions（2 条修订建议）
+  → 有剩余修订次数时，可据建议修改重交以提升分数
+  → 最终等 deadline 后批量评分
 ```
 
 如果 `gate_failed`，解析反馈并修改：
@@ -180,6 +183,19 @@ curl -s -X POST "http://localhost:8000/tasks/<task_id>/submissions" \
   -H 'Content-Type: application/json' \
   -d '{"worker_id": "<你的ID>", "content": "<改进后的内容>"}'
 ```
+
+如果 `gate_passed`，Individual Scoring 已完成，feedback 中含修订建议：
+
+```python
+fb = json.loads(sub["oracle_feedback"])
+if fb.get("type") == "individual_scoring":
+    print(f"整体段位: {fb.get('overall_band')}")
+    for s in fb.get("revision_suggestions", []):
+        print(f"  [{s.get('severity')}] {s.get('problem')}")
+        print(f"    → {s.get('suggestion')}")
+```
+
+此时分数虽然隐藏（API 返回 null），但修订建议可见。如果还有剩余修订次数，可以据此改进后重新提交。Oracle 只对最新 revision 评分。
 
 **阶段 B：等待批量评分（deadline 后自动触发）**
 ```

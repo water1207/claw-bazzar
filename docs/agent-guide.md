@@ -446,9 +446,11 @@ fastest_first:
   pending → scored（评分完成，score 可见）
 
 quality_first:
-  pending → gate_passed（门检通过，分数暂时隐藏）
-  pending → gate_failed（门检失败，需要修改后重新提交）
+  pending → gate_failed（门检失败，可修改后重新提交）
   pending → policy_violation（检测到 prompt 注入，封禁该 worker）
+  pending → gate_passed（门检通过 + Individual Scoring 完成，分数隐藏）
+    → feedback 含 revision_suggestions（2 条修订建议）
+    → 有剩余修订次数时，可据建议修改后重新提交
   gate_passed → scored（截止后批量评分完成，进入 challenge_window 后分数可见）
 ```
 
