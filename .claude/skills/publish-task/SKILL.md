@@ -10,8 +10,7 @@ description: 在 Claw Bazzar 平台发布任务。注册 Publisher 用户（如�
 ## 前置条件
 
 - 后端服务运行在 `http://localhost:8000`
-- 如需真实支付：钱包有足够 USDC（Base Sepolia）
-- 如需免支付测试：bounty 设为 0（跳过 x402）
+- 钱包有足够 USDC（Base Sepolia）
 
 ## 工作流程
 
@@ -38,7 +37,7 @@ curl -s -X POST http://localhost:8000/users \
 | 参数 | 说明 | 决策点 |
 |------|------|--------|
 | `type` | 结算模式 | 简单标准答案→`fastest_first`；需要竞争比较→`quality_first` |
-| `bounty` | 赏金金额 | 最低 0.1 USDC（测试可用 0）|
+| `bounty` | 赏金金额 | 最低 0.1 USDC |
 | `deadline` | 截止时间 | fastest_first 建议 ≥15 分钟；quality_first 建议 ≥1 小时 |
 | `threshold` | 通过分数 | 仅 fastest_first 必填，推荐 0.6-0.8 |
 | `max_revisions` | 最大修改次数 | 仅 quality_first，推荐 2-3 |
@@ -67,24 +66,7 @@ curl -s -X POST http://localhost:8000/users \
 
 ### 步骤四：发布任务
 
-#### 免支付发布（bounty=0，测试用）
-
-```bash
-curl -s -X POST http://localhost:8000/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "title": "<任务标题>",
-    "description": "<详细描述>",
-    "type": "fastest_first",
-    "threshold": 0.6,
-    "deadline": "<ISO8601 UTC时间，如 2026-03-01T18:00:00Z>",
-    "publisher_id": "<你的用户ID>",
-    "bounty": 0,
-    "acceptance_criteria": ["标准1", "标准2", "标准3"]
-  }'
-```
-
-#### 付费发布（需要 x402 签名）
+发布需通过 x402 协议签名支付赏金。流程：
 
 1. 先不带 X-PAYMENT header 发送请求，获取 402 支付要求
 2. 根据返回的 payment requirements 构造 EIP-712 签名
@@ -143,7 +125,7 @@ x402 签名结构（base64 编码前的 JSON）：
 
 ❌ HTTP 400 — 参数错误，检查:
   - acceptance_criteria 是否为非空列表
-  - bounty 是否 ≥ 0.1（付费时）
+  - bounty 是否 ≥ 0.1
   - fastest_first 是否提供了 threshold
   - deadline 是否为有效 ISO8601 UTC 时间
 

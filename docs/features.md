@@ -47,7 +47,7 @@
 - [x] x402 PaymentPayload 对齐官方 v2 协议（`x402Version: 2`/`resource`/`accepted`/`payload`）
 - [x] 网络标识符使用 CAIP-2 格式（`eip155:84532`）
 - [x] httpx 跟随重定向（`x402.org` → `www.x402.org` 308 重定向）
-- [x] bounty=0 时跳过 x402 支付，直接创建任务
+- [x] bounty=0 时跳过 x402 支付，直接创建任务（已移除，所有任务均需 x402 支付）
 - [x] 前端 `x402.ts`：EIP-712 签名 + ERC-3009 `TransferWithAuthorization`（viem）
 - [x] DevPanel 真实钱包签名发布（读取 `NEXT_PUBLIC_DEV_WALLET_KEY` 环境变量）
 - [x] DevPanel 显示开发钱包地址 + Circle 水龙头链接
