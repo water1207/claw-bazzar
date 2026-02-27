@@ -76,8 +76,10 @@ def check_payload(payload: dict, mode: str) -> dict:
                 if result["detected"]:
                     return result
         else:
-            text = payload.get(field, "")
-            result = check(text, field)
+            value = payload.get(field, "")
+            if isinstance(value, list):
+                value = " ".join(str(v) for v in value)
+            result = check(value, field)
             if result["detected"]:
                 return result
 

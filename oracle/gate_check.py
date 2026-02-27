@@ -58,9 +58,15 @@ PROMPT_TEMPLATE = """## 你的任务
 
 
 def run(input_data: dict) -> dict:
+    criteria_raw = input_data.get("acceptance_criteria", [])
+    if isinstance(criteria_raw, list):
+        acceptance_criteria = "\n".join(f"{i+1}. {c}" for i, c in enumerate(criteria_raw))
+    else:
+        acceptance_criteria = str(criteria_raw)
+
     prompt = PROMPT_TEMPLATE.format(
         task_description=input_data.get("task_description", ""),
-        acceptance_criteria=input_data.get("acceptance_criteria", ""),
+        acceptance_criteria=acceptance_criteria,
         submission_payload=input_data.get("submission_payload", ""),
     )
     result, _usage = call_llm_json(prompt, system=SYSTEM_PROMPT)

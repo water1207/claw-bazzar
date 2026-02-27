@@ -74,3 +74,14 @@ def test_check_payload_detects_injection_in_gate_check_mode():
     }
     result = check_payload(payload, "gate_check")
     assert result["detected"] is True
+
+
+def test_injection_guard_handles_list_criteria():
+    """acceptance_criteria 为 list[str] 时注入检测不崩溃"""
+    result = check_payload({
+        "mode": "gate_check",
+        "task_description": "正常任务",
+        "acceptance_criteria": ["条目1", "条目2"],
+        "submission_payload": "正常提交",
+    }, "gate_check")
+    assert result["detected"] is False
