@@ -83,6 +83,26 @@ _MINIMAL_ESCROW_ABI = [
         "outputs": [],
         "type": "function",
     },
+    {
+        "inputs": [
+            {"name": "taskId", "type": "bytes32"},
+            {"name": "publisher", "type": "address"},
+            {"name": "publisherRefund", "type": "uint256"},
+            {
+                "name": "refunds",
+                "type": "tuple[]",
+                "components": [
+                    {"name": "challenger", "type": "address"},
+                    {"name": "refund", "type": "bool"},
+                ],
+            },
+            {"name": "arbiters", "type": "address[]"},
+            {"name": "arbiterReward", "type": "uint256"},
+        ],
+        "name": "voidChallenge",
+        "outputs": [],
+        "type": "function",
+    },
 ]
 
 
@@ -176,6 +196,42 @@ def join_challenge_onchain(
         bytes.fromhex(s[2:]) if s.startswith("0x") else bytes.fromhex(s),
     )
     return _send_tx(w3, fn, f"joinChallenge({task_id}, {challenger_wallet})")
+
+
+def void_challenge_onchain(
+    task_id: str,
+    publisher_wallet: str,
+    publisher_refund: float,
+    refunds: list[dict],
+    arbiter_wallets: list[str],
+    arbiter_reward: float,
+) -> str:
+    """Call ChallengeEscrow.voidChallenge() for voided tasks.
+    refunds: [{"challenger": "0x...", "refund": True/False}, ...]
+    Returns tx hash."""
+    w3, contract = _get_w3_and_contract()
+    task_bytes = _task_id_to_bytes32(task_id)
+    publisher_refund_wei = int(publisher_refund * 10**6)
+    arbiter_reward_wei = int(arbiter_reward * 10**6)
+
+    refund_tuples = [
+        (
+            Web3.to_checksum_address(r["challenger"]),
+            r["refund"],
+        )
+        for r in refunds
+    ]
+    arbiter_addrs = [Web3.to_checksum_address(a) for a in arbiter_wallets]
+
+    fn = contract.functions.voidChallenge(
+        task_bytes,
+        Web3.to_checksum_address(publisher_wallet),
+        publisher_refund_wei,
+        refund_tuples,
+        arbiter_addrs,
+        arbiter_reward_wei,
+    )
+    return _send_tx(w3, fn, f"voidChallenge({task_id})")
 
 
 def resolve_challenge_onchain(

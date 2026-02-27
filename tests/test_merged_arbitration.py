@@ -302,12 +302,118 @@ def test_scheduler_voided_path(db_session):
         malicious_map={0: [pw_sub.id], 1: [pw_sub.id], 2: [pw_sub.id]},
     )
 
-    with patch("app.scheduler._resolve_via_contract"):
+    with patch("app.scheduler.void_challenge_onchain", return_value="0xvoid_tx") as mock_void, \
+         patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import _settle_after_arbitration
         _settle_after_arbitration(db_session, task)
 
     db_session.refresh(task)
     assert task.status == TaskStatus.voided
+
+
+# --- Full lifecycle integration tests (Task 14) ---
+
+def test_full_lifecycle_challenger_wins(db_session):
+    """Full flow: jury votes challenger → challenger wins, task closed."""
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # 2:1 vote for ch1
+    _vote_all(db_session, task, ballots, [ch1_sub.id, ch1_sub.id, pw_sub.id])
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    db_session.refresh(task)
+    assert task.status == TaskStatus.closed
+    assert task.winner_submission_id == ch1_sub.id
+
+    # Verify challenge verdicts
+    for c in challenges:
+        db_session.refresh(c)
+    ch1_c = next(c for c in challenges if c.challenger_submission_id == ch1_sub.id)
+    ch2_c = next(c for c in challenges if c.challenger_submission_id == ch2_sub.id)
+    assert ch1_c.verdict == ChallengeVerdict.upheld
+    assert ch2_c.verdict == ChallengeVerdict.rejected
+
+    # Coherence: first 2 voted ch1 (coherent), last voted pw (incoherent)
+    for b in ballots:
+        db_session.refresh(b)
+    assert ballots[0].coherence_status == "coherent"
+    assert ballots[2].coherence_status == "incoherent"
+
+
+def test_full_lifecycle_deadlock_pw_wins(db_session):
+    """Full flow: 1:1:1 deadlock → PW keeps win, all challengers rejected."""
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # 1:1:1 split
+    _vote_all(db_session, task, ballots, [pw_sub.id, ch1_sub.id, ch2_sub.id])
+
+    with patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    db_session.refresh(task)
+    assert task.status == TaskStatus.closed
+    assert task.winner_submission_id == pw_sub.id  # PW wins in deadlock
+
+    for c in challenges:
+        db_session.refresh(c)
+        assert c.verdict == ChallengeVerdict.rejected
+
+    for b in ballots:
+        db_session.refresh(b)
+        assert b.coherence_status == "neutral"
+
+
+def test_full_lifecycle_pw_malicious_voided(db_session):
+    """Full flow: PW tagged malicious ≥2 → task voided, trust events applied."""
+    from app.models import TrustEvent
+    users = _make_users(db_session, 7)
+    task, pw_sub, ch1_sub, ch2_sub, challenges = _make_quality_task_with_challenges(db_session, users)
+
+    from app.services.arbiter_pool import select_jury
+    ballots = select_jury(db_session, task.id)
+
+    # All vote ch1, 2 tag PW malicious
+    _vote_all(
+        db_session, task, ballots,
+        [ch1_sub.id] * 3,
+        malicious_map={0: [pw_sub.id], 1: [pw_sub.id]},
+    )
+
+    with patch("app.scheduler.void_challenge_onchain", return_value="0xvoid_tx"), \
+         patch("app.scheduler._resolve_via_contract"):
+        from app.scheduler import _settle_after_arbitration
+        _settle_after_arbitration(db_session, task)
+
+    db_session.refresh(task)
+    assert task.status == TaskStatus.voided
+
+    # PW worker got pw_malicious trust event
+    pw_events = db_session.query(TrustEvent).filter_by(
+        user_id=users[1].id,  # pw_worker
+        event_type=TrustEventType.pw_malicious,
+    ).all()
+    assert len(pw_events) == 1
+    assert pw_events[0].delta == -100
+
+    # Challengers got justified events (not malicious)
+    for c_user_idx in [2, 3]:
+        events = db_session.query(TrustEvent).filter_by(
+            user_id=users[c_user_idx].id,
+            event_type=TrustEventType.challenger_justified,
+        ).all()
+        assert len(events) == 1
 
 
 # --- GET jury-ballots endpoint tests ---

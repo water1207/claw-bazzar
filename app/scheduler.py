@@ -13,7 +13,7 @@ from .services.arbiter_pool import (
     resolve_merged_jury, check_merged_jury_ready,
 )
 from .services.oracle import batch_score_submissions
-from .services.escrow import create_challenge_onchain, resolve_challenge_onchain
+from .services.escrow import create_challenge_onchain, resolve_challenge_onchain, void_challenge_onchain
 from .services.payout import refund_publisher
 
 
@@ -376,11 +376,42 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                                     task_id=task.id)
 
             # Publisher trust
-            if db.query(User).filter_by(id=task.publisher_id).first():
+            publisher = db.query(User).filter_by(id=task.publisher_id).first()
+            if publisher:
                 apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
                             task_bounty=task.bounty, task_id=task.id)
 
-            _resolve_via_contract(db, task, verdicts=[])
+            # On-chain voided settlement
+            try:
+                publisher_wallet = publisher.wallet if publisher else None
+                publisher_refund = round(task.bounty * 0.95, 6) if publisher_wallet else 0
+                refunds = []
+                for c in challenges:
+                    if c.challenger_wallet:
+                        refunds.append({
+                            "challenger": c.challenger_wallet,
+                            "refund": c.verdict != ChallengeVerdict.malicious,
+                        })
+                # Arbiter wallets: all voted ballots
+                voted_bs = [b for b in db.query(JuryBallot).filter_by(task_id=task.id).all()
+                            if b.winner_submission_id is not None]
+                arb_users = db.query(User).filter(
+                    User.id.in_([b.arbiter_user_id for b in voted_bs])
+                ).all() if voted_bs else []
+                arb_wallets = [u.wallet for u in arb_users if u.wallet]
+                arbiter_reward = round(task.bounty * 0.05, 6)
+
+                if publisher_wallet:
+                    tx_hash = void_challenge_onchain(
+                        task.id, publisher_wallet, publisher_refund,
+                        refunds, arb_wallets, arbiter_reward,
+                    )
+                    from .models import PayoutStatus
+                    task.payout_status = PayoutStatus.refunded
+                    task.payout_tx_hash = tx_hash
+            except Exception as e:
+                print(f"[scheduler] voidChallenge failed for {task.id}: {e}", flush=True)
+
             # task.status already set to voided by resolve_merged_jury
             db.commit()
             return
