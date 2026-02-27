@@ -12,6 +12,17 @@ from ..database import SessionLocal
 from ..models import Submission, Task, SubmissionStatus, TaskStatus, TaskType, ScoringDimension
 from .payout import pay_winner
 
+def _parse_criteria(raw: str | None) -> list[str]:
+    """将数据库中存储的 JSON 字符串反序列化为条目列表。"""
+    if not raw:
+        return []
+    try:
+        result = json.loads(raw)
+        return result if isinstance(result, list) else []
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+
 ORACLE_SCRIPT = Path(__file__).parent.parent.parent / "oracle" / "oracle.py"
 
 # In-memory oracle call logs
@@ -137,7 +148,7 @@ def generate_dimensions(db: Session, task: Task) -> list:
         "mode": "dimension_gen",
         "task_title": task.title,
         "task_description": task.description,
-        "acceptance_criteria": task.acceptance_criteria or "",
+        "acceptance_criteria": _parse_criteria(task.acceptance_criteria),
     }
     meta = {"task_id": task.id, "task_title": task.title}
     output = _call_oracle(payload, meta=meta)
@@ -171,7 +182,7 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
     gate_payload = {
         "mode": "gate_check",
         "task_description": task.description,
-        "acceptance_criteria": task.acceptance_criteria or "",
+        "acceptance_criteria": _parse_criteria(task.acceptance_criteria),
         "submission_payload": submission.content,
     }
     gate_result = _call_oracle(gate_payload, meta=sub_meta)
@@ -244,7 +255,7 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
     gate_payload = {
         "mode": "gate_check",
         "task_description": task.description,
-        "acceptance_criteria": task.acceptance_criteria or "",
+        "acceptance_criteria": _parse_criteria(task.acceptance_criteria),
         "submission_payload": submission.content,
     }
     gate_result = _call_oracle(gate_payload, meta=sub_meta)

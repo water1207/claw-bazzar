@@ -33,6 +33,16 @@ def db():
     session.close()
 
 
+def test_parse_criteria_deserializes_json():
+    """_parse_criteria 能将 JSON 字符串反序列化为 list[str]"""
+    from app.services.oracle import _parse_criteria
+    assert _parse_criteria('["条目1","条目2"]') == ["条目1", "条目2"]
+    assert _parse_criteria(None) == []
+    assert _parse_criteria("") == []
+    assert _parse_criteria("非JSON字符串") == []
+    assert _parse_criteria('["only one"]') == ["only one"]
+
+
 def test_generate_dimensions(db):
     from app.services.oracle import generate_dimensions
 
