@@ -26,6 +26,8 @@ _FIXED_DELTAS = {
     TrustEventType.arbiter_minority: -15,
     TrustEventType.arbiter_timeout: -10,
     TrustEventType.github_bind: 50,
+    TrustEventType.pw_malicious: -100,
+    TrustEventType.challenger_justified: 5,
 }
 
 _WEIGHTED_BASES = {
