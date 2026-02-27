@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
-from sqlalchemy import Column, String, Text, Float, Integer, DateTime, Enum, ForeignKey, Boolean
+from sqlalchemy import Column, String, Text, Float, Integer, DateTime, Enum, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -17,6 +17,7 @@ class TaskStatus(str, PyEnum):
     challenge_window = "challenge_window"
     arbitrating = "arbitrating"
     closed = "closed"
+    voided = "voided"
 
 
 class SubmissionStatus(str, PyEnum):
@@ -74,6 +75,8 @@ class TrustEventType(str, PyEnum):
     stake_slash = "stake_slash"
     publisher_completed = "publisher_completed"
     arbiter_coherence = "arbiter_coherence"
+    pw_malicious = "pw_malicious"
+    challenger_justified = "challenger_justified"
 
 
 class StakePurpose(str, PyEnum):
@@ -222,3 +225,29 @@ class StakeRecord(Base):
     tx_hash = Column(String, nullable=True)
     slashed = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class JuryBallot(Base):
+    """Per-task merged arbitration vote: one ballot per arbiter per task."""
+    __tablename__ = "jury_ballots"
+    id = Column(String, primary_key=True, default=_uuid)
+    task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
+    arbiter_user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    winner_submission_id = Column(String, ForeignKey("submissions.id"), nullable=True)
+    feedback = Column(Text, nullable=True)
+    coherence_status = Column(String, nullable=True)
+    is_majority = Column(Boolean, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    voted_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("task_id", "arbiter_user_id"),)
+
+
+class MaliciousTag(Base):
+    """Arbiter's malicious tag on a candidate submission."""
+    __tablename__ = "malicious_tags"
+    id = Column(String, primary_key=True, default=_uuid)
+    task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
+    arbiter_user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    target_submission_id = Column(String, ForeignKey("submissions.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    __table_args__ = (UniqueConstraint("task_id", "arbiter_user_id", "target_submission_id"),)
