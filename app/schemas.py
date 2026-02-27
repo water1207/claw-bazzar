@@ -1,6 +1,7 @@
+import json
 from datetime import datetime, timezone
 from typing import Optional, List, Annotated
-from pydantic import BaseModel, model_validator, PlainSerializer
+from pydantic import BaseModel, model_validator, field_validator, PlainSerializer
 
 
 def _utc_iso(dt: datetime) -> str:
@@ -49,7 +50,21 @@ class TaskCreate(BaseModel):
     bounty: float
     submission_deposit: Optional[float] = None
     challenge_duration: Optional[int] = None
-    acceptance_criteria: Optional[str] = None
+    acceptance_criteria: list[str]
+
+    @field_validator('acceptance_criteria')
+    @classmethod
+    def validate_criteria(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("acceptance_criteria must have at least one item")
+        return v
+
+    @field_validator('bounty')
+    @classmethod
+    def bounty_minimum(cls, v: float) -> float:
+        if v < 0.1:
+            raise ValueError("bounty must be at least 0.1 USDC")
+        return v
 
     @model_validator(mode="after")
     def check_fastest_first_threshold(self) -> "TaskCreate":
@@ -83,13 +98,22 @@ class TaskOut(BaseModel):
     payout_amount: Optional[float] = None
     submission_deposit: Optional[float] = None
     challenge_duration: Optional[int] = None
-    challenge_window_end: Optional[UTCDatetime] = None
-    acceptance_criteria: Optional[str] = None
+    acceptance_criteria: list[str] = []
     scoring_dimensions: List["ScoringDimensionPublic"] = []
     refund_amount: Optional[float] = None
     refund_tx_hash: Optional[str] = None
     escrow_tx_hash: Optional[str] = None
     created_at: UTCDatetime
+
+    @model_validator(mode='after')
+    def parse_acceptance_criteria(self) -> "TaskOut":
+        if isinstance(self.acceptance_criteria, str):
+            try:
+                parsed = json.loads(self.acceptance_criteria)
+                self.acceptance_criteria = parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, ValueError):
+                self.acceptance_criteria = []
+        return self
 
     model_config = {"from_attributes": True}
 

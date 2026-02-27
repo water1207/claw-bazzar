@@ -152,6 +152,62 @@ def test_submission_status_has_policy_violation():
     assert SubmissionStatus.policy_violation == "policy_violation"
 
 
+def test_task_create_requires_acceptance_criteria_list(client):
+    """acceptance_criteria 必须是列表，不能是字符串"""
+    with PAYMENT_MOCK:
+        resp = client.post("/tasks", json={
+            "title": "t", "description": "d", "type": "fastest_first",
+            "threshold": 0.6, "deadline": future(),
+            "publisher_id": "pub", "bounty": 1.0,
+            "acceptance_criteria": "纯字符串不行",
+        }, headers=PAYMENT_HEADERS)
+    assert resp.status_code == 422
+
+def test_task_create_requires_nonempty_criteria(client):
+    with PAYMENT_MOCK:
+        resp = client.post("/tasks", json={
+            "title": "t", "description": "d", "type": "fastest_first",
+            "threshold": 0.6, "deadline": future(),
+            "publisher_id": "pub", "bounty": 1.0,
+            "acceptance_criteria": [],
+        }, headers=PAYMENT_HEADERS)
+    assert resp.status_code == 422
+
+def test_task_create_bounty_minimum(client):
+    with PAYMENT_MOCK:
+        resp = client.post("/tasks", json={
+            "title": "t", "description": "d", "type": "fastest_first",
+            "threshold": 0.6, "deadline": future(),
+            "publisher_id": "pub", "bounty": 0.05,
+            "acceptance_criteria": ["条目1"],
+        }, headers=PAYMENT_HEADERS)
+    assert resp.status_code == 422
+
+def test_task_out_no_challenge_window_end(client):
+    """TaskOut 不再暴露 challenge_window_end"""
+    with PAYMENT_MOCK:
+        resp = client.post("/tasks", json={
+            "title": "t", "description": "d", "type": "quality_first",
+            "deadline": future(), "publisher_id": "pub", "bounty": 1.0,
+            "acceptance_criteria": ["条目1"],
+            "challenge_duration": 3600,
+        }, headers=PAYMENT_HEADERS)
+    assert resp.status_code == 201
+    assert "challenge_window_end" not in resp.json()
+
+def test_task_acceptance_criteria_roundtrip(client):
+    """acceptance_criteria 以 list[str] 写入后读出保持一致"""
+    criteria = ["至少5个产品", "每个含官网", "信息真实"]
+    with PAYMENT_MOCK:
+        resp = client.post("/tasks", json={
+            "title": "t", "description": "d", "type": "quality_first",
+            "deadline": future(), "publisher_id": "pub", "bounty": 1.0,
+            "acceptance_criteria": criteria,
+        }, headers=PAYMENT_HEADERS)
+    assert resp.status_code == 201
+    assert resp.json()["acceptance_criteria"] == criteria
+
+
 def test_policy_violation_worker_cannot_resubmit(client_with_db):
     from unittest.mock import patch
     from app.models import SubmissionStatus, Submission
