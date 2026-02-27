@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import FastAPI
+import traceback
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from .routers import tasks as tasks_router
 from .routers import submissions as submissions_router
 from .routers import internal as internal_router
@@ -31,6 +33,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Agent Market", version="0.2.0", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    print(f"[ERROR] {request.method} {request.url.path}\n{tb}", flush=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "traceback": tb},
+    )
+
+
 app.include_router(tasks_router.router)
 app.include_router(submissions_router.router)
 app.include_router(internal_router.router)
