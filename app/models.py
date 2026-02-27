@@ -24,6 +24,7 @@ class SubmissionStatus(str, PyEnum):
     gate_passed = "gate_passed"
     gate_failed = "gate_failed"
     scored = "scored"
+    policy_violation = "policy_violation"
 
 
 class UserRole(str, PyEnum):
