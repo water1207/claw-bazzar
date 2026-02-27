@@ -292,5 +292,42 @@ class WeeklyLeaderboardEntry(BaseModel):
     bonus: int
 
 
+class JuryVoteIn(BaseModel):
+    """Input for merged arbitration vote."""
+    arbiter_user_id: str
+    winner_submission_id: str
+    malicious_submission_ids: list[str] = []
+    feedback: str = ""
+
+    @model_validator(mode="after")
+    def winner_not_in_malicious(self):
+        if self.winner_submission_id in self.malicious_submission_ids:
+            raise ValueError("Winner cannot be tagged as malicious")
+        return self
+
+
+class JuryBallotOut(BaseModel):
+    """Response for a single jury ballot."""
+    id: str
+    task_id: str
+    arbiter_user_id: str
+    winner_submission_id: Optional[str] = None
+    feedback: Optional[str] = None
+    coherence_status: Optional[str] = None
+    is_majority: Optional[bool] = None
+    created_at: UTCDatetime
+    voted_at: Optional[UTCDatetime] = None
+    model_config = {"from_attributes": True}
+
+
+class MaliciousTagOut(BaseModel):
+    """Response for a malicious tag."""
+    id: str
+    task_id: str
+    arbiter_user_id: str
+    target_submission_id: str
+    created_at: UTCDatetime
+    model_config = {"from_attributes": True}
+
 
 TaskDetail.model_rebuild()
