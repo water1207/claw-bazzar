@@ -150,3 +150,46 @@ def test_create_task_zero_bounty_skips_payment(client):
 def test_submission_status_has_policy_violation():
     from app.models import SubmissionStatus
     assert SubmissionStatus.policy_violation == "policy_violation"
+
+
+def test_policy_violation_worker_cannot_resubmit(client_with_db):
+    from unittest.mock import patch
+    from app.models import SubmissionStatus, Submission
+
+    client, db = client_with_db
+
+    # 创建任务
+    with PAYMENT_MOCK:
+        task_resp = client.post("/tasks", json={
+            "title": "test injection ban",
+            "description": "desc",
+            "type": "quality_first",
+            "deadline": "2099-01-01T00:00:00Z",
+            "publisher_id": "pub1",
+            "bounty": 0.0,
+        }, headers=PAYMENT_HEADERS)
+    assert task_resp.status_code == 201
+    task_id = task_resp.json()["id"]
+
+    # 第一次提交（mock oracle 不实际调用）
+    with patch("app.routers.submissions.invoke_oracle"):
+        sub_resp = client.post(
+            f"/tasks/{task_id}/submissions",
+            json={"worker_id": "bad_worker", "content": "inject attempt"},
+        )
+    assert sub_resp.status_code == 201
+    sub_id = sub_resp.json()["id"]
+
+    # 手动将该提交标记为 policy_violation（共享同一 in-memory DB）
+    sub = db.query(Submission).filter_by(id=sub_id).first()
+    sub.status = SubmissionStatus.policy_violation
+    db.commit()
+
+    # 第二次提交应被 403 拒绝
+    with patch("app.routers.submissions.invoke_oracle"):
+        resp2 = client.post(
+            f"/tasks/{task_id}/submissions",
+            json={"worker_id": "bad_worker", "content": "another attempt"},
+        )
+    assert resp2.status_code == 403
+    assert "违规" in resp2.json()["detail"]

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
-from ..models import Task, Submission, User, TaskStatus, TaskType
+from ..models import Task, Submission, User, TaskStatus, TaskType, SubmissionStatus
 from ..schemas import SubmissionCreate, SubmissionOut
 from ..services.oracle import invoke_oracle
 from ..services.trust import check_permissions
@@ -59,6 +59,18 @@ def create_submission(
     if task.type.value == "quality_first" and task.max_revisions and existing >= task.max_revisions:
         raise HTTPException(
             status_code=400, detail=f"Max revisions ({task.max_revisions}) reached"
+        )
+
+    # Block workers who have been flagged for policy violation on this task
+    violation = db.query(Submission).filter(
+        Submission.task_id == task_id,
+        Submission.worker_id == data.worker_id,
+        Submission.status == SubmissionStatus.policy_violation,
+    ).first()
+    if violation:
+        raise HTTPException(
+            status_code=403,
+            detail="该用户已因违规被禁止对本任务继续提交",
         )
 
     submission = Submission(

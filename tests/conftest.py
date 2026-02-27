@@ -50,3 +50,37 @@ def client():
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=test_engine)
+
+
+@pytest.fixture
+def client_with_db():
+    """Yields (TestClient, db_session) sharing the same in-memory engine."""
+    from app.database import Base, get_db
+    from app.main import app
+
+    test_engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(bind=test_engine)
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+
+    with patch("app.main.create_scheduler", return_value=MagicMock()), \
+         patch("app.main.run_migrations"):
+        with TestClient(app) as c:
+            db = TestSession()
+            try:
+                yield c, db
+            finally:
+                db.close()
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=test_engine)
