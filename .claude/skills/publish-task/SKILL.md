@@ -92,6 +92,11 @@ x402 签名结构（base64 编码前的 JSON）：
 ```json
 {
   "x402Version": 2,
+  "resource": {
+    "url": "task-creation",
+    "description": "Task creation payment",
+    "mimeType": "application/json"
+  },
   "accepted": {
     "scheme": "exact",
     "network": "eip155:84532",
@@ -111,6 +116,18 @@ x402 签名结构（base64 编码前的 JSON）：
   }
 }
 ```
+
+**EIP-712 域（签名时使用）：**
+```json
+{
+  "name": "USDC",
+  "version": "2",
+  "chainId": 84532,
+  "verifyingContract": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+}
+```
+
+> ⚠️ **域名必须是 `"USDC"`，不是 `"USD Coin"`**。写错会得到 `invalid_exact_evm_payload_signature`。
 
 ### 步骤五：验证发布结果
 
@@ -161,6 +178,8 @@ curl -s http://localhost:8000/tasks/<task_id> | python3 -m json.tool
 | 问题 | 解决 |
 |------|------|
 | 维度生成失败 | 检查 `ORACLE_LLM_PROVIDER` 和 API Key 配置 |
-| 402 签名被拒 | 确认钱包 USDC 余额、nonce 唯一、validBefore 未过期 |
+| `invalid_exact_evm_payload_signature` | EIP-712 域名写错（必须是 `"USDC"` 不是 `"USD Coin"`），或 payload 缺少 `resource` 字段 |
+| 402 签名被拒（其他原因） | 确认钱包 USDC 余额、nonce 唯一、validBefore 未过期 |
+| 请求超时（settlement 阶段）| 正常现象：verify 通过后 settle 需调用链上，httpx 客户端超时需设为 ≥120s |
 | deadline 格式错误 | 必须是 ISO8601 UTC 格式，以 Z 结尾 |
 | acceptance_criteria 拒绝 | 必须是非空的字符串列表（list[str]）|
