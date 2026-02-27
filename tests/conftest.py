@@ -7,6 +7,22 @@ from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
+def db_session():
+    from app.database import Base
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        yield db
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
 def client():
     from app.database import Base, get_db
     from app.main import app

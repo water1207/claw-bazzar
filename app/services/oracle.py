@@ -176,6 +176,17 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
     }
     gate_result = _call_oracle(gate_payload, meta=sub_meta)
 
+    # Injection guard result
+    if gate_result.get("injection_detected"):
+        submission.status = SubmissionStatus.policy_violation
+        submission.oracle_feedback = json.dumps({
+            "type": "injection",
+            "reason": gate_result.get("reason", ""),
+            "field": gate_result.get("field", ""),
+        })
+        db.commit()
+        return
+
     if not gate_result.get("overall_passed", False):
         submission.oracle_feedback = json.dumps({
             "type": "gate_check",
@@ -237,6 +248,17 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
         "submission_payload": submission.content,
     }
     gate_result = _call_oracle(gate_payload, meta=sub_meta)
+
+    # Injection guard result
+    if gate_result.get("injection_detected"):
+        submission.status = SubmissionStatus.policy_violation
+        submission.oracle_feedback = json.dumps({
+            "type": "injection",
+            "reason": gate_result.get("reason", ""),
+            "field": gate_result.get("field", ""),
+        })
+        db.commit()
+        return
 
     if not gate_result.get("overall_passed", False):
         submission.oracle_feedback = json.dumps({

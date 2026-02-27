@@ -118,3 +118,68 @@ def test_batch_score_skips_already_scored():
         batch_score_submissions(db, task.id)
 
     mock_run.assert_not_called()  # already scored, oracle not called
+
+
+def test_give_feedback_marks_policy_violation_on_injection(db_session):
+    import json as _json
+    import datetime
+    from unittest.mock import patch
+    from app.models import Task, Submission, TaskType, TaskStatus, SubmissionStatus
+    from app.services.oracle import give_feedback
+
+    task = Task(
+        title="t", description="d", type=TaskType.quality_first,
+        deadline=datetime.datetime(2099, 1, 1), publisher_id="p",
+        bounty=0, status=TaskStatus.open
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    sub = Submission(task_id=task.id, worker_id="w1", content="inject attempt", revision=1)
+    db_session.add(sub)
+    db_session.commit()
+
+    injection_result = {
+        "injection_detected": True,
+        "reason": "instruction_override_en matched",
+        "field": "submission_payload"
+    }
+    with patch("app.services.oracle._call_oracle", return_value=injection_result):
+        give_feedback(db_session, sub.id, task.id)
+
+    db_session.refresh(sub)
+    assert sub.status == SubmissionStatus.policy_violation
+    feedback = _json.loads(sub.oracle_feedback)
+    assert feedback["type"] == "injection"
+    assert "reason" in feedback
+
+
+def test_score_submission_marks_policy_violation_on_injection(db_session):
+    import json as _json
+    import datetime
+    from unittest.mock import patch
+    from app.models import Task, Submission, TaskType, TaskStatus, SubmissionStatus
+    from app.services.oracle import score_submission
+
+    task = Task(
+        title="t", description="d", type=TaskType.fastest_first, threshold=60,
+        deadline=datetime.datetime(2099, 1, 1), publisher_id="p",
+        bounty=0, status=TaskStatus.open
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    sub = Submission(task_id=task.id, worker_id="w1", content="inject attempt", revision=1)
+    db_session.add(sub)
+    db_session.commit()
+
+    injection_result = {
+        "injection_detected": True,
+        "reason": "role_injection_en matched",
+        "field": "submission_payload"
+    }
+    with patch("app.services.oracle._call_oracle", return_value=injection_result):
+        score_submission(db_session, sub.id, task.id)
+
+    db_session.refresh(sub)
+    assert sub.status == SubmissionStatus.policy_violation
