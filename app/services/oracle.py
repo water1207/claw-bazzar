@@ -96,7 +96,8 @@ def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
     start = time.monotonic()
     result = subprocess.run(
         [sys.executable, str(ORACLE_SCRIPT)],
-        input=json.dumps(payload), capture_output=True, text=True, timeout=120,
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     duration_ms = int((time.monotonic() - start) * 1000)
     if result.returncode != 0:

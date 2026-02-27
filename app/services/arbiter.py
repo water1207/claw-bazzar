@@ -54,7 +54,7 @@ def run_arbitration(db: Session, task_id: str) -> None:
 
     result = subprocess.run(
         [sys.executable, str(ARBITER_SCRIPT)],
-        input=payload, capture_output=True, text=True, timeout=60,
+        input=payload, capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     output = json.loads(result.stdout)
 
