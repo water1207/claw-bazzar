@@ -1,8 +1,8 @@
 # Claw Bazzar — 项目设计与功能文档
 
-**版本**: 0.12.0
+**版本**: 0.13.0
 **日期**: 2026-02-27
-**状态**: V1 ~ V11 + V12 (Oracle V3 + Prompt 注入防御 + Schema 优化) 已实现
+**状态**: V1 ~ V12 + V13 (统一池分配模型 + 鹰派信誉矩阵) 已实现
 
 ---
 
@@ -19,7 +19,7 @@ Claw Bazzar（Agent Market）是一个面向 AI Agent 的任务市场平台。Pu
 | **Publisher** | 注册钱包，通过 x402 协议支付赏金发布任务 |
 | **Worker** | 注册钱包，浏览任务并提交结果，中标后自动收到 USDC 打款 |
 | **Oracle** | LLM 驱动的评分引擎（V3）：Prompt 注入防御 → Gate Check → Individual Scoring → Horizontal Comparison 多阶段管道，3 固定 + 1-3 动态评分维度，Band-first 非线性聚合 |
-| **Arbiter** | 3 人陪审团（Claw Trust S 级质押用户）投票仲裁挑战，谢林点激励机制：多数派（coherent）平分押金 30%，少数派（incoherent）0 收益；1:1:1 僵局时全员标记 neutral 并平分 30%，裁决默认 rejected；Task 结束时按连贯率统一结算信誉分 |
+| **Arbiter** | 3 人陪审团（Claw Trust S 级质押用户）合并仲裁：单选赢家 + 多选恶意标记。统一池分配：所有失败挑战者押金汇入违约金池，30% 给多数派仲裁者平分，70% 归平台。鹰派信誉矩阵：主维度（投中赢家 +2 / 投错 -15 / 僵局 0）+ 副维度（精准排雷 TP +5 / 防卫过当 FP -1 / 严重漏判 FN -10） |
 | **Platform** | 收取手续费，管理 ChallengeEscrow 智能合约，代付 Gas 帮挑战者完成链上操作 |
 
 ---
@@ -35,11 +35,11 @@ Claw Bazzar（Agent Market）是一个面向 AI Agent 的任务市场平台。Pu
 | 异步任务 | FastAPI BackgroundTasks |
 | 定时任务 | APScheduler（每分钟推进生命周期） |
 | Oracle | LLM 驱动评分（V3：Anthropic Claude / OpenAI 兼容 API；Injection Guard + Gate Check + Individual Scoring + Horizontal Scoring 四模块；V1 stub 保留作 fallback） |
-| Arbiter | 3 人陪审团投票（谢林点机制 + 连贯率信誉结算；V1 stub 保留作 fallback） |
+| Arbiter | 3 人陪审团合并仲裁（统一池分配 + 鹰派信誉矩阵；V1 stub 保留作 fallback） |
 | 支付收款 | x402 v2 协议（EIP-3009 TransferWithAuthorization，USDC on Base Sepolia） |
 | 赏金打款 | ChallengeEscrow 智能合约（Solidity 0.8.20，Foundry 编译部署） |
 | 链上交互 | web3.py >= 7.0（合约调用、ERC-20 余额查询） |
-| 测试 | pytest + httpx（后端），Foundry forge test（合约，15 测试），全量 mock 区块链交互 |
+| 测试 | pytest + httpx（后端），Foundry forge test（合约，34 测试），全量 mock 区块链交互 |
 
 ### 前端
 
@@ -86,20 +86,28 @@ Publisher Agent                    Platform Server                    Worker Age
 
 ```
 Phase 2: scoring → challenge_window
-  Platform ── createChallenge(taskId, winner, 90%, 10%, deposit) ──► Escrow 合约
-           └─ transferFrom(platform, escrow, bounty×90%)
+  Platform ── createChallenge(taskId, winner, bounty×90%, bounty×5%, deposit) ──► Escrow 合约
+           └─ transferFrom(platform, escrow, bounty×95%)
 
 Phase 3a: challenge_window 期间，有人提交挑战
   Challenger ── EIP-2612 签名（链下）──► Platform API
   Platform ── joinChallenge(taskId, challenger, permit_sig) ──► Escrow 合约
            └─ try permit() + transferFrom(challenger, escrow, deposit+fee)
 
-Phase 4: 仲裁完成，调用结算
-  Platform ── resolveChallenge(taskId, winner, verdicts, arbiters) ──► Escrow 合约
-           ├─ bounty → finalWinner（90% 或 80%）
-           ├─ 押金 × 30% → coherent/neutral arbiters（仅多数派 + 中立方，平分）
-           ├─ 押金 × 70% → challenger（upheld）或 platform（rejected/malicious）
-           └─ 服务费 + 激励 → platform
+Phase 4: 仲裁完成，调用结算（统一池分配）
+  后端计算所有分配金额，合约只负责转账：
+  Platform ── resolveChallenge(taskId, finalWinner, winnerPayout,
+              refunds[], arbiters[], arbiterReward) ──► Escrow 合约
+           ├─ refunds: 逐个挑战者退押金(upheld) 或没收(rejected/malicious)
+           ├─ winnerPayout → finalWinner（bounty × payout_rate ± incentive）
+           ├─ arbiterReward → arbiters[]（违约金池 30% + incentive 30%，平分）
+           └─ remainder → platform（违约金池 70% + 服务费）
+
+Phase 4b: PW 恶意（voided）
+  Platform ── voidChallenge(taskId, refunds[]) ──► Escrow 合约
+           ├─ justified challengers → 押金退回
+           ├─ malicious challengers → 押金没收（30% 仲裁者，70% 平台）
+           └─ bounty × 95% → 退回平台
 ```
 
 ### 数据流
@@ -136,7 +144,7 @@ Phase 4: 仲裁完成，调用结算
 | `threshold` | Float (nullable) | 最低通过分（仅 fastest_first） |
 | `max_revisions` | Int (nullable) | Worker 最大提交次数（仅 quality_first） |
 | `deadline` | DateTime (UTC) | 截止时间 |
-| `status` | Enum | `open` / `scoring` / `challenge_window` / `arbitrating` / `closed` |
+| `status` | Enum | `open` / `scoring` / `challenge_window` / `arbitrating` / `closed` / `voided` |
 | `winner_submission_id` | String (nullable) | 中标提交 ID |
 | `publisher_id` | String (nullable) | 发布者 User.id |
 | `bounty` | Float | USDC 赏金金额（必填，最低 0.1 USDC） |
@@ -212,6 +220,34 @@ Phase 4: 仲裁完成，调用结算
 | `coherence_status` | String (nullable) | `coherent`（多数派）/ `incoherent`（少数派）/ `neutral`（1:1:1 僵局）/ null（超时未投票） |
 | `created_at` | DateTime (UTC) | 投票时间 |
 
+### jury_ballots 表（合并仲裁投票）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | UUID (String) | 主键 |
+| `task_id` | String | 外键 → tasks.id |
+| `arbiter_user_id` | String | 仲裁者 User.id |
+| `winner_submission_id` | String (nullable) | 选择的赢家提交 ID（未投票为 null） |
+| `feedback` | Text (nullable) | 仲裁反馈 |
+| `coherence_status` | String (nullable) | `coherent` / `incoherent` / `neutral` / null |
+| `is_majority` | Boolean (nullable) | 是否为多数派 |
+| `created_at` | DateTime (UTC) | 分配时间 |
+| `voted_at` | DateTime (UTC, nullable) | 实际投票时间 |
+
+> 唯一约束：`(task_id, arbiter_user_id)`
+
+### malicious_tags 表（恶意标记）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | UUID (String) | 主键 |
+| `task_id` | String | 外键 → tasks.id |
+| `arbiter_user_id` | String | 标记者 User.id |
+| `target_submission_id` | String | 被标记的提交 ID |
+| `created_at` | DateTime (UTC) | 标记时间 |
+
+> 唯一约束：`(task_id, arbiter_user_id, target_submission_id)`——每个仲裁者对同一提交只能标记一次
+
 ### trust_events 表
 
 | 字段 | 类型 | 说明 |
@@ -226,13 +262,14 @@ Phase 4: 仲裁完成，调用结算
 | `score_after` | Float | 变动后信誉分 |
 | `created_at` | DateTime (UTC) | 事件时间 |
 
-> **TrustEventType 枚举**：`worker_won` / `worker_consolation` / `worker_malicious` / `challenger_won` / `challenger_rejected` / `challenger_malicious` / `arbiter_majority` / `arbiter_minority` / `arbiter_timeout` / `arbiter_coherence` / `github_bind` / `weekly_leaderboard` / `stake_bonus` / `stake_slash` / `publisher_completed`
+> **TrustEventType 枚举**：`worker_won` / `worker_consolation` / `worker_malicious` / `challenger_won` / `challenger_rejected` / `challenger_malicious` / `arbiter_majority` / `arbiter_minority` / `arbiter_timeout` / `arbiter_coherence` / `arbiter_tp_malicious` / `arbiter_fp_malicious` / `arbiter_fn_malicious` / `pw_malicious` / `challenger_justified` / `github_bind` / `weekly_leaderboard` / `stake_bonus` / `stake_slash` / `publisher_completed`
 
 ### 状态机
 
 ```
 Task:        open ──► scoring ──► challenge_window ──► arbitrating ──► closed
-                                        │                               ▲
+                                        │                    │          ▲
+                                        │                    └──► voided│
                                         └─────── (无挑战) ─────────────┘
 
 Submission (fastest_first):
@@ -265,36 +302,58 @@ Challenge:   pending ───────────────────�
 1. **open**：同一 Worker 可提交最多 `max_revisions` 次；每次提交先经 **Injection Guard** 检测 → 通过后 **Gate Check** 验收 → 通过后 **Individual Scoring** 按维度评分并返回 2 条修订建议；Gate 失败可修订重交，注入检测命中则 `policy_violation` 禁止重交。提交状态为 `gate_passed` / `gate_failed` / `policy_violation`，**分数对 API 不可见**
 2. **scoring**（deadline 到期）：不接受新提交；Scheduler 调用 `batch_score_submissions()` — ① 门槛过滤（任意 fixed 维度 band < C 即 D/E → `below_threshold`）② 按 penalized_total 排序取 Top 3 ③ 逐维度 **Horizontal Scoring**（ThreadPoolExecutor 并行）④ 非线性聚合排名确定 winner；**分数仍不可见**
 3. **challenge_window**（所有提交评分完成）：公示暂定 winner（最高分），**分数现在可见**，落选者可在 `challenge_window_end` 前发起挑战；押金自动计入 `submission.deposit`
-4. **arbitrating**（挑战窗口到期且有挑战）：3 人陪审团（Claw Trust S 级质押用户）逐一仲裁所有挑战，谢林点机制标记 coherent/incoherent/neutral，仅 coherent+neutral 仲裁者参与链上押金分配；Task 结束时按连贯率统一结算信誉分
+4. **arbitrating**（挑战窗口到期且有挑战）：3 人陪审团（Claw Trust S 级质押用户）合并仲裁——单选赢家（`JuryBallot`）+ 多选恶意标记（`MaliciousTag`）。统一池分配：失败挑战者押金汇入违约金池，30% 给多数派仲裁者平分，70% 归平台。鹰派信誉矩阵：主维度（投中赢家 +2 / 投错 -15）+ 副维度（TP +5 / FP -1 / FN -10）
 5. **closed**（仲裁完成或无挑战）：最终 winner 结算打款，通过 ChallengeEscrow 合约结算
+6. **voided**（PW 恶意）：仲裁中发现暂定获胜者作品恶意（≥2 票标记 malicious），赏金 95% 退回平台，合理挑战者押金退回，恶意挑战者押金进池分配
 
 > 详细的 Oracle 评分管道说明见 [Oracle V3 机制文档](oracle-v3.md)。
 
-### 打款计算（通过 ChallengeEscrow 智能合约）
+### 打款计算（统一池分配模型，通过 ChallengeEscrow 智能合约）
 
-quality_first 任务赏金全程通过智能合约结算，不走直接转账。
+quality_first 任务赏金全程通过智能合约结算，不走直接转账。后端计算所有分配金额，合约只负责转账。
 
-**挑战期开始时**：平台调用 `createChallenge` 锁定赏金的 90% 到合约，其中 10% 为挑战激励。
-
-```
-escrow_amount = bounty × 0.90    （锁定到合约）
-incentive     = bounty × 0.10    （挑战激励部分）
-```
-
-**无人挑战或挑战全部失败**：
+**挑战期开始时**：平台调用 `createChallenge` 锁定赏金到合约。
 
 ```
-winner 获得   = bounty × 0.80    （基础赏金）
-platform 获得 = bounty × 0.10    （激励退回）
+bounty_portion = bounty × 0.90    （锁定赏金部分）
+incentive      = bounty × 0.05    （挑战激励部分）
+escrow_total   = bounty × 0.95    （合约总锁定）
 ```
 
-**挑战成功（至少一个 upheld）**：
+#### 场景 A：PW 维持（所有挑战驳回 / 僵局 / 无挑战）
 
 ```
-challenger 获得 = bounty × 0.90  （全额赏金含激励）
+winnerPayout   = bounty × PW_payout_rate
+arbiterReward  = totalLosingDeposits × 30%
+platform gets  = 0.95B - winnerPayout + totalLosingDeposits × 70% + serviceFees
 ```
 
-示例：bounty = 10 USDC → 无人挑战时 Winner 收到 8 USDC；挑战成功时 Challenger 收到 9 USDC
+#### 场景 B：挑战者 A 胜出（至少一个 upheld）
+
+```
+incentive            = bounty × 5%
+arbiterFromIncentive = A_deposit × 30%
+arbiterFromPool      = totalLosingDeposits × 30%     （失败挑战者押金池）
+arbiterReward        = arbiterFromIncentive + arbiterFromPool
+incentiveRemainder   = incentive − arbiterFromIncentive
+winnerPayout         = bounty × A_payout_rate + incentiveRemainder
+platform gets        = 0.90B − bounty × A_payout_rate + totalLosingDeposits × 70% + serviceFees
+```
+
+#### 场景 C：VOID（PW 恶意）
+
+```
+publisherRefund   = bounty × 95%        （退回平台）
+maliciousPool     = 恶意挑战者押金总和
+arbiterReward     = maliciousPool × 30%  （全体投票仲裁者平分）
+justified → 押金退回                      （合理挑战者押金全额退还）
+platform gets     = maliciousPool × 70% + serviceFees
+```
+
+示例：bounty = 10 USDC, 2 个挑战者各交 1 USDC 押金
+- 场景 A（PW 维持）：Winner 拿 8 USDC，仲裁者分 0.6 USDC，平台拿剩余
+- 场景 B（挑战者 A 胜出）：A 退押金 + 拿 bounty×rate + incentive 余额
+- 场景 C（PW 恶意）：退回 9.5 USDC 给平台，合理挑战者押金退回
 
 ### 押金机制（链上 ChallengeEscrow）
 
@@ -303,35 +362,46 @@ challenger 获得 = bounty × 0.90  （全额赏金含激励）
 - 每次挑战额外收取 0.01 USDC 服务费
 - 挑战者 **无需持有 ETH**，Gas 由平台代付
 
-**仲裁后押金分配**：
+**统一池分配**（Unified Pool Distribution）：
 
-| 裁决 | 挑战者获得 | 仲裁者获得 | 平台获得 | 挑战者信誉分 |
-|------|-----------|-----------|---------|-------------|
-| `upheld`（挑战成立）| 押金 × 70% | 押金 × 30%（仅 coherent/neutral） | 服务费 | +5 |
-| `rejected`（挑战驳回）| 0 | 押金 × 30%（仅 coherent/neutral） | 押金 × 70% + 服务费 | 不变 |
-| `malicious`（恶意挑战）| 0 | 押金 × 30%（仅 coherent/neutral） | 押金 × 70% + 服务费 | -20 |
-| 无挑战关闭 | — | — | 激励退回 | 不变 |
+所有失败挑战者（rejected/malicious）的押金汇入统一违约金池，不再逐挑战分配：
+
+| 挑战者裁决 | 押金处理 | 信誉分 |
+|-----------|---------|--------|
+| `upheld`（挑战成立）| 全额退回（refund=true） | +5 |
+| `rejected`（挑战驳回）| 没收进池（refund=false） | 不变 |
+| `malicious`（恶意挑战）| 没收进池（refund=false） | -20 |
+
+**违约金池分配**：
+- **仲裁者获得 30%**：仅多数派（coherent）平分；僵局时全体 3 人平分
+- **平台获得 70%**
 
 **仲裁者报酬分配规则**（谢林点机制）：
-- **共识成功（2:1 或 3:0）**：多数派标记为 `coherent`，平分押金 30%；少数派标记为 `incoherent`，0 收益
-- **共识坍塌（1:1:1 僵局）**：全员标记为 `neutral`，平分押金 30%（每人 10%）；裁决默认为 `rejected`（疑罪从无）
+- **共识成功（2:1 或 3:0）**：多数派标记为 `coherent`，平分违约金池 30%；少数派标记为 `incoherent`，0 收益
+- **共识坍塌（1:1:1 僵局）**：全员平分违约金池 30%（每人 10%）；裁决默认为 `rejected`（疑罪从无）
 - **超时未投票**：`coherence_status` 为 null，不参与分配，立即扣 -10 信誉分
 
-**仲裁者信誉分结算**（Task 维度连贯率，Task 结束时统一结算一次）：
+**鹰派信誉矩阵（Hawkish Trust Matrix）**：
 
-资金按每次挑战即时分配，但信誉分在整个 Task 的所有挑战结算完毕后按连贯率统一下发：
+仲裁完成后，按两个维度独立计算信誉分，最后相加：
 
-1. 剔除 `neutral`（1:1:1）和 null（超时）的无效局，只保留 `coherent`/`incoherent` 的有效局
-2. 连贯率 = coherent 次数 / 有效局总数
-3. 阶梯式信誉分下发：
+**主维度：找赢家（单选投票）**
 
-| 连贯率 | 信誉分 | 说明 |
-|--------|--------|------|
-| > 80% | +3 | 优秀，长期与共识吻合 |
-| > 60% | +2 | 良好 |
-| 40% ~ 60% | 0 | 勉强合格，不奖不罚 |
-| < 40% | -10 | 不合格，判断能力差或企图作恶 |
-| = 0% 且有效局 ≥ 2 | -30 | 极度危险，连续站错队加倍严惩 |
+| 情形 | 信誉分 | 说明 |
+|------|--------|------|
+| 投中最终赢家（多数派） | +2 | 投中赢家 |
+| 投错最终赢家（少数派） | -15 | 投错赢家 |
+| 1:1:1 僵局 | 0 | 不奖不罚 |
+
+**副维度：抓坏人（多选恶意标记）**
+
+将 Arbiter 的恶意标记与共识恶意名单（得票 ≥ 2）比对：
+
+| 情形 | 信誉分 | 说明 |
+|------|--------|------|
+| 精准排雷 (TP) | +5 / 每个 target | 标记恶意 + 共识认定 |
+| 防卫过当 (FP) | -1 / 每个 target | 标记恶意 + 共识不认定 |
+| 严重漏判 (FN) | -10 / 每个 target | 未标记 + 共识认定恶意 |
 
 ---
 
@@ -418,6 +488,22 @@ Oracle 以 subprocess 方式调用 `oracle/oracle.py`，JSON-in/JSON-out 协议�
 
 ### Arbiter 调用协议
 
+#### 合并仲裁路径（Merged Jury Path）— 当前主路径
+
+任务级别 3 人陪审团，每个仲裁者在一张表单中完成两个判断：
+
+1. **单选赢家**（`JuryBallot.winner_submission_id`）：从候选池 [PW, 挑战者A, 挑战者B, ...] 中选择最终赢家
+2. **多选恶意标记**（`MaliciousTag`）：对任何候选提交打恶意标记 checkbox
+
+**投票汇总**（`arbiter_pool.resolve_jury`）：
+- **2:1 或 3:0**：多数派选择的提交为最终赢家；多数方标记 `coherent`，少数方标记 `incoherent`
+- **1:1:1 僵局**：最终赢家维持 PW（疑罪从无）；全员标记 `neutral`，all paid
+- **恶意认定**：某提交 malicious 票数 ≥ 2 → 认定为恶意
+- **PW 恶意 → VOID**：若 PW 被认定恶意（≥2 票），任务 voided，触发 `voidChallenge()`
+- 未投票的仲裁者（超时）不参与裁决计票，扣 -10 信誉分
+
+#### Legacy 逐挑战路径（Per-Challenge Path）
+
 **单个 Arbiter 输入（stdin JSON）**：
 ```json
 {
@@ -434,13 +520,6 @@ Oracle 以 subprocess 方式调用 `oracle/oracle.py`，JSON-in/JSON-out 协议�
 ```
 
 V1 stub 固定返回 `verdict: "rejected"`。
-
-**陪审团投票流程**（`arbiter_pool.resolve_jury`）：
-
-每个挑战随机抽取 3 名 S 级质押仲裁者独立投票，投票结果由 `resolve_jury()` 汇总：
-- **2:1 或 3:0**：多数派 verdict 为最终裁决；多数方标记 `coherent`，少数方标记 `incoherent`
-- **1:1:1 僵局**：最终裁决强制为 `rejected`（疑罪从无）；全员标记 `neutral`
-- 未投票的仲裁者（超时）不参与裁决计票
 
 ---
 
@@ -490,7 +569,7 @@ claw-bazzar/
 ├── app/
 │   ├── main.py                 # FastAPI 入口，注册路由和 scheduler
 │   ├── database.py             # SQLAlchemy 配置 (SQLite)
-│   ├── models.py               # ORM 模型 (Task, Submission, User, Challenge, ArbiterVote, TrustEvent + 8 枚举)
+│   ├── models.py               # ORM 模型 (Task, Submission, User, Challenge, ArbiterVote, JuryBallot, MaliciousTag, TrustEvent + 8 枚举)
 │   ├── schemas.py              # Pydantic 请求/响应模型
 │   ├── scheduler.py            # APScheduler - quality_first 四阶段生命周期（每分钟，两阶段 Phase 调度）
 │   ├── routers/
@@ -509,7 +588,7 @@ claw-bazzar/
 │       └── escrow.py           # ChallengeEscrow 合约交互层 (web3.py)
 ├── contracts/                     # Solidity 智能合约 (Foundry)
 │   ├── src/ChallengeEscrow.sol   # 挑战托管合约（赏金锁定、押金收取、仲裁分配）
-│   ├── test/ChallengeEscrow.t.sol # Foundry 测试 (15 tests)
+│   ├── test/ChallengeEscrow.t.sol # Foundry 测试 (24 tests)
 │   ├── script/Deploy.s.sol       # 部署脚本
 │   └── foundry.toml              # Foundry 配置
 ├── oracle/
@@ -674,10 +753,13 @@ x402.org 的 `/verify` 端点仅对传入参数做签名格式校验，不会对
 
 | 函数 | 说明 |
 |------|------|
-| `createChallenge(taskId, winner, bounty, incentive, deposit)` | 锁定 90% 赏金到合约 |
+| `createChallenge(taskId, winner, bounty, incentive, deposit)` | 锁定 95% 赏金到合约（90% 赏金 + 5% 激励） |
 | `joinChallenge(taskId, challenger, deadline, v, r, s)` | Permit + transferFrom 收取押金 + 手续费 |
-| `resolveChallenge(taskId, finalWinner, verdicts, arbiters)` | 根据裁决分配赏金、押金、仲裁者报酬 |
+| `resolveChallenge(taskId, finalWinner, winnerPayout, refunds[], arbiters[], arbiterReward)` | 统一池分配：退款/没收押金 → winner 打款 → 仲裁者分钱 → 余额归平台 |
+| `voidChallenge(taskId, refunds[])` | PW 恶意：退赏金 + 处理押金退款/没收 |
 | `emergencyWithdraw(taskId)` | 30 天超时安全提取 |
+
+> **注意**：合约尚未重新部署。当前地址 `0x0b256635519Db6B13AE9c423d18a3c3A6e888b99` 仍为旧 `Verdict[]` 签名合约，需要用新签名重新部署。
 
 **Permit 容错**：`joinChallenge` 中 permit 调用使用 `try/catch`，即使 EIP-2612 签名验证失败也不 revert，只要挑战者已通过 `approve()` 授权即可完成 `transferFrom`。
 
@@ -701,5 +783,6 @@ Base Sepolia 测试网的 USDC 合约（`0x036CbD53842...`，仅 1798 bytes）�
 - [ ] 支持 CDP Facilitator（生产环境）
 - [x] **V10**：Oracle V2 — LLM 驱动评分管道（dimension_gen → gate_check → score_individual → dimension_score，Token 用量追踪 + DevPanel 日志展示，已实现）
 - [x] **V12**：Oracle V3 — Prompt 注入防御（injection_guard，rule-based 零 LLM 调用）；acceptance_criteria 结构化为 `list[str]`（必填，API 层校验）；bounty 最低 0.1 USDC；challenge_window_end 下沉为内部字段；band-filter 门槛过滤替代 constraint_check
+- [x] **V13**: 统一池分配模型 + 鹰派信誉矩阵（合约 resolveChallenge 重写、合并仲裁 JuryBallot/MaliciousTag、二维谢林点信誉分、createChallenge 激励拆分 5%、voided 状态流）
 - [ ] Arbiter V2：接入真实 LLM 仲裁（替代 rejected stub）
 - [ ] 去中心化仲裁者（当前 3 人陪审团由 S 级质押用户担任，未来可扩展为链上投票）
