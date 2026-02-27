@@ -51,7 +51,7 @@ def _send_usdc_transfer(to_address: str, amount: float) -> str:
 def refund_publisher(db: Session, task_id: str, rate: float = 1.0) -> None:
     """Refund the publisher. rate=1.0 for full refund, 0.95 for 95% refund."""
     task = db.query(Task).filter(Task.id == task_id).first()
-    if not task or not task.bounty or task.bounty <= 0:
+    if not task:
         return
     if task.payout_status in (PayoutStatus.paid, PayoutStatus.refunded):
         return
