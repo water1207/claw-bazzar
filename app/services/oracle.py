@@ -589,6 +589,11 @@ def _apply_fastest_first(db: Session, task: Task, submission: Submission) -> Non
         pay_winner(db, task.id)
         from .trust import apply_event
         from ..models import TrustEventType, User
+        # Worker wins trust event
+        if db.query(User).filter_by(id=submission.worker_id).first():
+            apply_event(db, submission.worker_id, TrustEventType.worker_won,
+                        task_bounty=task.bounty or 0.0, task_id=task.id)
+        # Publisher completed trust event
         if db.query(User).filter_by(id=task.publisher_id).first():
             apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
                         task_bounty=task.bounty or 0.0, task_id=task.id)
