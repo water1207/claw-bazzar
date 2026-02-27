@@ -17,23 +17,10 @@ import { ArbiterPanel } from '@/components/ArbiterPanel'
 import { BalanceTrustHistoryPanel } from '@/components/BalanceTrustHistoryPanel'
 import { TrustBadge } from '@/components/TrustBadge'
 import type { Hex } from 'viem'
+import { DEV_PUBLISHER, DEV_WORKERS } from '@/lib/dev-wallets'
 
-const DEV_PUBLISHER_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_PUBLISHER_WALLET_KEY as Hex | undefined
 const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET as Hex | undefined
 const ESCROW_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || ''
-
-interface WorkerDef {
-  key: Hex
-  nickname: string
-  storageKey: string
-  trustScore: number
-}
-
-const DEV_WORKERS: WorkerDef[] = [
-  { key: process.env.NEXT_PUBLIC_DEV_WORKER_WALLET_KEY as Hex, nickname: 'Alice', storageKey: 'devWorkerId', trustScore: 850 },
-  { key: process.env.NEXT_PUBLIC_DEV_WORKER2_WALLET_KEY as Hex, nickname: 'Bob', storageKey: 'devWorker2Id', trustScore: 550 },
-  { key: process.env.NEXT_PUBLIC_DEV_WORKER3_WALLET_KEY as Hex, nickname: 'Charlie', storageKey: 'devWorker3Id', trustScore: 350 },
-].filter((w) => w.key)
 
 const PRESETS = [
   { label: '1h', value: '1', unit: 'hours' },
@@ -330,8 +317,8 @@ function OracleLogsPanel() {
 
 export function DevPanel() {
   const publisherAddress = useMemo(() => {
-    if (!DEV_PUBLISHER_WALLET_KEY) return null
-    try { return getDevWalletAddress(DEV_PUBLISHER_WALLET_KEY) } catch { return null }
+    if (!DEV_PUBLISHER?.key) return null
+    try { return getDevWalletAddress(DEV_PUBLISHER.key) } catch { return null }
   }, [])
 
   const workerAddresses = useMemo(
@@ -345,7 +332,7 @@ export function DevPanel() {
   const activeWorker = DEV_WORKERS[activeWorkerIdx]
   const activeWorkerAddress = workerAddresses[activeWorkerIdx] ?? null
 
-  const envError = !DEV_PUBLISHER_WALLET_KEY || !PLATFORM_WALLET
+  const envError = !DEV_PUBLISHER?.key || !PLATFORM_WALLET
 
   // Register form state
   const [nickname, setNickname] = useState('')
@@ -478,15 +465,14 @@ export function DevPanel() {
       } catch {}
     }
 
-    // Publisher (S-tier: 850)
+    // Publisher
     let pubId: string | null = null
-    if (DEV_PUBLISHER_WALLET_KEY) {
-      pubId = await resolveUser('devPublisherId', 'dev-publisher', publisherAddress!, 'publisher')
-      if (pubId) await ensureTrustScore(pubId, 850)
+    if (DEV_PUBLISHER) {
+      pubId = await resolveUser(DEV_PUBLISHER.storageKey, DEV_PUBLISHER.nickname, publisherAddress!, 'publisher')
+      if (pubId) await ensureTrustScore(pubId, DEV_PUBLISHER.trustScore ?? 850)
     }
     if (pubId) setPublisherId(pubId)
 
-    // All workers (Alice=850/S, Bob=550/A, Charlie=350/B)
     const ids: string[] = []
     for (let i = 0; i < DEV_WORKERS.length; i++) {
       const w = DEV_WORKERS[i]
@@ -494,7 +480,7 @@ export function DevPanel() {
       let wrkId: string | null = null
       if (addr) {
         wrkId = await resolveUser(w.storageKey, w.nickname, addr, 'worker')
-        if (wrkId) await ensureTrustScore(wrkId, w.trustScore)
+        if (wrkId) await ensureTrustScore(wrkId, w.trustScore ?? 500)
       }
       ids.push(wrkId || '')
     }
@@ -577,12 +563,12 @@ export function DevPanel() {
       const bountyAmount = bounty ? parseFloat(bounty) : 0
       let paymentHeader: string | undefined
       if (bountyAmount > 0) {
-        if (!DEV_PUBLISHER_WALLET_KEY || !PLATFORM_WALLET) {
+        if (!DEV_PUBLISHER?.key || !PLATFORM_WALLET) {
           setPublishError('Error: DEV_PUBLISHER_WALLET_KEY or PLATFORM_WALLET env vars not set')
           return
         }
         paymentHeader = await signX402Payment({
-          privateKey: DEV_PUBLISHER_WALLET_KEY,
+          privateKey: DEV_PUBLISHER.key,
           payTo: PLATFORM_WALLET,
           amount: bountyAmount,
         })

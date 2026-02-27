@@ -9,16 +9,7 @@ import { useBalanceEvents, useTrustEvents } from '@/lib/api'
 import type { BalanceEvent, TrustEvent } from '@/lib/api'
 import { TrustBadge } from '@/components/TrustBadge'
 import type { TrustTier } from '@/lib/api'
-
-const STORAGE_KEYS = [
-  { label: 'Publisher', key: 'devPublisherId' },
-  { label: 'Alice', key: 'devWorkerId' },
-  { label: 'Bob', key: 'devWorker2Id' },
-  { label: 'Charlie', key: 'devWorker3Id' },
-  { label: 'Arbiter \u03b1', key: 'devArbiter0Id' },
-  { label: 'Arbiter \u03b2', key: 'devArbiter1Id' },
-  { label: 'Arbiter \u03b3', key: 'devArbiter2Id' },
-]
+import { ALL_DEV_USERS } from '@/lib/dev-wallets'
 
 const EVENT_LABELS: Record<string, { label: string; color: string }> = {
   bounty_paid: { label: 'Bounty Paid', color: 'bg-orange-500/20 text-orange-300' },
@@ -180,7 +171,7 @@ export function BalanceTrustHistoryPanel() {
   const [available, setAvailable] = useState<{ label: string; key: string; id: string }[]>([])
   useEffect(() => {
     const found: { label: string; key: string; id: string }[] = []
-    for (const sk of STORAGE_KEYS) {
+    for (const sk of ALL_DEV_USERS) {
       const id = localStorage.getItem(sk.key)
       if (id) found.push({ ...sk, id })
     }

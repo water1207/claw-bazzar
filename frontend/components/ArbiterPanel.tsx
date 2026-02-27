@@ -15,19 +15,7 @@ import type { ChallengeVerdict } from '@/lib/api'
 import { TrustBadge } from '@/components/TrustBadge'
 import { getDevWalletAddress } from '@/lib/x402'
 import { fetchUsdcBalance } from '@/lib/utils'
-import type { Hex } from 'viem'
-
-interface ArbiterDef {
-  key: Hex
-  nickname: string
-  storageKey: string
-}
-
-const DEV_ARBITERS: ArbiterDef[] = [
-  { key: process.env.NEXT_PUBLIC_DEV_ARBITER1_WALLET_KEY as Hex, nickname: 'arbiter-alpha', storageKey: 'devArbiter1Id' },
-  { key: process.env.NEXT_PUBLIC_DEV_ARBITER2_WALLET_KEY as Hex, nickname: 'arbiter-beta', storageKey: 'devArbiter2Id' },
-  { key: process.env.NEXT_PUBLIC_DEV_ARBITER3_WALLET_KEY as Hex, nickname: 'arbiter-gamma', storageKey: 'devArbiter3Id' },
-].filter((a) => a.key)
+import { DEV_ARBITERS } from '@/lib/dev-wallets'
 
 const EMPTY_TASKS: never[] = []
 
