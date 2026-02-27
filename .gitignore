@@ -44,6 +44,10 @@ __pycache__/
 venv/
 *.egg-info/
 market.db
+agent_market.db
+tasks.db
+nul
+tmp_openapi.json
 
 # Misc
 *.tsbuildinfo
