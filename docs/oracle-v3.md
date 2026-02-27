@@ -42,8 +42,8 @@ LLM 驱动的多阶段评分管道。核心特征：Band-first 评分、非线�
                         └ clean
                           → Gate Check ─ fail → gate_failed（可修订重交）
                                         └ pass → gate_passed
-                                                  → Individual Scoring
-                                                    → gate_passed（分数隐藏，返回 2 条修订建议）
+                                                  → Individual Scoring（分数隐藏，返回 2 条修订建议）
+                                                    （状态仍为 gate_passed，等 deadline 后 batch_score）
 
 Deadline 到期 → batch_score_submissions:
   1. 门槛过滤：任意 fixed 维度 band < C（即 D 或 E）→ below_threshold
