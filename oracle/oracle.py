@@ -59,9 +59,23 @@ def main():
     _register_v2_modules()
 
     if mode in V2_MODES:
-        # Reset and track token usage for V2 LLM calls
         from llm_client import reset_accumulated_usage, get_accumulated_usage
         reset_accumulated_usage()
+
+        # Injection guard: run before any LLM call
+        if mode in ("gate_check", "score_individual", "dimension_score"):
+            import injection_guard
+            guard = injection_guard.check_payload(payload, mode)
+            if guard["detected"]:
+                result = {
+                    "injection_detected": True,
+                    "reason": guard["reason"],
+                    "field": guard["field"],
+                    "_token_usage": get_accumulated_usage(),
+                }
+                print(json.dumps(result))
+                return
+
         result = V2_MODES[mode](payload)
         result["_token_usage"] = get_accumulated_usage()
     else:
