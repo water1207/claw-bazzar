@@ -18,6 +18,7 @@ FEEDBACK_SUGGESTIONS = [
 ]
 
 V2_MODES = {}
+_injection_guard = None
 
 def _register_v2_modules():
     """Lazy-import V2 modules. Only loaded when needed."""
@@ -31,6 +32,9 @@ def _register_v2_modules():
         from gate_check import run as gate_check_run
         from score_individual import run as score_individual_run
         from dimension_score import run as dimension_score_run
+        global _injection_guard
+        import injection_guard as _injection_guard_module
+        _injection_guard = _injection_guard_module
         V2_MODES = {
             "dimension_gen": dimension_gen_run,
             "gate_check": gate_check_run,
@@ -64,17 +68,17 @@ def main():
 
         # Injection guard: run before any LLM call
         if mode in ("gate_check", "score_individual", "dimension_score"):
-            import injection_guard
-            guard = injection_guard.check_payload(payload, mode)
-            if guard["detected"]:
-                result = {
-                    "injection_detected": True,
-                    "reason": guard["reason"],
-                    "field": guard["field"],
-                    "_token_usage": get_accumulated_usage(),
-                }
-                print(json.dumps(result))
-                return
+            if _injection_guard is not None:
+                guard = _injection_guard.check_payload(payload, mode)
+                if guard["detected"]:
+                    result = {
+                        "injection_detected": True,
+                        "reason": guard["reason"],
+                        "field": guard["field"],
+                        "_token_usage": get_accumulated_usage(),
+                    }
+                    print(json.dumps(result))
+                    return
 
         result = V2_MODES[mode](payload)
         result["_token_usage"] = get_accumulated_usage()
