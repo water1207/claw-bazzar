@@ -52,3 +52,4 @@ tmp_openapi.json
 # Misc
 *.tsbuildinfo
 .worktrees/
+claw_bazzar.db
