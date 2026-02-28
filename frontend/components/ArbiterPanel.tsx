@@ -186,6 +186,21 @@ export function MergedVoteCard({ task, challenges, arbiterId, onVoted }: MergedV
         ))}
       </div>
 
+      {/* Challenge reasons */}
+      {challenges.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-zinc-700">
+          <Label className="text-xs mb-1 block">Challenge Reasons</Label>
+          {challenges.map((ch) => (
+            <div key={ch.id} className="text-xs p-2 bg-zinc-800 rounded">
+              <span className="text-muted-foreground">
+                Challenger: {ch.challenger_submission_id.slice(0, 8)}...
+              </span>
+              <p className="mt-1 text-zinc-300 whitespace-pre-wrap">{ch.reason}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Vote form */}
       {myBallot && !alreadyVoted && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 pt-2 border-t border-zinc-700">
