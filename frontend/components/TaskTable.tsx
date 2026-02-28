@@ -2,13 +2,10 @@
 
 import { useMemo, useState } from 'react'
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table'
-import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Task } from '@/lib/api'
-import { formatDeadline, formatDate, formatBounty } from '@/lib/utils'
+import { formatDeadline, formatBounty } from '@/lib/utils'
 import { StatusBadge } from './StatusBadge'
 import { TypeBadge } from './TypeBadge'
 
@@ -35,10 +32,10 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
 
   return (
     <div className="flex flex-col gap-3 h-full overflow-hidden">
-      {/* Filter controls */}
-      <div className="flex gap-2 flex-wrap">
+      {/* Filter bar */}
+      <div className="flex gap-2 items-center">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-28 h-8 text-xs">
+          <SelectTrigger className="h-7 text-xs flex-1 min-w-0">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -48,11 +45,12 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
             <SelectItem value="challenge_window">Challenge</SelectItem>
             <SelectItem value="arbitrating">Arbitrating</SelectItem>
             <SelectItem value="closed">Closed</SelectItem>
+            <SelectItem value="voided">Voided</SelectItem>
           </SelectContent>
         </Select>
 
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-28 h-8 text-xs">
+          <SelectTrigger className="h-7 text-xs flex-1 min-w-0">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
           <SelectContent>
@@ -63,72 +61,61 @@ export function TaskTable({ tasks, selectedId, onSelect }: Props) {
         </Select>
 
         <button
-          className="text-xs text-muted-foreground hover:text-foreground ml-auto"
+          className="text-xs text-muted-foreground hover:text-foreground shrink-0 tabular-nums"
           onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
         >
-          Deadline {sortDir === 'asc' ? '↑' : '↓'}
+          DDL {sortDir === 'asc' ? '↑' : '↓'}
         </button>
       </div>
 
-      {/* Task list */}
-      <div className="overflow-auto flex-1">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="min-w-[140px]">Title</TableHead>
-              <TableHead className="w-20">Type</TableHead>
-              <TableHead className="w-20">Bounty</TableHead>
-              <TableHead className="w-20">Status</TableHead>
-              <TableHead className="w-28">Published</TableHead>
-              <TableHead className="w-24">Deadline</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((task) => {
-              const { label, expired } = formatDeadline(task.deadline)
-              const isSelected = selectedId === task.id
-              return (
-                <TableRow
-                  key={task.id}
-                  className={`cursor-pointer ${
-                    isSelected ? 'bg-accent' : 'hover:bg-muted/50'
-                  }`}
-                  onClick={() => onSelect(task.id)}
-                >
-                  <TableCell className="font-medium">
-                    {task.title}
-                  </TableCell>
-                  <TableCell>
-                    <TypeBadge type={task.type} />
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
+      {/* Task card list */}
+      <div className="overflow-auto flex-1 space-y-1.5 pr-0.5">
+        {filtered.map((task) => {
+          const { label, expired } = formatDeadline(task.deadline)
+          const isSelected = selectedId === task.id
+          return (
+            <div
+              key={task.id}
+              onClick={() => onSelect(task.id)}
+              className={[
+                'p-3 rounded-lg border cursor-pointer transition-colors select-none',
+                isSelected
+                  ? 'bg-accent border-accent-foreground/20'
+                  : 'border-border hover:bg-muted/40',
+              ].join(' ')}
+            >
+              {/* Row 1: Title + Bounty */}
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <span className="font-medium text-sm leading-snug line-clamp-2 flex-1">
+                  {task.title}
+                </span>
+                {task.bounty !== null && task.bounty > 0 && (
+                  <span className="font-mono text-sm text-green-400 shrink-0 tabular-nums">
                     {formatBounty(task.bounty)}
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={task.status} />
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                    {formatDate(task.created_at)}
-                  </TableCell>
-                  <TableCell
-                    className={`text-xs whitespace-nowrap ${
-                      expired ? 'text-red-400' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {label}
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-            {filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
-                  No tasks found
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+                  </span>
+                )}
+              </div>
+              {/* Row 2: Type + Status + Deadline */}
+              <div className="flex items-center gap-1.5">
+                <TypeBadge type={task.type} />
+                <StatusBadge status={task.status} />
+                <span
+                  className={[
+                    'ml-auto text-[11px] tabular-nums',
+                    expired ? 'text-red-400' : 'text-muted-foreground',
+                  ].join(' ')}
+                >
+                  {label}
+                </span>
+              </div>
+            </div>
+          )
+        })}
+        {filtered.length === 0 && (
+          <div className="text-center text-muted-foreground text-sm py-12">
+            No tasks found
+          </div>
+        )}
       </div>
     </div>
   )
