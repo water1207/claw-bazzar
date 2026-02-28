@@ -553,7 +553,10 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
             scores_list = all_scores[dim_id].get("scores", [])
             entry = next((s for s in scores_list if s["submission"] == label), None)
             if entry:
+                ind_ir = individual_ir_map.get(dim_id, {}).get(label, {})
                 breakdown[dim_id] = {
+                    "score": entry["final_score"],
+                    "band": ind_ir.get("band", "?"),
                     "raw_score": entry["raw_score"],
                     "final_score": entry["final_score"],
                     "evidence": entry.get("evidence", ""),

@@ -61,7 +61,7 @@ export function SubmissionTable({ submissions, task }: Props) {
                 {sub.revision}
               </TableCell>
               <TableCell className={`text-center font-mono text-sm ${scoreColor(sub.score, task.threshold)}`}>
-                {sub.score !== null ? sub.score.toFixed(1) : '—'}
+                {sub.score !== null ? (sub.score * 100).toFixed(1) : '—'}
                 {isWinner && ' 🏆'}
               </TableCell>
               <TableCell className={`text-xs ${STATUS_COLOR[sub.status] ?? 'text-muted-foreground'}`}>
