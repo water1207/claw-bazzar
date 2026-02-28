@@ -38,8 +38,10 @@ function buildCandidatePool(
 ): { id: string; label: string; isPW: boolean }[] {
   const pool: { id: string; label: string; isPW: boolean }[] = []
 
+  const submissions = task.submissions ?? []
+
   // PW = the current winner submission
-  const pwSub = task.submissions.find((s) => s.id === task.winner_submission_id)
+  const pwSub = submissions.find((s) => s.id === task.winner_submission_id)
   if (pwSub) {
     pool.push({
       id: pwSub.id,
@@ -51,7 +53,7 @@ function buildCandidatePool(
   // Challengers
   const challengerSubIds = new Set(challenges.map((c) => c.challenger_submission_id))
   for (const subId of challengerSubIds) {
-    const sub = task.submissions.find((s) => s.id === subId)
+    const sub = submissions.find((s) => s.id === subId)
     if (sub) {
       pool.push({
         id: sub.id,
