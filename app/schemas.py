@@ -23,6 +23,11 @@ class UserCreate(BaseModel):
     wallet: str
     role: UserRole
 
+    @field_validator("wallet")
+    @classmethod
+    def normalize_wallet(cls, v: str) -> str:
+        return v.lower()
+
 
 class UserOut(BaseModel):
     id: str

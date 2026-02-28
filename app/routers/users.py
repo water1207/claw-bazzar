@@ -21,8 +21,9 @@ def get_user_by_nickname(nickname: str = Query(...), db: Session = Depends(get_d
 @router.post("", response_model=UserOut)
 def register_user(data: UserCreate, response: Response, db: Session = Depends(get_db)):
     # Check if wallet+role already registered — return existing user
+    # Use func.lower() for case-insensitive comparison to handle EIP-55 checksum variants
     existing_wallet = db.query(User).filter(
-        User.wallet == data.wallet, User.role == data.role
+        func.lower(User.wallet) == data.wallet.lower(), User.role == data.role
     ).first()
     if existing_wallet:
         return existing_wallet
