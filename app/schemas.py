@@ -176,11 +176,11 @@ class SubmissionOut(BaseModel):
 class ChallengeCreate(BaseModel):
     challenger_submission_id: str
     reason: str
-    challenger_wallet: Optional[str] = None
-    permit_deadline: Optional[int] = None
-    permit_v: Optional[int] = None
-    permit_r: Optional[str] = None
-    permit_s: Optional[str] = None
+    challenger_wallet: str
+    permit_deadline: int
+    permit_v: int
+    permit_r: str
+    permit_s: str
 
 
 class ChallengeOut(BaseModel):
