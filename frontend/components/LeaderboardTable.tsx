@@ -91,9 +91,11 @@ export function LeaderboardTable({ entries }: Props) {
                       {e.nickname}
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                      {e.wallet && (
                       <span className="font-mono">
                         {e.wallet.slice(0, 6)}...{e.wallet.slice(-4)}
                       </span>
+                      )}
                       {e.github_id && (
                         <span className="font-mono">gh:{e.github_id}</span>
                       )}
