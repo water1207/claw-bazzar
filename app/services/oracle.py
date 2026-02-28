@@ -572,6 +572,36 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
 
     ranking.sort(key=lambda x: x["final_score"], reverse=True)
 
+    # Step 5: Assemble comparative_feedback for winner
+    winner_entry = ranking[0] if ranking else None
+    comparative_feedback_json = None
+    if winner_entry:
+        advantages = []
+        for dim_data in dims_data:
+            dim_id = dim_data["id"]
+            dim_result = all_scores.get(dim_id, {})
+            advantage = dim_result.get("winner_advantage", "")
+            if advantage:
+                advantages.append(f"• {dim_data['name']}: {advantage}")
+
+        rationale_lines = advantages if advantages else ["• 综合评分最高"]
+        winner_rationale = f"Winner 在 {len(dims_data)} 个维度中综合表现最优：\n" + "\n".join(rationale_lines)
+
+        rankings_list = []
+        for rank_idx, entry in enumerate(ranking):
+            sub = label_map[entry["label"]]
+            rankings_list.append({
+                "rank": rank_idx + 1,
+                "submission_id": sub.id,
+                "worker_id": sub.worker_id,
+                "final_score": entry["final_score"],
+            })
+
+        comparative_feedback_json = json.dumps({
+            "winner_rationale": winner_rationale,
+            "rankings": rankings_list,
+        }, ensure_ascii=False)
+
     # Write back to submissions
     for rank_idx, entry in enumerate(ranking):
         sub = label_map[entry["label"]]
@@ -587,6 +617,10 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
         })
         sub.score = entry["final_score"] / 100.0
         sub.status = SubmissionStatus.scored
+
+        # Only winner gets comparative_feedback
+        if rank_idx == 0 and comparative_feedback_json:
+            sub.comparative_feedback = comparative_feedback_json
 
     # Mark remaining eligible subs (outside top 3) as scored
     for sub in eligible:

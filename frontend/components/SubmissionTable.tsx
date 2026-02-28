@@ -1,11 +1,13 @@
 'use client'
 
+import { useState } from 'react'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { Submission, Task, useUser } from '@/lib/api'
 import { TrustBadge } from '@/components/TrustBadge'
 import { FeedbackCard } from '@/components/FeedbackCard'
+import { ComparativeTab } from '@/components/ComparativeTab'
 import { scoreColor } from '@/lib/utils'
 
 function WorkerCell({ workerId }: { workerId: string }) {
@@ -32,6 +34,62 @@ const STATUS_COLOR: Record<string, string> = {
 interface Props {
   submissions: Submission[]
   task: Task
+}
+
+function isTopRanked(sub: Submission): boolean {
+  if (!sub.oracle_feedback) return false
+  try {
+    const fb = JSON.parse(sub.oracle_feedback)
+    return fb.type === 'scoring' && typeof fb.rank === 'number' && fb.rank <= 3
+  } catch {
+    return false
+  }
+}
+
+function SubmissionFeedbackCell({ sub, task, allSubmissions }: { sub: Submission; task: Task; allSubmissions: Submission[] }) {
+  const [activeTab, setActiveTab] = useState<'feedback' | 'comparative'>('feedback')
+  const showComparativeTab = task.type === 'quality_first' && isTopRanked(sub)
+
+  if (!sub.oracle_feedback && !showComparativeTab) {
+    return <span className="text-muted-foreground text-xs">—</span>
+  }
+
+  if (!showComparativeTab) {
+    return sub.oracle_feedback
+      ? <FeedbackCard raw={sub.oracle_feedback} taskStatus={task.status} />
+      : <span className="text-muted-foreground text-xs">—</span>
+  }
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-1.5 border-b border-zinc-800 pb-1">
+        <button
+          type="button"
+          onClick={() => setActiveTab('feedback')}
+          className={`text-[11px] px-1.5 py-0.5 rounded ${activeTab === 'feedback' ? 'bg-zinc-700 text-white' : 'text-muted-foreground hover:text-white'}`}
+        >
+          评分详情
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('comparative')}
+          className={`text-[11px] px-1.5 py-0.5 rounded ${activeTab === 'comparative' ? 'bg-zinc-700 text-white' : 'text-muted-foreground hover:text-white'}`}
+        >
+          横向比较
+        </button>
+      </div>
+      {activeTab === 'feedback' && sub.oracle_feedback && (
+        <FeedbackCard raw={sub.oracle_feedback} taskStatus={task.status} />
+      )}
+      {activeTab === 'comparative' && (
+        <ComparativeTab
+          comparativeFeedback={sub.comparative_feedback}
+          taskStatus={task.status}
+          allSubmissions={allSubmissions}
+        />
+      )}
+    </div>
+  )
 }
 
 export function SubmissionTable({ submissions, task }: Props) {
@@ -68,10 +126,7 @@ export function SubmissionTable({ submissions, task }: Props) {
                 {sub.status.replace('_', ' ')}
               </TableCell>
               <TableCell className="py-2 max-w-sm">
-                {sub.oracle_feedback
-                  ? <FeedbackCard raw={sub.oracle_feedback} />
-                  : <span className="text-muted-foreground text-xs">—</span>
-                }
+                <SubmissionFeedbackCell sub={sub} task={task} allSubmissions={submissions} />
               </TableCell>
             </TableRow>
           )

@@ -45,6 +45,12 @@ interface ScoringFeedback {
 
 type OracleFeedback = GateCheckFeedback | IndividualScoringFeedback | ScoringFeedback
 
+const SEVERITY_LABEL: Record<string, string> = {
+  high:   'High',
+  medium: 'Mid',
+  low:    'Low',
+}
+
 const SEVERITY_COLOR: Record<string, string> = {
   high:   'text-red-400',
   medium: 'text-yellow-400',
@@ -75,14 +81,16 @@ function DimTable({ dims }: { dims: Record<string, DimensionScore> }) {
           <th className="text-left py-0.5 font-normal">维度</th>
           <th className="text-center py-0.5 font-normal w-8">Band</th>
           <th className="text-right py-0.5 font-normal w-10">分数</th>
+          <th className="text-left py-0.5 font-normal pl-2">依据</th>
         </tr>
       </thead>
       <tbody>
         {Object.entries(dims).map(([id, d]) => (
-          <tr key={id} className="border-b border-zinc-800/50" title={d.evidence}>
+          <tr key={id} className="border-b border-zinc-800/50">
             <td className="py-0.5 text-muted-foreground pr-2">{id}</td>
             <td className="py-0.5 text-center"><BandBadge band={d.band} /></td>
             <td className="py-0.5 text-right font-mono text-white">{d.score}</td>
+            <td className="py-0.5 pl-2 text-muted-foreground truncate max-w-[200px]" title={d.evidence}>{d.evidence ?? '—'}</td>
           </tr>
         ))}
       </tbody>
@@ -95,8 +103,8 @@ function Suggestions({ suggestions }: { suggestions: RevisionSuggestion[] }) {
     <div className="space-y-1.5">
       {suggestions.map((s, i) => (
         <div key={i} className="flex gap-1.5">
-          <span className={['shrink-0 uppercase text-[9px] font-bold w-8 mt-0.5', SEVERITY_COLOR[s.severity] ?? ''].join(' ')}>
-            {s.severity.slice(0, 3)}
+          <span className={['shrink-0 text-[9px] font-bold w-8 mt-0.5', SEVERITY_COLOR[s.severity] ?? ''].join(' ')}>
+            {SEVERITY_LABEL[s.severity] ?? s.severity}
           </span>
           <div>
             <p className="text-white leading-tight">{s.problem}</p>
@@ -108,7 +116,12 @@ function Suggestions({ suggestions }: { suggestions: RevisionSuggestion[] }) {
   )
 }
 
-export function FeedbackCard({ raw }: { raw: string }) {
+interface FeedbackCardProps {
+  raw: string
+  taskStatus?: string
+}
+
+export function FeedbackCard({ raw, taskStatus }: FeedbackCardProps) {
   const [showDims, setShowDims] = useState(false)
 
   let data: OracleFeedback
@@ -117,6 +130,8 @@ export function FeedbackCard({ raw }: { raw: string }) {
   } catch {
     return <p className="text-muted-foreground text-[11px] break-all">{raw}</p>
   }
+
+  const isOpen = taskStatus === 'open'
 
   if (data.type === 'gate_check') {
     return (
@@ -145,15 +160,17 @@ export function FeedbackCard({ raw }: { raw: string }) {
       <div className="space-y-2 text-[11px]">
         <div className="flex items-center gap-2">
           <span className="text-blue-400 font-medium">个人评分</span>
-          {data.overall_band && <BandBadge band={data.overall_band} />}
+          {!isOpen && data.overall_band && <BandBadge band={data.overall_band} />}
         </div>
-        {data.revision_suggestions && data.revision_suggestions.length > 0 && (
+        {/* open 阶段：只显示修订建议 */}
+        {isOpen && data.revision_suggestions && data.revision_suggestions.length > 0 && (
           <div>
             <p className="text-muted-foreground mb-1">修订建议：</p>
             <Suggestions suggestions={data.revision_suggestions} />
           </div>
         )}
-        {data.dimension_scores && (
+        {/* scoring 及之后：显示 band/score/evidence */}
+        {!isOpen && data.dimension_scores && (
           <div>
             <button
               type="button"
@@ -180,12 +197,6 @@ export function FeedbackCard({ raw }: { raw: string }) {
           )}
           {data.overall_band && <BandBadge band={data.overall_band} />}
         </div>
-        {data.revision_suggestions && data.revision_suggestions.length > 0 && (
-          <div>
-            <p className="text-muted-foreground mb-1">修订建议：</p>
-            <Suggestions suggestions={data.revision_suggestions} />
-          </div>
-        )}
         {data.dimension_scores && (
           <div>
             <button
@@ -202,7 +213,6 @@ export function FeedbackCard({ raw }: { raw: string }) {
     )
   }
 
-  // Fallback: formatted JSON
   return (
     <pre className="text-[10px] text-muted-foreground overflow-auto max-h-32 whitespace-pre-wrap break-all">
       {JSON.stringify(data, null, 2)}
