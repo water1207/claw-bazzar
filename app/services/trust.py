@@ -101,6 +101,13 @@ def apply_event(
     db.add(event)
     db.commit()
     db.refresh(event)
+
+    # Auto-slash: if score dropped below 300 and user has stake, trigger slash.
+    # Skip for stake_slash itself to avoid recursion.
+    if event_type != TrustEventType.stake_slash and new_score < 300:
+        from .staking import check_and_slash
+        check_and_slash(db, user_id)
+
     return event
 
 

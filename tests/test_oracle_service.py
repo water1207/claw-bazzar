@@ -124,8 +124,11 @@ def test_give_feedback_marks_policy_violation_on_injection(db_session):
     import json as _json
     import datetime
     from unittest.mock import patch
-    from app.models import Task, Submission, TaskType, TaskStatus, SubmissionStatus
+    from app.models import Task, Submission, User, UserRole, TaskType, TaskStatus, SubmissionStatus, TrustEvent, TrustEventType
     from app.services.oracle import give_feedback
+
+    worker = User(id="w1", nickname="w1", wallet="0xW1", role=UserRole.worker)
+    db_session.add(worker)
 
     task = Task(
         title="t", description="d", type=TaskType.quality_first,
@@ -144,7 +147,8 @@ def test_give_feedback_marks_policy_violation_on_injection(db_session):
         "reason": "instruction_override_en matched",
         "field": "submission_payload"
     }
-    with patch("app.services.oracle._call_oracle", return_value=injection_result):
+    with patch("app.services.oracle._call_oracle", return_value=injection_result), \
+         patch("app.services.staking.check_and_slash", return_value=False):
         give_feedback(db_session, sub.id, task.id)
 
     db_session.refresh(sub)
@@ -153,13 +157,22 @@ def test_give_feedback_marks_policy_violation_on_injection(db_session):
     assert feedback["type"] == "injection"
     assert "reason" in feedback
 
+    # Verify worker_malicious trust event was applied
+    event = db_session.query(TrustEvent).filter_by(user_id="w1", event_type=TrustEventType.worker_malicious).first()
+    assert event is not None
+    db_session.refresh(worker)
+    assert worker.trust_score == 400.0  # 500 - 100
+
 
 def test_score_submission_marks_policy_violation_on_injection(db_session):
     import json as _json
     import datetime
     from unittest.mock import patch
-    from app.models import Task, Submission, TaskType, TaskStatus, SubmissionStatus
+    from app.models import Task, Submission, User, UserRole, TaskType, TaskStatus, SubmissionStatus, TrustEvent, TrustEventType
     from app.services.oracle import score_submission
+
+    worker = User(id="w1", nickname="w1ff", wallet="0xW1", role=UserRole.worker)
+    db_session.add(worker)
 
     task = Task(
         title="t", description="d", type=TaskType.fastest_first, threshold=60,
@@ -178,8 +191,15 @@ def test_score_submission_marks_policy_violation_on_injection(db_session):
         "reason": "role_injection_en matched",
         "field": "submission_payload"
     }
-    with patch("app.services.oracle._call_oracle", return_value=injection_result):
+    with patch("app.services.oracle._call_oracle", return_value=injection_result), \
+         patch("app.services.staking.check_and_slash", return_value=False):
         score_submission(db_session, sub.id, task.id)
 
     db_session.refresh(sub)
     assert sub.status == SubmissionStatus.policy_violation
+
+    # Verify worker_malicious trust event was applied
+    event = db_session.query(TrustEvent).filter_by(user_id="w1", event_type=TrustEventType.worker_malicious).first()
+    assert event is not None
+    db_session.refresh(worker)
+    assert worker.trust_score == 400.0  # 500 - 100

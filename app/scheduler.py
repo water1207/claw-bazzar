@@ -406,7 +406,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
     """
     from .models import ChallengeVerdict, PayoutStatus, User, MaliciousTag
     from .services.trust import apply_event, TrustEventType, compute_coherence_delta
-    from .services.staking import check_and_slash
 
     # Check if merged jury ballots exist for this task
     ballots = db.query(JuryBallot).filter_by(task_id=task.id).all()
@@ -425,7 +424,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                 if pw_worker:
                     apply_event(db, pw_worker.id, TrustEventType.pw_malicious,
                                 task_id=task.id)
-                    check_and_slash(db, pw_worker.id)
 
             # Process challenger trust events based on verdicts set by resolve_merged_jury
             challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
@@ -440,7 +438,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                     if c.verdict == ChallengeVerdict.malicious:
                         apply_event(db, worker.id, TrustEventType.challenger_malicious,
                                     task_id=task.id)
-                        check_and_slash(db, worker.id)
                     else:
                         # Justified challenger (verdict=rejected in voided scenario)
                         apply_event(db, worker.id, TrustEventType.challenger_justified,
@@ -517,7 +514,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
                 if worker:
                     apply_event(db, worker.id, TrustEventType.challenger_malicious,
                                 task_id=task.id)
-                    check_and_slash(db, worker.id)
 
         # Apply worker_won trust event to the final winner
         winner_sub = db.query(Submission).filter_by(
@@ -615,7 +611,6 @@ def _settle_after_arbitration(db: Session, task: Task) -> None:
             if worker:
                 apply_event(db, worker.id, TrustEventType.challenger_malicious,
                             task_id=task.id)
-                check_and_slash(db, worker.id)
 
     # Determine final winner
     upheld = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]

@@ -154,6 +154,42 @@ export interface TaskDetail extends Task {
   submissions: Submission[]
 }
 
+/* ── Settlement ── */
+
+export interface SettlementSource {
+  label: string
+  amount: number
+  type: 'bounty' | 'incentive' | 'deposit'
+  verdict: ChallengeVerdict | null
+}
+
+export interface SettlementDistribution {
+  label: string
+  amount: number
+  type: 'winner' | 'refund' | 'arbiter' | 'platform' | 'publisher_refund'
+  wallet: string | null
+  nickname: string | null
+}
+
+export interface SettlementSummary {
+  winner_payout: number
+  winner_nickname: string | null
+  winner_tier: TrustTier | null
+  payout_rate: number
+  deposits_forfeited: number
+  deposits_refunded: number
+  arbiter_reward_total: number
+  platform_fee: number
+}
+
+export interface Settlement {
+  escrow_total: number
+  sources: SettlementSource[]
+  distributions: SettlementDistribution[]
+  resolve_tx_hash: string | null
+  summary: SettlementSummary
+}
+
 /* ── Merged Arbitration (Jury Ballots) ── */
 
 export interface JuryBallot {
@@ -219,6 +255,14 @@ export function useArbiterVotes(challengeId: string | null, viewerId?: string | 
     challengeId ? `/api/challenges/${challengeId}/votes${params}` : null,
     fetcher,
     { refreshInterval: 10_000 },
+  )
+}
+
+export function useSettlement(taskId: string | null) {
+  return useSWR<Settlement>(
+    taskId ? `/api/tasks/${taskId}/settlement` : null,
+    fetcher,
+    { refreshInterval: 30_000 },
   )
 }
 

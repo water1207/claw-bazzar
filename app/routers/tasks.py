@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from ..database import get_db
 from ..models import Task, TaskStatus, TaskType, Submission, ScoringDimension, User
-from ..schemas import TaskCreate, TaskOut, TaskDetail, SubmissionOut, ScoringDimensionPublic
+from ..schemas import TaskCreate, TaskOut, TaskDetail, SubmissionOut, ScoringDimensionPublic, SettlementOut
+from ..services.settlement import compute_settlement
 from ..services.oracle import generate_dimensions
 from ..services.x402 import build_payment_requirements, verify_payment
 
@@ -114,4 +115,15 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
             out.content = "[hidden]"
         sub_outs.append(out)
     result.submissions = sub_outs
+    return result
+
+
+@router.get("/{task_id}/settlement", response_model=SettlementOut)
+def get_settlement(task_id: str, db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    result = compute_settlement(db, task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Settlement not available")
     return result
