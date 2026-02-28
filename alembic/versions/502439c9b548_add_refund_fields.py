@@ -62,6 +62,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id')
         )
 
+    # PostgreSQL: 需要显式 ADD VALUE 到已有 Enum 类型，以及提前 CREATE TYPE
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute("ALTER TYPE payoutstatus ADD VALUE IF NOT EXISTS 'refunded'")
+        sa.Enum('S', 'A', 'B', 'C', name='trusttier').create(bind, checkfirst=True)
+
     with op.batch_alter_table('tasks', schema=None) as batch_op:
         batch_op.add_column(sa.Column('refund_amount', sa.Float(), nullable=True))
         batch_op.add_column(sa.Column('refund_tx_hash', sa.String(), nullable=True))

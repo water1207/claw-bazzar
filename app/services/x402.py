@@ -39,6 +39,7 @@ def _facilitator_verify(payment_header: str, requirements: dict) -> dict:
             json=payload,
             timeout=30,
             follow_redirects=True,
+            verify=False,
         )
         verify_data = verify_resp.json()
         print(f"[x402] verify status={verify_resp.status_code} body={verify_data}", flush=True)
@@ -52,6 +53,7 @@ def _facilitator_verify(payment_header: str, requirements: dict) -> dict:
             json=payload,
             timeout=30,
             follow_redirects=True,
+            verify=False,
         )
         settle_data = settle_resp.json()
         print(f"[x402] settle status={settle_resp.status_code} body={settle_data}", flush=True)

@@ -33,6 +33,13 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['task_id'], ['tasks.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
+
+    # PostgreSQL: 需要显式 ADD VALUE，SQLite 通过 batch mode 重建表实现
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute("ALTER TYPE submissionstatus ADD VALUE IF NOT EXISTS 'gate_passed'")
+        op.execute("ALTER TYPE submissionstatus ADD VALUE IF NOT EXISTS 'gate_failed'")
+
     with op.batch_alter_table('submissions', schema=None) as batch_op:
         batch_op.alter_column('status',
                existing_type=sa.VARCHAR(length=7),
