@@ -40,6 +40,25 @@ const TYPE_BADGES: Record<SettlementDistribution['type'], { bg: string; text: st
   publisher_refund: { bg: 'bg-blue-900/40',    text: 'text-blue-400',    label: 'Pub Refund' },
 }
 
+const TRUST_EVENT_LABELS: Record<string, string> = {
+  worker_won: 'Won',
+  worker_consolation: 'Consolation',
+  worker_malicious: 'Malicious Worker',
+  challenger_won: 'Challenge Won',
+  challenger_rejected: 'Challenge Rejected',
+  challenger_malicious: 'Malicious Challenge',
+  challenger_justified: 'Challenge Justified',
+  arbiter_majority: 'Majority Vote',
+  arbiter_minority: 'Minority Vote',
+  arbiter_timeout: 'Vote Timeout',
+  arbiter_tp_malicious: 'Caught Malicious',
+  arbiter_fp_malicious: 'False Positive',
+  arbiter_fn_malicious: 'Missed Malicious',
+  publisher_completed: 'Task Published',
+  pw_malicious: 'PW Malicious',
+  stake_slash: 'Stake Slashed',
+}
+
 interface Props {
   task: Task
 }
@@ -63,7 +82,7 @@ export function SettlementPanel({ task }: Props) {
     )
   }
 
-  const { summary, sources, distributions, resolve_tx_hash, escrow_total } = data
+  const { summary, sources, distributions, resolve_tx_hash, escrow_total, trust_changes } = data
 
   return (
     <div className="flex flex-col gap-5">
@@ -158,6 +177,50 @@ export function SettlementPanel({ task }: Props) {
           </table>
         </div>
       </div>
+
+      {/* Trust Impact */}
+      {trust_changes.length > 0 && (
+        <div>
+          <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-2.5">
+            Trust Impact
+          </h3>
+          <div className="border border-zinc-700 rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-zinc-900 text-muted-foreground text-left">
+                  <th className="px-3 py-2 font-medium">User</th>
+                  <th className="px-3 py-2 font-medium">Event</th>
+                  <th className="px-3 py-2 font-medium text-right">Delta</th>
+                  <th className="px-3 py-2 font-medium">Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trust_changes.map((tc, i) => {
+                  const positive = tc.delta >= 0
+                  return (
+                    <tr key={i} className="border-t border-zinc-800 hover:bg-zinc-900/50">
+                      <td className="px-3 py-2 font-medium">{tc.nickname}</td>
+                      <td className="px-3 py-2">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-200">
+                          {TRUST_EVENT_LABELS[tc.event_type] ?? tc.event_type}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={`font-mono ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {positive ? '+' : ''}{tc.delta.toFixed(1)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-muted-foreground">
+                        {tc.score_before.toFixed(0)} → {tc.score_after.toFixed(0)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

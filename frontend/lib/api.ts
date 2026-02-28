@@ -182,12 +182,22 @@ export interface SettlementSummary {
   platform_fee: number
 }
 
+export interface SettlementTrustChange {
+  nickname: string
+  user_id: string
+  event_type: string
+  delta: number
+  score_before: number
+  score_after: number
+}
+
 export interface Settlement {
   escrow_total: number
   sources: SettlementSource[]
   distributions: SettlementDistribution[]
   resolve_tx_hash: string | null
   summary: SettlementSummary
+  trust_changes: SettlementTrustChange[]
 }
 
 /* ── Merged Arbitration (Jury Ballots) ── */

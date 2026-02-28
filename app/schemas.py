@@ -354,12 +354,21 @@ class SettlementSummary(BaseModel):
     arbiter_reward_total: float
     platform_fee: float
 
+class SettlementTrustChange(BaseModel):
+    nickname: str
+    user_id: str
+    event_type: str
+    delta: float
+    score_before: float
+    score_after: float
+
 class SettlementOut(BaseModel):
     escrow_total: float
     sources: list[SettlementSource]
     distributions: list[SettlementDistribution]
     resolve_tx_hash: Optional[str] = None
     summary: SettlementSummary
+    trust_changes: list[SettlementTrustChange] = []
 
 
 TaskDetail.model_rebuild()

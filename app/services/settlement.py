@@ -2,12 +2,32 @@
 from sqlalchemy.orm import Session
 from ..models import (
     Task, TaskStatus, TaskType, Submission, Challenge, ChallengeVerdict,
-    User, JuryBallot,
+    User, JuryBallot, TrustEvent,
 )
 from ..schemas import (
     SettlementOut, SettlementSource, SettlementDistribution, SettlementSummary,
+    SettlementTrustChange,
 )
 from .trust import get_winner_payout_rate, get_platform_fee_rate
+
+
+def _query_trust_changes(db: Session, task_id: str) -> list[SettlementTrustChange]:
+    events = db.query(TrustEvent).filter_by(task_id=task_id).all()
+    if not events:
+        return []
+    user_ids = list({e.user_id for e in events})
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+    return [
+        SettlementTrustChange(
+            nickname=users[e.user_id].nickname if e.user_id in users else e.user_id[:8],
+            user_id=e.user_id,
+            event_type=e.event_type.value,
+            delta=e.delta,
+            score_before=e.score_before,
+            score_after=e.score_after,
+        )
+        for e in events
+    ]
 
 
 def compute_settlement(db: Session, task_id: str) -> SettlementOut | None:
@@ -62,6 +82,7 @@ def _fastest_first_settlement(db: Session, task: Task) -> SettlementOut | None:
             deposits_forfeited=0, deposits_refunded=0,
             arbiter_reward_total=0, platform_fee=platform_fee,
         ),
+        trust_changes=_query_trust_changes(db, task.id),
     )
 
 
@@ -187,6 +208,7 @@ def _quality_first_settlement(db: Session, task: Task) -> SettlementOut | None:
             arbiter_reward_total=arbiter_reward,
             platform_fee=max(platform_fee, 0),
         ),
+        trust_changes=_query_trust_changes(db, task.id),
     )
 
 
@@ -261,4 +283,5 @@ def _voided_settlement(
             arbiter_reward_total=arbiter_reward,
             platform_fee=max(platform_fee, 0),
         ),
+        trust_changes=_query_trust_changes(db, task.id),
     )
