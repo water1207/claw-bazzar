@@ -1,3 +1,6 @@
+'use client'
+
+import { useState } from 'react'
 import { TaskDetail as TaskDetailType } from '@/lib/api'
 import { StatusBadge } from './StatusBadge'
 import { TypeBadge } from './TypeBadge'
@@ -8,6 +11,8 @@ import { TaskStatusStepper } from './TaskStatusStepper'
 import { formatDeadline, formatBounty } from '@/lib/utils'
 
 const BASE_SEPOLIA_EXPLORER = 'https://sepolia.basescan.org/tx'
+
+type Tab = 'overview' | 'submissions' | 'challenges'
 
 function TxLink({ hash }: { hash: string }) {
   const short = `${hash.slice(0, 10)}…${hash.slice(-6)}`
@@ -44,17 +49,50 @@ function MetaRow({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
+interface TabButtonProps {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}
+
+function TabButton({ active, onClick, children }: TabButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+        active
+          ? 'bg-accent text-foreground'
+          : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  )
+}
+
 interface Props {
   task: TaskDetailType
 }
 
+const CHALLENGE_STATUSES = new Set(['challenge_window', 'arbitrating', 'closed', 'voided'])
+
 export function TaskDetail({ task }: Props) {
   const { label, expired } = formatDeadline(task.deadline)
+  const showChallengesTab = task.type === 'quality_first' && CHALLENGE_STATUSES.has(task.status)
+  const [tab, setTab] = useState<Tab>('overview')
+
+  function handleTabHint(hint: 'submissions' | 'challenges' | null) {
+    if (hint === 'submissions') setTab('submissions')
+    else if (hint === 'challenges' && showChallengesTab) setTab('challenges')
+  }
 
   return (
-    <div className="flex flex-col gap-6 p-6 overflow-auto h-full">
-      {/* Header */}
-      <div>
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Fixed header */}
+      <div className="px-6 pt-6 pb-3 border-b border-border shrink-0">
+        {/* Title row */}
         <div className="flex items-start justify-between gap-4 mb-1">
           <h2 className="text-lg font-semibold leading-snug">{task.title}</h2>
           <div className="flex gap-2 shrink-0">
@@ -62,138 +100,171 @@ export function TaskDetail({ task }: Props) {
             <StatusBadge status={task.status} />
           </div>
         </div>
-        <TaskStatusStepper type={task.type} status={task.status} />
-      </div>
 
-      {/* Description */}
-      <p className="text-muted-foreground text-sm leading-relaxed">{task.description}</p>
+        {/* Status stepper — pill-based, clickable */}
+        <TaskStatusStepper
+          type={task.type}
+          status={task.status}
+          onTabHint={handleTabHint}
+        />
 
-      {/* Core details */}
-      <Section title="Details">
-        <div className="space-y-2">
-          {task.bounty !== null && (
-            <MetaRow label="Bounty">
-              <span className="font-mono font-medium text-green-400">{formatBounty(task.bounty)}</span>
-            </MetaRow>
-          )}
-          {task.publisher_id && (
-            <MetaRow label="Publisher">
-              <span className="flex items-center gap-2 flex-wrap">
-                {task.publisher_nickname && (
-                  <span className="text-white">{task.publisher_nickname}</span>
-                )}
-                <span
-                  className="font-mono text-xs text-muted-foreground cursor-pointer hover:text-blue-400"
-                  title={`${task.publisher_id}（点击复制）`}
-                  onClick={() => navigator.clipboard.writeText(task.publisher_id!)}
-                >
-                  {task.publisher_id.slice(0, 8)}…
-                </span>
+        {/* Tab bar */}
+        <div className="flex gap-1 mt-3">
+          <TabButton active={tab === 'overview'} onClick={() => setTab('overview')}>
+            Overview
+          </TabButton>
+          <TabButton active={tab === 'submissions'} onClick={() => setTab('submissions')}>
+            Submissions
+            {task.submissions.length > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] bg-muted text-muted-foreground">
+                {task.submissions.length}
               </span>
-            </MetaRow>
-          )}
-          <MetaRow label="Deadline">
-            <span className={expired ? 'text-red-400' : ''}>{label}</span>
-          </MetaRow>
-          {task.threshold !== null && (
-            <MetaRow label="Threshold">
-              <span>{task.threshold}</span>
-            </MetaRow>
-          )}
-          {task.max_revisions !== null && (
-            <MetaRow label="Max Revisions">
-              <span>{task.max_revisions}</span>
-            </MetaRow>
-          )}
-          {task.submission_deposit !== null && task.submission_deposit > 0 && (
-            <MetaRow label="Submit Deposit">
-              <span className="font-mono">{formatBounty(task.submission_deposit)}</span>
-            </MetaRow>
-          )}
-          {task.challenge_duration !== null && (
-            <MetaRow label="Challenge Window">
-              <span>{task.challenge_duration}h</span>
-            </MetaRow>
-          )}
-          {task.winner_submission_id && (
-            <MetaRow label="Winner">
-              <span className="font-mono text-yellow-400">
-                🏆 {task.winner_submission_id.slice(0, 8)}…
-              </span>
-            </MetaRow>
+            )}
+          </TabButton>
+          {showChallengesTab && (
+            <TabButton active={tab === 'challenges'} onClick={() => setTab('challenges')}>
+              Challenges
+            </TabButton>
           )}
         </div>
-      </Section>
+      </div>
 
-      {/* Acceptance Criteria */}
-      {task.acceptance_criteria && task.acceptance_criteria.length > 0 && (
-        <Section title="Acceptance Criteria">
-          <ul className="space-y-1.5">
-            {task.acceptance_criteria.map((c, i) => (
-              <li key={i} className="flex gap-2 text-sm">
-                <span className="text-muted-foreground shrink-0 mt-0.5 text-xs">✓</span>
-                <span className="text-foreground/80 leading-snug">{c}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
+      {/* Scrollable tab content */}
+      <div className="flex-1 overflow-auto px-6 py-5">
 
-      {/* Scoring Dimensions */}
-      {task.scoring_dimensions && task.scoring_dimensions.length > 0 && (
-        <Section title="Scoring Dimensions">
-          <div className="space-y-2">
-            {task.scoring_dimensions.map((dim, i) => (
-              <div key={i} className="text-sm">
-                <span className="font-medium text-blue-300">{dim.name}</span>
-                {dim.description && (
-                  <span className="text-muted-foreground ml-2 text-xs">{dim.description}</span>
+        {/* ── Overview tab ── */}
+        {tab === 'overview' && (
+          <div className="flex flex-col gap-6">
+            <p className="text-muted-foreground text-sm leading-relaxed">{task.description}</p>
+
+            <Section title="Details">
+              <div className="space-y-2">
+                {task.bounty !== null && (
+                  <MetaRow label="Bounty">
+                    <span className="font-mono font-medium text-green-400">{formatBounty(task.bounty)}</span>
+                  </MetaRow>
+                )}
+                {task.publisher_id && (
+                  <MetaRow label="Publisher">
+                    <span className="flex items-center gap-2 flex-wrap">
+                      {task.publisher_nickname && (
+                        <span className="text-white">{task.publisher_nickname}</span>
+                      )}
+                      <span
+                        className="font-mono text-xs text-muted-foreground cursor-pointer hover:text-blue-400"
+                        title={`${task.publisher_id}（点击复制）`}
+                        onClick={() => navigator.clipboard.writeText(task.publisher_id!)}
+                      >
+                        {task.publisher_id.slice(0, 8)}…
+                      </span>
+                    </span>
+                  </MetaRow>
+                )}
+                <MetaRow label="Deadline">
+                  <span className={expired ? 'text-red-400' : ''}>{label}</span>
+                </MetaRow>
+                {task.threshold !== null && (
+                  <MetaRow label="Threshold">
+                    <span>{task.threshold}</span>
+                  </MetaRow>
+                )}
+                {task.max_revisions !== null && (
+                  <MetaRow label="Max Revisions">
+                    <span>{task.max_revisions}</span>
+                  </MetaRow>
+                )}
+                {task.submission_deposit !== null && task.submission_deposit > 0 && (
+                  <MetaRow label="Submit Deposit">
+                    <span className="font-mono">{formatBounty(task.submission_deposit)}</span>
+                  </MetaRow>
+                )}
+                {task.challenge_duration !== null && (
+                  <MetaRow label="Challenge Window">
+                    <span>{task.challenge_duration}h</span>
+                  </MetaRow>
+                )}
+                {task.winner_submission_id && (
+                  <MetaRow label="Winner">
+                    <span className="font-mono text-yellow-400">
+                      🏆 {task.winner_submission_id.slice(0, 8)}…
+                    </span>
+                  </MetaRow>
                 )}
               </div>
-            ))}
-          </div>
-        </Section>
-      )}
+            </Section>
 
-      {/* Payment & Payout */}
-      {(task.payment_tx_hash || task.escrow_tx_hash || task.payout_status) && (
-        <Section title="Payment">
-          <div className="space-y-2">
-            {task.payment_tx_hash && (
-              <MetaRow label="Payment Tx">
-                <TxLink hash={task.payment_tx_hash} />
-              </MetaRow>
+            {task.acceptance_criteria && task.acceptance_criteria.length > 0 && (
+              <Section title="Acceptance Criteria">
+                <ul className="space-y-1.5">
+                  {task.acceptance_criteria.map((c, i) => (
+                    <li key={i} className="flex gap-2 text-sm">
+                      <span className="text-emerald-600 shrink-0 mt-0.5 text-xs">✓</span>
+                      <span className="text-foreground/80 leading-snug">{c}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
             )}
-            {task.escrow_tx_hash && (
-              <MetaRow label="Escrow Tx">
-                <TxLink hash={task.escrow_tx_hash} />
-              </MetaRow>
+
+            {task.scoring_dimensions && task.scoring_dimensions.length > 0 && (
+              <Section title="Scoring Dimensions">
+                <div className="space-y-2">
+                  {task.scoring_dimensions.map((dim, i) => (
+                    <div key={i} className="text-sm">
+                      <span className="font-medium text-blue-300">{dim.name}</span>
+                      {dim.description && (
+                        <span className="text-muted-foreground ml-2 text-xs">{dim.description}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Section>
             )}
-            {task.payout_status && (
-              <MetaRow label="Payout">
-                <span className="flex items-center gap-2">
-                  <PayoutBadge status={task.payout_status} />
-                  {task.payout_amount !== null && (
-                    <span className="font-mono text-xs">{formatBounty(task.payout_amount)}</span>
+
+            {(task.payment_tx_hash || task.escrow_tx_hash || task.payout_status) && (
+              <Section title="Payment">
+                <div className="space-y-2">
+                  {task.payment_tx_hash && (
+                    <MetaRow label="Payment Tx">
+                      <TxLink hash={task.payment_tx_hash} />
+                    </MetaRow>
                   )}
-                </span>
-              </MetaRow>
-            )}
-            {task.payout_tx_hash && (
-              <MetaRow label="Payout Tx">
-                <TxLink hash={task.payout_tx_hash} />
-              </MetaRow>
+                  {task.escrow_tx_hash && (
+                    <MetaRow label="Escrow Tx">
+                      <TxLink hash={task.escrow_tx_hash} />
+                    </MetaRow>
+                  )}
+                  {task.payout_status && (
+                    <MetaRow label="Payout">
+                      <span className="flex items-center gap-2">
+                        <PayoutBadge status={task.payout_status} />
+                        {task.payout_amount !== null && (
+                          <span className="font-mono text-xs">{formatBounty(task.payout_amount)}</span>
+                        )}
+                      </span>
+                    </MetaRow>
+                  )}
+                  {task.payout_tx_hash && (
+                    <MetaRow label="Payout Tx">
+                      <TxLink hash={task.payout_tx_hash} />
+                    </MetaRow>
+                  )}
+                </div>
+              </Section>
             )}
           </div>
-        </Section>
-      )}
+        )}
 
-      {/* Submissions */}
-      <Section title={`Submissions (${task.submissions.length})`}>
-        <SubmissionTable submissions={task.submissions} task={task} />
-      </Section>
+        {/* ── Submissions tab ── */}
+        {tab === 'submissions' && (
+          <SubmissionTable submissions={task.submissions} task={task} />
+        )}
 
-      <ChallengePanel task={task} />
+        {/* ── Challenges tab ── */}
+        {tab === 'challenges' && showChallengesTab && (
+          <ChallengePanel task={task} />
+        )}
+      </div>
     </div>
   )
 }
