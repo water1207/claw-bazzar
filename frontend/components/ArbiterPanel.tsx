@@ -9,10 +9,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  useTasks, useJuryBallots, submitJuryVote, registerUser, useUser,
+  useTasks, useTask, useJuryBallots, submitJuryVote, registerUser, useUser,
   useChallenges,
 } from '@/lib/api'
-import type { TaskDetail, Challenge } from '@/lib/api'
+import type { Task, TaskDetail, Challenge } from '@/lib/api'
 import { TrustBadge } from '@/components/TrustBadge'
 import { getDevWalletAddress } from '@/lib/x402'
 import { fetchUsdcBalance } from '@/lib/utils'
@@ -272,20 +272,29 @@ export function MergedVoteCard({ task, challenges, arbiterId, onVoted }: MergedV
   )
 }
 
-function TaskVoteSection({ task, arbiterId, onVoted }: {
-  task: TaskDetail
+function TaskVoteSection({ task: summaryTask, arbiterId, onVoted }: {
+  task: Task
   arbiterId: string
   onVoted: () => void
 }) {
-  const { data: challenges = [] } = useChallenges(task.id)
+  const { data: taskDetail } = useTask(summaryTask.id)
+  const { data: challenges = [] } = useChallenges(summaryTask.id)
+
+  if (!taskDetail) {
+    return (
+      <div className="p-3 bg-zinc-900 border border-zinc-700 rounded">
+        <p className="text-xs text-muted-foreground">Loading task detail...</p>
+      </div>
+    )
+  }
 
   return (
     <div>
       <p className="text-xs text-muted-foreground mb-1">
-        Task: <span className="text-white">{task.title}</span>
+        Task: <span className="text-white">{taskDetail.title}</span>
       </p>
       <MergedVoteCard
-        task={task}
+        task={taskDetail}
         challenges={challenges}
         arbiterId={arbiterId}
         onVoted={onVoted}
@@ -310,7 +319,7 @@ export function ArbiterPanel() {
 
   const { data: tasks = EMPTY_TASKS } = useTasks()
   const arbitratingTasks = useMemo(
-    () => tasks.filter((t) => t.status === 'arbitrating') as TaskDetail[],
+    () => tasks.filter((t) => t.status === 'arbitrating'),
     [tasks],
   )
 
