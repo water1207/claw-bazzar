@@ -23,7 +23,8 @@ function getDevUsers() {
 }
 function subscribeNoop(cb: () => void) { return () => {} } // eslint-disable-line @typescript-eslint/no-unused-vars
 function getSnapshot() { return getDevUsers() }
-function getServerSnapshot() { return [] as { label: string; key: string; id: string }[] }
+const SERVER_SNAPSHOT: { label: string; key: string; id: string }[] = []
+function getServerSnapshot() { return SERVER_SNAPSHOT }
 
 export default function ProfilePage() {
   const searchParams = useSearchParams()
