@@ -228,7 +228,7 @@ export function ChallengePanel({ task }: Props) {
   const pendingCount = challenges.filter((c) => c.status === 'pending').length
 
   const windowLabel = useWindowCountdown(
-    (task as TaskDetail & { challenge_window_end?: string | null }).challenge_window_end ?? null,
+    task.challenge_window_end ?? null,
     task.status === 'challenge_window',
   )
 

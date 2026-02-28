@@ -45,6 +45,7 @@ export interface Task {
   challenge_duration: number | null
   acceptance_criteria: string[]
   escrow_tx_hash: string | null
+  challenge_window_end: string | null
   scoring_dimensions: ScoringDimension[]
 }
 

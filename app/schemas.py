@@ -108,6 +108,7 @@ class TaskOut(BaseModel):
     refund_amount: Optional[float] = None
     refund_tx_hash: Optional[str] = None
     escrow_tx_hash: Optional[str] = None
+    challenge_window_end: Optional[UTCDatetime] = None
     created_at: UTCDatetime
 
     @model_validator(mode='before')
