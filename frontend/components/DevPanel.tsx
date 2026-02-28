@@ -16,6 +16,7 @@ import { fetchUsdcBalance } from '@/lib/utils'
 import { ArbiterPanel } from '@/components/ArbiterPanel'
 import { BalanceTrustHistoryPanel } from '@/components/BalanceTrustHistoryPanel'
 import { TrustBadge } from '@/components/TrustBadge'
+import { TaskStatusStepper } from '@/components/TaskStatusStepper'
 import type { Hex } from 'viem'
 import { DEV_PUBLISHER, DEV_WORKERS } from '@/lib/dev-wallets'
 
@@ -987,6 +988,7 @@ export function DevPanel() {
               <p className="text-muted-foreground">
                 Status: <span className="text-white">{publishedTask.status}</span>
               </p>
+              <TaskStatusStepper type={publishedTask.type} status={publishedTask.status} />
               <p className="text-muted-foreground">
                 Task ID:{' '}
                 <span
@@ -1039,6 +1041,25 @@ export function DevPanel() {
       {/* Submit Result */}
       <div>
         <h2 className="text-base font-semibold mb-5">Submit Result</h2>
+
+        {/* Current Task Info Bar */}
+        {(publishedTask || taskId) && (
+          <div className="mb-4 p-2.5 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground shrink-0">Task ID:</span>
+              <span
+                className="font-mono text-blue-300 break-all cursor-pointer hover:text-blue-200 flex-1"
+                title="点击复制"
+                onClick={() => navigator.clipboard.writeText(taskId)}
+              >
+                {taskId || '—'}
+              </span>
+            </div>
+            {publishedTask && (
+              <TaskStatusStepper type={publishedTask.type} status={publishedTask.status} />
+            )}
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5 mb-4">
           <Label>Active Worker</Label>
