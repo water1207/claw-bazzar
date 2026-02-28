@@ -7,13 +7,14 @@ import { TypeBadge } from './TypeBadge'
 import { PayoutBadge } from './PayoutBadge'
 import { SubmissionTable } from './SubmissionTable'
 import { ChallengePanel } from './ChallengePanel'
+import { ComparativePanel } from './ComparativeTab'
 import { SettlementPanel } from './SettlementPanel'
 import { TaskStatusStepper } from './TaskStatusStepper'
 import { formatDeadline, formatBounty } from '@/lib/utils'
 
 const BASE_SEPOLIA_EXPLORER = 'https://sepolia.basescan.org/tx'
 
-type Tab = 'overview' | 'submissions' | 'challenges' | 'settlement'
+type Tab = 'overview' | 'submissions' | 'comparative' | 'challenges' | 'settlement'
 
 function TxLink({ hash }: { hash: string }) {
   const short = `${hash.slice(0, 10)}…${hash.slice(-6)}`
@@ -81,6 +82,7 @@ const CHALLENGE_STATUSES = new Set(['challenge_window', 'arbitrating', 'closed',
 
 export function TaskDetail({ task }: Props) {
   const { label, expired } = formatDeadline(task.deadline)
+  const showComparativeTab = task.type === 'quality_first'
   const showChallengesTab = task.type === 'quality_first' && CHALLENGE_STATUSES.has(task.status)
   const showSettlementTab = task.status === 'closed' || task.status === 'voided'
   const [tab, setTab] = useState<Tab>('overview')
@@ -123,6 +125,11 @@ export function TaskDetail({ task }: Props) {
               </span>
             )}
           </TabButton>
+          {showComparativeTab && (
+            <TabButton active={tab === 'comparative'} onClick={() => setTab('comparative')}>
+              Comparative
+            </TabButton>
+          )}
           {showChallengesTab && (
             <TabButton active={tab === 'challenges'} onClick={() => setTab('challenges')}>
               Challenges
@@ -281,6 +288,11 @@ export function TaskDetail({ task }: Props) {
         {/* ── Submissions tab ── */}
         {tab === 'submissions' && (
           <SubmissionTable submissions={task.submissions} task={task} />
+        )}
+
+        {/* ── Comparative tab ── */}
+        {tab === 'comparative' && showComparativeTab && (
+          <ComparativePanel submissions={task.submissions} taskStatus={task.status} />
         )}
 
         {/* ── Challenges tab ── */}

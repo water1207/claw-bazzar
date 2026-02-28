@@ -1,5 +1,6 @@
 'use client'
 
+import { Submission } from '@/lib/api'
 import { useUser } from '@/lib/api'
 
 interface Ranking {
@@ -14,35 +15,32 @@ interface ComparativeFeedback {
   rankings: Ranking[]
 }
 
-interface ComparativeTabProps {
-  comparativeFeedback: string | null
-  taskStatus: string
-  allSubmissions: { id: string; worker_id: string; comparative_feedback: string | null }[]
-}
-
 function WorkerName({ workerId }: { workerId: string }) {
   const { data: user } = useUser(workerId)
   return <span>{user?.nickname ?? workerId.slice(0, 8) + '…'}</span>
 }
 
-export function ComparativeTab({ comparativeFeedback, taskStatus, allSubmissions }: ComparativeTabProps) {
+interface ComparativePanelProps {
+  submissions: Submission[]
+  taskStatus: string
+}
+
+export function ComparativePanel({ submissions, taskStatus }: ComparativePanelProps) {
   const isVisible = !['open', 'scoring'].includes(taskStatus)
 
   if (!isVisible) {
     return (
-      <div className="text-muted-foreground text-[11px] py-2">
+      <div className="text-muted-foreground text-sm py-6 text-center">
         评分中，待公开
       </div>
     )
   }
 
-  // Find comparative_feedback from winner submission if current sub doesn't have it
-  const feedbackSource = comparativeFeedback
-    ?? allSubmissions.find(s => s.comparative_feedback)?.comparative_feedback
+  const feedbackSource = submissions.find(s => s.comparative_feedback)?.comparative_feedback
 
   if (!feedbackSource) {
     return (
-      <div className="text-muted-foreground text-[11px] py-2">
+      <div className="text-muted-foreground text-sm py-6 text-center">
         暂无横向比较数据
       </div>
     )
@@ -56,31 +54,35 @@ export function ComparativeTab({ comparativeFeedback, taskStatus, allSubmissions
   }
 
   return (
-    <div className="space-y-3 text-[11px]">
+    <div className="space-y-5">
       <div>
-        <p className="text-muted-foreground mb-1.5 font-medium">排名</p>
-        <table className="w-full">
+        <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-2.5">
+          Rankings
+        </h3>
+        <table className="w-full text-sm">
           <thead>
             <tr className="text-muted-foreground border-b border-zinc-800">
-              <th className="text-left py-0.5 font-normal w-8">#</th>
-              <th className="text-left py-0.5 font-normal">Worker</th>
-              <th className="text-right py-0.5 font-normal w-14">分数</th>
+              <th className="text-left py-1.5 font-normal w-10">#</th>
+              <th className="text-left py-1.5 font-normal">Worker</th>
+              <th className="text-right py-1.5 font-normal w-20">Score</th>
             </tr>
           </thead>
           <tbody>
             {cf.rankings.map((r) => (
               <tr key={r.submission_id} className={`border-b border-zinc-800/50 ${r.rank === 1 ? 'text-yellow-400' : ''}`}>
-                <td className="py-0.5 font-mono">{r.rank}</td>
-                <td className="py-0.5"><WorkerName workerId={r.worker_id} /></td>
-                <td className="py-0.5 text-right font-mono">{r.final_score.toFixed(1)}</td>
+                <td className="py-1.5 font-mono">{r.rank}</td>
+                <td className="py-1.5"><WorkerName workerId={r.worker_id} /></td>
+                <td className="py-1.5 text-right font-mono">{r.final_score.toFixed(1)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <div>
-        <p className="text-muted-foreground mb-1 font-medium">横向比较分析</p>
-        <div className="text-white whitespace-pre-wrap leading-relaxed">
+        <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-2.5">
+          Winner Analysis
+        </h3>
+        <div className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
           {cf.winner_rationale}
         </div>
       </div>
