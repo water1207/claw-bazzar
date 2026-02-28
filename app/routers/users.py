@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -18,15 +18,24 @@ def get_user_by_nickname(nickname: str = Query(...), db: Session = Depends(get_d
     return user
 
 
-@router.post("", response_model=UserOut, status_code=201)
-def register_user(data: UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.nickname == data.nickname).first()
-    if existing:
+@router.post("", response_model=UserOut)
+def register_user(data: UserCreate, response: Response, db: Session = Depends(get_db)):
+    # Check if wallet+role already registered — return existing user
+    existing_wallet = db.query(User).filter(
+        User.wallet == data.wallet, User.role == data.role
+    ).first()
+    if existing_wallet:
+        return existing_wallet
+
+    existing_nick = db.query(User).filter(User.nickname == data.nickname).first()
+    if existing_nick:
         raise HTTPException(status_code=400, detail="Nickname already taken")
+
     user = User(**data.model_dump())
     db.add(user)
     db.commit()
     db.refresh(user)
+    response.status_code = 201
     return user
 
 
