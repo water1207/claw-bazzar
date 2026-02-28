@@ -1,5 +1,5 @@
 import json
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -12,8 +12,22 @@ from ..services.x402 import build_payment_requirements, verify_payment
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
+def _generate_dimensions_bg(task_id: str):
+    """后台任务：为任务生成评分维度（LLM 调用，避免阻塞响应）。"""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            generate_dimensions(db, task)
+    except Exception as e:
+        print(f"[tasks] dimension generation failed for {task_id}: {e}", flush=True)
+    finally:
+        db.close()
+
+
 @router.post("", response_model=TaskOut, status_code=201)
-def create_task(data: TaskCreate, request: Request, db: Session = Depends(get_db)):
+def create_task(data: TaskCreate, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     payment_header = request.headers.get("x-payment")
     if not payment_header:
         return JSONResponse(
@@ -34,16 +48,11 @@ def create_task(data: TaskCreate, request: Request, db: Session = Depends(get_db
     db.commit()
     db.refresh(task)
 
-    try:
-        generate_dimensions(db, task)
-    except Exception as e:
-        print(f"[tasks] dimension generation failed: {e}", flush=True)
+    # 维度生成是 LLM 调用（最长 120s），移到后台避免响应超时
+    background_tasks.add_task(_generate_dimensions_bg, task.id)
 
-    dims = db.query(ScoringDimension).filter(ScoringDimension.task_id == task.id).all()
     result_out = TaskOut.model_validate(task)
-    result_out.scoring_dimensions = [
-        ScoringDimensionPublic(name=d.name, description=d.description) for d in dims
-    ]
+    result_out.scoring_dimensions = []
     if task.publisher_id:
         pub_user = db.query(User).filter(User.id == task.publisher_id).first()
         if pub_user:
