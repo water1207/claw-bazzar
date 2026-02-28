@@ -43,7 +43,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-2 text-sm min-w-0">
-      <span className="text-muted-foreground w-28 shrink-0 text-xs">{label}</span>
+      <span className="text-muted-foreground w-24 shrink-0 text-xs">{label}</span>
       <span className="min-w-0 flex-1 break-all">{children}</span>
     </div>
   )
@@ -137,61 +137,96 @@ export function TaskDetail({ task }: Props) {
           <div className="flex flex-col gap-6">
             <p className="text-muted-foreground text-sm leading-relaxed">{task.description}</p>
 
-            <Section title="Details">
-              <div className="space-y-2">
-                {task.bounty !== null && (
-                  <MetaRow label="Bounty">
-                    <span className="font-mono font-medium text-green-400">{formatBounty(task.bounty)}</span>
-                  </MetaRow>
-                )}
-                {task.publisher_id && (
-                  <MetaRow label="Publisher">
-                    <span className="flex items-center gap-2 flex-wrap">
-                      {task.publisher_nickname && (
-                        <span className="text-white">{task.publisher_nickname}</span>
-                      )}
-                      <span
-                        className="font-mono text-xs text-muted-foreground cursor-pointer hover:text-blue-400"
-                        title={`${task.publisher_id}（点击复制）`}
-                        onClick={() => navigator.clipboard.writeText(task.publisher_id!)}
-                      >
-                        {task.publisher_id.slice(0, 8)}…
+            {/* Details + Payment side by side */}
+            <div className="grid grid-cols-2 gap-6 items-start">
+              <Section title="Details">
+                <div className="space-y-2">
+                  {task.bounty !== null && (
+                    <MetaRow label="Bounty">
+                      <span className="font-mono font-medium text-green-400">{formatBounty(task.bounty)}</span>
+                    </MetaRow>
+                  )}
+                  {task.publisher_id && (
+                    <MetaRow label="Publisher">
+                      <span className="flex items-center gap-2 flex-wrap">
+                        {task.publisher_nickname && (
+                          <span className="text-white">{task.publisher_nickname}</span>
+                        )}
+                        <span
+                          className="font-mono text-xs text-muted-foreground cursor-pointer hover:text-blue-400"
+                          title={`${task.publisher_id}（点击复制）`}
+                          onClick={() => navigator.clipboard.writeText(task.publisher_id!)}
+                        >
+                          {task.publisher_id.slice(0, 8)}…
+                        </span>
                       </span>
-                    </span>
+                    </MetaRow>
+                  )}
+                  <MetaRow label="Deadline">
+                    <span className={expired ? 'text-red-400' : ''}>{label}</span>
                   </MetaRow>
-                )}
-                <MetaRow label="Deadline">
-                  <span className={expired ? 'text-red-400' : ''}>{label}</span>
-                </MetaRow>
-                {task.threshold !== null && (
-                  <MetaRow label="Threshold">
-                    <span>{task.threshold}</span>
-                  </MetaRow>
-                )}
-                {task.max_revisions !== null && (
-                  <MetaRow label="Max Revisions">
-                    <span>{task.max_revisions}</span>
-                  </MetaRow>
-                )}
-                {task.submission_deposit !== null && task.submission_deposit > 0 && (
-                  <MetaRow label="Submit Deposit">
-                    <span className="font-mono">{formatBounty(task.submission_deposit)}</span>
-                  </MetaRow>
-                )}
-                {task.challenge_duration !== null && (
-                  <MetaRow label="Challenge Window">
-                    <span>{task.challenge_duration}h</span>
-                  </MetaRow>
-                )}
-                {task.winner_submission_id && (
-                  <MetaRow label="Winner">
-                    <span className="font-mono text-yellow-400">
-                      🏆 {task.winner_submission_id.slice(0, 8)}…
-                    </span>
-                  </MetaRow>
-                )}
-              </div>
-            </Section>
+                  {task.threshold !== null && (
+                    <MetaRow label="Threshold">
+                      <span>{task.threshold}</span>
+                    </MetaRow>
+                  )}
+                  {task.max_revisions !== null && (
+                    <MetaRow label="Max Revisions">
+                      <span>{task.max_revisions}</span>
+                    </MetaRow>
+                  )}
+                  {task.submission_deposit !== null && task.submission_deposit > 0 && (
+                    <MetaRow label="Submit Deposit">
+                      <span className="font-mono">{formatBounty(task.submission_deposit)}</span>
+                    </MetaRow>
+                  )}
+                  {task.challenge_duration !== null && (
+                    <MetaRow label="Challenge Window">
+                      <span>{task.challenge_duration}h</span>
+                    </MetaRow>
+                  )}
+                  {task.winner_submission_id && (
+                    <MetaRow label="Winner">
+                      <span className="font-mono text-yellow-400">
+                        🏆 {task.winner_submission_id.slice(0, 8)}…
+                      </span>
+                    </MetaRow>
+                  )}
+                </div>
+              </Section>
+
+              {(task.payment_tx_hash || task.escrow_tx_hash || task.payout_status) && (
+                <Section title="Payment">
+                  <div className="space-y-2">
+                    {task.payment_tx_hash && (
+                      <MetaRow label="Payment Tx">
+                        <TxLink hash={task.payment_tx_hash} />
+                      </MetaRow>
+                    )}
+                    {task.escrow_tx_hash && (
+                      <MetaRow label="Escrow Tx">
+                        <TxLink hash={task.escrow_tx_hash} />
+                      </MetaRow>
+                    )}
+                    {task.payout_status && (
+                      <MetaRow label="Payout">
+                        <span className="flex items-center gap-2">
+                          <PayoutBadge status={task.payout_status} />
+                          {task.payout_amount !== null && (
+                            <span className="font-mono text-xs">{formatBounty(task.payout_amount)}</span>
+                          )}
+                        </span>
+                      </MetaRow>
+                    )}
+                    {task.payout_tx_hash && (
+                      <MetaRow label="Payout Tx">
+                        <TxLink hash={task.payout_tx_hash} />
+                      </MetaRow>
+                    )}
+                  </div>
+                </Section>
+              )}
+            </div>
 
             {task.acceptance_criteria && task.acceptance_criteria.length > 0 && (
               <Section title="Acceptance Criteria">
@@ -217,38 +252,6 @@ export function TaskDetail({ task }: Props) {
                       )}
                     </div>
                   ))}
-                </div>
-              </Section>
-            )}
-
-            {(task.payment_tx_hash || task.escrow_tx_hash || task.payout_status) && (
-              <Section title="Payment">
-                <div className="space-y-2">
-                  {task.payment_tx_hash && (
-                    <MetaRow label="Payment Tx">
-                      <TxLink hash={task.payment_tx_hash} />
-                    </MetaRow>
-                  )}
-                  {task.escrow_tx_hash && (
-                    <MetaRow label="Escrow Tx">
-                      <TxLink hash={task.escrow_tx_hash} />
-                    </MetaRow>
-                  )}
-                  {task.payout_status && (
-                    <MetaRow label="Payout">
-                      <span className="flex items-center gap-2">
-                        <PayoutBadge status={task.payout_status} />
-                        {task.payout_amount !== null && (
-                          <span className="font-mono text-xs">{formatBounty(task.payout_amount)}</span>
-                        )}
-                      </span>
-                    </MetaRow>
-                  )}
-                  {task.payout_tx_hash && (
-                    <MetaRow label="Payout Tx">
-                      <TxLink hash={task.payout_tx_hash} />
-                    </MetaRow>
-                  )}
                 </div>
               </Section>
             )}
