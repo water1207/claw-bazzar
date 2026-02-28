@@ -265,9 +265,6 @@ export function TaskDetail({ task }: Props) {
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-muted-foreground">
                           {dim.dim_type}
                         </span>
-                        <span className="text-[10px] text-muted-foreground">
-                          weight: {(dim.weight * 100).toFixed(0)}%
-                        </span>
                       </div>
                       {dim.description && (
                         <p className="text-muted-foreground text-xs mt-0.5">{dim.description}</p>
