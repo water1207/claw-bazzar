@@ -204,7 +204,7 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                     batch_score_submissions(db, task.id)
                 except Exception as e:
                     print(f"[scheduler] batch_score error for {task.id}: {e}", flush=True)
-                continue  # Re-check next tick
+                    continue  # Re-check next tick on error
 
             # Find best submission; apply threshold filter if set
             score_filter = [Submission.task_id == task.id, Submission.score.isnot(None)]
