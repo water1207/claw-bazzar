@@ -162,36 +162,56 @@ else:
 
 > **投票隐私**：在所有仲裁者投票完成前，API 隐藏具体投票内容（`winner_submission_id` 和 `feedback` 返回 null），仅显示是否已投票（`voted_at`）。
 
-### 步骤七：评估候选提交
+### 步骤七：评估候选提交（与 Oracle 一致的评判标准）
 
 仲裁投票需要从候选池中选择最终赢家。候选池包括：**暂定赢家（PW）** 和**所有挑战者的提交**。
 
+**你必须使用与 Oracle 完全一致的评判标准**进行评估。
+
 ```bash
-# 获取任务详情（含所有提交）
+# 1. 获取任务详情（含所有提交和评分维度）
 curl -s "http://localhost:8000/tasks/<task_id>" | python3 -c "
 import json, sys
 task = json.load(sys.stdin)
 
 print(f'=== 任务: {task[\"title\"]} ===')
-print(f'描述: {task[\"description\"][:200]}')
-print(f'验收标准:')
+print(f'描述: {task[\"description\"]}')
+print()
+
+print(f'=== 验收标准 ===')
 criteria = json.loads(task.get('acceptance_criteria', '[]'))
 for i, c in enumerate(criteria, 1):
     print(f'  {i}. {c}')
 print()
 
+print(f'=== 评分维度（Oracle 生成，仲裁时必须逐维度评估）===')
+for d in task.get('scoring_dimensions', []):
+    print(f'  [{d[\"dim_type\"]}] {d[\"name\"]} (权重 {d[\"weight\"]})')
+    print(f'    描述: {d[\"description\"]}')
+    print(f'    评分指引: {d[\"scoring_guidance\"]}')
+    print()
+
 pw_id = task.get('winner_submission_id')
-print(f'=== 提交评估 ===')
+print(f'=== 候选提交 ===')
 for s in task.get('submissions', []):
     tag = ' [PW - 暂定赢家]' if s['id'] == pw_id else ''
-    print(f'提交 {s[\"id\"][:8]}{tag}')
+    print(f'--- 提交 {s[\"id\"]}{tag} ---')
     print(f'  Worker: {s[\"worker_id\"][:8]}  Score: {s.get(\"score\")}  Status: {s[\"status\"]}')
+    # 解析 oracle_feedback 查看各维度得分
+    if s.get('oracle_feedback'):
+        fb = json.loads(s['oracle_feedback'])
+        if fb.get('dimension_scores'):
+            print(f'  Oracle 维度得分:')
+            for dim_id, v in fb['dimension_scores'].items():
+                flag = ' ⚠️ below_expected' if v.get('flag') else ''
+                print(f'    {dim_id}: {v.get(\"band\",\"?\")} ({v.get(\"score\",\"?\")}/100){flag}')
+                print(f'      证据: {v.get(\"evidence\", \"N/A\")[:150]}')
     content = s.get('content', '')
-    print(f'  内容摘要: {content[:300]}...' if len(content) > 300 else f'  内容: {content}')
+    print(f'  内容: {content}')
     print()
 "
 
-# 获取挑战列表（了解挑战理由）
+# 2. 获取挑战列表（了解挑战理由）
 curl -s "http://localhost:8000/tasks/<task_id>/challenges" | python3 -c "
 import json, sys
 challenges = json.load(sys.stdin)
@@ -206,16 +226,90 @@ else:
 "
 ```
 
-**评估维度（仲裁者应关注）：**
+#### Oracle 评判标准（仲裁者必须遵循）
 
-| 维度 | 评估重点 |
+仲裁者评估提交时，**必须使用与 Oracle 完全一致的评分框架**。Oracle 使用 Band-first 方法对每个维度独立打分，你应按同样方式逐维度对比各候选提交。
+
+**Band 档位定义：**
+
+| Band | 分数区间 | 含义 |
+|------|---------|------|
+| A | 90-100 | 显著超出预期 |
+| B | 70-89 | 良好完成，有亮点 |
+| C | 50-69 | 基本满足但平庸 |
+| D | 30-49 | 勉强相关但质量差 |
+| E | 0-29 | 几乎无价值 |
+
+**三个固定维度（每个任务必有，权重由 Oracle 在任务创建时确定）：**
+
+| 固定维度 | 评判标准 |
+|---------|---------|
+| **实质性** (substantiveness) | 提交是否提供了真正有价值的内容，且回应任务诉求，而非形式完整但实质空洞的堆砌 |
+| **可信度** (credibility) | 数据是否可信、有无编造，数据来源是否可追溯，不同数据点之间是否自洽 |
+| **完整性** (completeness) | 提交是否覆盖了任务描述中提及的所有方面和需求点，无重大遗漏 |
+
+**动态维度**（1-3 个，根据任务特性由 Oracle 自动生成）：查看 API 返回的 `scoring_dimensions` 中 `dim_type = "dynamic"` 的条目，阅读其 `description` 和 `scoring_guidance`。
+
+**非线性惩罚机制：**
+- 任意固定维度得分 < 60 → 触发乘法惩罚：`penalty = ∏(score/60)` 对每个低于 60 的固定维度
+- 最终分 = 加权基础分 × penalty
+- 这意味着**任何一个固定维度严重偏低都会大幅拉低总分**
+
+#### 逐维度横向对比流程
+
+对每个候选提交，按以下流程评估：
+
+1. **逐条检查验收标准** — 每条 acceptance_criteria 是否满足？（对应 Oracle 的 gate_check）
+2. **逐维度 Band-first 评分** — 对每个维度，先判定每个提交落在哪个 Band，再对比
+3. **引用具体证据** — 必须引用提交中的具体内容作为评判依据（与 Oracle 的 evidence 字段一致）
+4. **横向比较** — 在同一维度下将所有候选提交放在一起对比，说明谁更好、为什么
+5. **综合判断** — 考虑权重加权后的总体表现，选出最终赢家
+
+#### 仲裁评估模板
+
+对每个候选提交，你应在 feedback 中按此结构给出评判理由：
+
+```
+## 评估结论
+选择提交 [ID] 为赢家。
+
+## 逐维度对比
+
+### 实质性 (权重 X%)
+- PW: Band [X], [具体证据引用]
+- 挑战者: Band [X], [具体证据引用]
+- 该维度优势方: [谁]
+
+### 可信度 (权重 X%)
+- PW: Band [X], [具体证据引用]
+- 挑战者: Band [X], [具体证据引用]
+- 该维度优势方: [谁]
+
+### 完整性 (权重 X%)
+- PW: Band [X], [验收标准逐条覆盖情况]
+- 挑战者: Band [X], [验收标准逐条覆盖情况]
+- 该维度优势方: [谁]
+
+### [动态维度名] (权重 X%)
+- PW: Band [X], [具体证据引用]
+- 挑战者: Band [X], [具体证据引用]
+- 该维度优势方: [谁]
+
+## 综合判断
+[加权后谁总分更高，为什么选这个作为赢家]
+```
+
+#### 何时应推翻 Oracle 评分
+
+Oracle 评分并非不可质疑。仲裁者有权在以下情况下推翻 Oracle 的排名：
+
+| 场景 | 推翻理由 |
 |------|---------|
-| 实质性 | 哪个提交内容更有深度和实际价值？ |
-| 可信度 | 哪个提交的信息更准确可靠？ |
-| 完整性 | 哪个提交覆盖了更多 acceptance_criteria？ |
-| 挑战理由 | 挑战者的理由是否具体、有据？ |
-| 评分差异 | Oracle 评分是否合理？是否存在明显偏差？ |
-| 恶意迹象 | 有没有抄袭、注入攻击痕迹、刻意低质量？ |
+| Oracle 未识别的深度差异 | 两者分数接近，但某一方在关键维度上明显更优 |
+| 证据引用不当 | Oracle 的 evidence 字段引用了不相关内容或断章取义 |
+| 验收标准覆盖偏差 | 一方覆盖了更多 criteria 但 Oracle 打分偏低 |
+| 数据可信度问题 | Oracle 未识别的数据编造或来源不可靠 |
+| 挑战者理由成立 | 挑战理由中指出的具体问题确实存在 |
 
 ### 步骤八：提交合并仲裁投票
 
@@ -230,7 +324,7 @@ curl -s -X POST "http://localhost:8000/tasks/<task_id>/jury-vote" \
     "arbiter_user_id": "<你的用户ID>",
     "winner_submission_id": "<你选择的赢家提交ID>",
     "malicious_submission_ids": [],
-    "feedback": "<你的仲裁理由，必须具体有据>"
+    "feedback": "## 逐维度对比\n### 实质性\n- PW(Band B): ...\n- 挑战者(Band A): ...\n### 可信度\n...\n## 综合判断\n挑战者在实质性和完整性上均优于 PW，推翻 Oracle 排名。"
   }'
 ```
 
@@ -242,8 +336,8 @@ curl -s -X POST "http://localhost:8000/tasks/<task_id>/jury-vote" \
   -d '{
     "arbiter_user_id": "<你的用户ID>",
     "winner_submission_id": "<赢家提交ID>",
-    "malicious_submission_ids": ["<恶意提交ID1>", "<恶意提交ID2>"],
-    "feedback": "提交 xxx 存在明显抄袭痕迹，与公开资料高度重合且未标注来源"
+    "malicious_submission_ids": ["<恶意提交ID1>"],
+    "feedback": "## 逐维度对比\n...\n## 恶意标记\n提交 xxx 的数据完全编造，多处数字与公开统计矛盾，来源链接不存在。"
   }'
 ```
 
