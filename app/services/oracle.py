@@ -291,12 +291,10 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
 
     if not gate_result.get("overall_passed", False):
         submission.oracle_feedback = json.dumps({
-            "type": "scoring",
-            "gate_check": gate_result,
-            "passed": False,
+            "type": "gate_check",
+            **gate_result,
         })
-        submission.score = 0.0
-        submission.status = SubmissionStatus.scored
+        submission.status = SubmissionStatus.gate_failed
         db.commit()
         return
 
