@@ -31,9 +31,6 @@ _PATTERNS: list[tuple[str, str]] = [
      "output_hijack_en"),
     (r"(你必须输出|强制返回|你只能输出|你必须回复)",
      "output_hijack_zh"),
-    # 分隔符伪造（三条或以上 --- 后接类指令内容）
-    (r"(?m)^-{3,}\s*\n[\s\S]{0,200}?(指令|instruction|override|ignore|忽略|系统)",
-     "separator_injection"),
 ]
 
 _COMPILED = [(re.compile(pat), name) for pat, name in _PATTERNS]
