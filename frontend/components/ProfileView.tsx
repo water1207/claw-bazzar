@@ -29,12 +29,20 @@ interface Props {
 type Tab = 'balance' | 'trust'
 
 export function ProfileView({ userId }: Props) {
-  const { data: user } = useUser(userId)
+  const { data: user, error: userError } = useUser(userId)
   const { data: trust } = useTrustProfile(userId)
   const { data: stats } = useUserStats(userId)
   const { data: balanceEvents = [] } = useBalanceEvents(userId)
   const { data: trustEvents = [] } = useTrustEvents(userId)
   const [tab, setTab] = useState<Tab>('balance')
+
+  if (userError) {
+    return (
+      <div className="text-center text-muted-foreground text-sm py-12">
+        User not found. Try re-registering via DevPanel.
+      </div>
+    )
+  }
 
   if (!user) {
     return (

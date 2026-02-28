@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -8,29 +8,58 @@ import {
 import { ALL_DEV_USERS } from '@/lib/dev-wallets'
 import { ProfileView } from '@/components/ProfileView'
 
-// Reads registered user IDs from localStorage once (client-only)
-let cachedUsers: { label: string; key: string; id: string }[] | null = null
-function getDevUsers() {
-  if (cachedUsers) return cachedUsers
-  if (typeof window === 'undefined') return []
-  const found: { label: string; key: string; id: string }[] = []
+type DevEntry = { label: string; key: string; nickname: string; id: string }
+
+/** Read localStorage + validate/refresh IDs against the API */
+async function resolveDevUsers(): Promise<DevEntry[]> {
+  const results: DevEntry[] = []
   for (const sk of ALL_DEV_USERS) {
-    const id = localStorage.getItem(sk.key)
-    if (id) found.push({ ...sk, id })
+    let id = localStorage.getItem(sk.key)
+
+    // Validate cached ID
+    if (id) {
+      try {
+        const resp = await fetch(`/api/users/${id}`)
+        if (!resp.ok) {
+          localStorage.removeItem(sk.key)
+          id = null
+        }
+      } catch {
+        localStorage.removeItem(sk.key)
+        id = null
+      }
+    }
+
+    // Try to resolve by nickname if cache was stale
+    if (!id) {
+      try {
+        const resp = await fetch(`/api/users?nickname=${encodeURIComponent(sk.nickname)}`)
+        if (resp.ok) {
+          const u = await resp.json()
+          id = u.id
+          localStorage.setItem(sk.key, id!)
+        }
+      } catch {}
+    }
+
+    if (id) results.push({ ...sk, id })
   }
-  cachedUsers = found
-  return found
+  return results
 }
-function subscribeNoop(cb: () => void) { return () => {} } // eslint-disable-line @typescript-eslint/no-unused-vars
-function getSnapshot() { return getDevUsers() }
-const SERVER_SNAPSHOT: { label: string; key: string; id: string }[] = []
-function getServerSnapshot() { return SERVER_SNAPSHOT }
 
 export default function ProfilePage() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const selectedId = searchParams.get('id')
-  const available = useSyncExternalStore(subscribeNoop, getSnapshot, getServerSnapshot)
+  const [available, setAvailable] = useState<DevEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    resolveDevUsers().then((users) => {
+      setAvailable(users)
+      setLoading(false)
+    })
+  }, [])
 
   // Auto-select first user if none selected
   useEffect(() => {
@@ -68,7 +97,7 @@ export default function ProfilePage() {
           <ProfileView userId={selectedId} />
         ) : (
           <div className="text-center text-muted-foreground text-sm py-20">
-            Select a user to view profile.
+            {loading ? 'Loading users...' : 'Select a user to view profile.'}
           </div>
         )}
       </div>

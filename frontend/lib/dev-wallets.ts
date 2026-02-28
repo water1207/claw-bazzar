@@ -28,8 +28,8 @@ export const DEV_ARBITERS: DevUser[] = [
 ].filter((a) => a.key)
 
 /** Activity History: all dev users merged */
-export const ALL_DEV_USERS: { label: string; key: string }[] = [
-  ...(DEV_PUBLISHER ? [{ label: DEV_PUBLISHER.label ?? DEV_PUBLISHER.nickname, key: DEV_PUBLISHER.storageKey }] : []),
-  ...DEV_WORKERS.map((w) => ({ label: w.label ?? w.nickname, key: w.storageKey })),
-  ...DEV_ARBITERS.map((a) => ({ label: a.label ?? a.nickname, key: a.storageKey })),
+export const ALL_DEV_USERS: { label: string; key: string; nickname: string }[] = [
+  ...(DEV_PUBLISHER ? [{ label: DEV_PUBLISHER.label ?? DEV_PUBLISHER.nickname, key: DEV_PUBLISHER.storageKey, nickname: DEV_PUBLISHER.nickname }] : []),
+  ...DEV_WORKERS.map((w) => ({ label: w.label ?? w.nickname, key: w.storageKey, nickname: w.nickname })),
+  ...DEV_ARBITERS.map((a) => ({ label: a.label ?? a.nickname, key: a.storageKey, nickname: a.nickname })),
 ]
