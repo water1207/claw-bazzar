@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,6 +17,7 @@ import { ArbiterPanel } from '@/components/ArbiterPanel'
 import { BalanceTrustHistoryPanel } from '@/components/BalanceTrustHistoryPanel'
 import { TrustBadge } from '@/components/TrustBadge'
 import { TaskStatusStepper } from '@/components/TaskStatusStepper'
+import { FeedbackCard } from '@/components/FeedbackCard'
 import type { Hex } from 'viem'
 import { DEV_PUBLISHER, DEV_WORKERS } from '@/lib/dev-wallets'
 
@@ -316,6 +317,76 @@ function OracleLogsPanel() {
   )
 }
 
+function statusColor(status: Submission['status']): string {
+  switch (status) {
+    case 'scored': return 'text-green-400'
+    case 'gate_passed': return 'text-blue-400'
+    case 'gate_failed': return 'text-red-400'
+    case 'policy_violation': return 'text-orange-400'
+    default: return 'text-yellow-400'
+  }
+}
+
+function statusLabel(status: Submission['status']): string {
+  switch (status) {
+    case 'scored': return '已评分'
+    case 'gate_passed': return 'Gate ✓'
+    case 'gate_failed': return 'Gate ✗'
+    case 'policy_violation': return '违规'
+    default: return '评分中…'
+  }
+}
+
+interface WorkerSubRowProps {
+  worker: import('@/lib/dev-wallets').DevUser
+  sub: Submission
+  isActive: boolean
+  maxRevisions: number | null
+  onClick: () => void
+}
+
+function WorkerSubRow({ worker, sub, isActive, maxRevisions, onClick }: WorkerSubRowProps) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div
+      className={['px-3 py-2 cursor-pointer hover:bg-zinc-900/60', isActive ? 'bg-zinc-900/40' : ''].join(' ')}
+      onClick={onClick}
+    >
+      <div className="flex items-center gap-2">
+        <span className={['font-medium w-16 shrink-0 text-xs', isActive ? 'text-blue-300' : 'text-white'].join(' ')}>
+          {worker.nickname}
+        </span>
+        <span className={['font-medium text-xs shrink-0', statusColor(sub.status)].join(' ')}>
+          {statusLabel(sub.status)}
+        </span>
+        {sub.score !== null && (
+          <span className="font-mono text-white text-xs shrink-0">{sub.score.toFixed(1)}</span>
+        )}
+        <span className="text-muted-foreground font-mono text-[11px] truncate flex-1" title={sub.id}>
+          {sub.id.slice(0, 8)}…
+        </span>
+        {maxRevisions && (
+          <span className="text-muted-foreground text-[11px] shrink-0">r{sub.revision}/{maxRevisions}</span>
+        )}
+        {sub.oracle_feedback && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+            className="text-muted-foreground hover:text-white text-[11px] shrink-0 ml-1"
+          >
+            {expanded ? '▲' : '▼'}
+          </button>
+        )}
+      </div>
+      {expanded && sub.oracle_feedback && (
+        <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+          <FeedbackCard raw={sub.oracle_feedback} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function DevPanel() {
   const publisherAddress = useMemo(() => {
     if (!DEV_PUBLISHER?.key) return null
@@ -362,11 +433,10 @@ export function DevPanel() {
   const [workerId, setWorkerId] = useState('')
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [trackedSub, setTrackedSub] = useState<Submission | null>(null)
-  const [polledSub, setPolledSub] = useState<Submission | null>(null)
+  const [workerSubs, setWorkerSubs] = useState<Record<string, Submission>>({})
   const [polledTask, setPolledTask] = useState<TaskDetail | null>(null)
+  const [isPolling, setIsPolling] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Challenge form state
   const [challengeTaskId, setChallengeTaskId] = useState('')
@@ -400,7 +470,6 @@ export function DevPanel() {
       })
       .catch(() => { if (!cancelled) setChallengeSubId('') })
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [challengeTaskId, activeWorkerIdx, workerIds])
 
   // Countdowns
@@ -521,35 +590,48 @@ export function DevPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { refreshWrkBalance() }, [activeWorkerIdx])
 
-  // Poll submission status after submit
+  // Poll task submissions whenever isPolling=true and taskId is set
   useEffect(() => {
-    if (!trackedSub) return
-    const feedbackReceived = polledSub?.status === 'pending' && !!polledSub?.oracle_feedback
-    if (polledSub?.status === 'scored' || feedbackReceived) return
+    if (!isPolling || !taskId) return
 
-    pollRef.current = setInterval(async () => {
+    const TERMINAL = new Set<Submission['status']>(['scored', 'gate_failed', 'policy_violation'])
+
+    const tick = async () => {
       try {
-        const resp = await fetch(`/api/tasks/${trackedSub.task_id}`)
+        const resp = await fetch(`/api/tasks/${taskId}`)
         if (!resp.ok) return
         const task: TaskDetail = await resp.json()
         setPolledTask(task)
-        const found = task.submissions.find((s) => s.id === trackedSub.id)
-        if (found) {
-          setPolledSub(found)
-          const done = found.status === 'scored' || (found.status === 'pending' && !!found.oracle_feedback)
-          if (done) {
-            clearInterval(pollRef.current!)
-            pollRef.current = null
-          }
-        }
-      } catch {}
-    }, 2000)
 
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+        setWorkerSubs(prev => {
+          const next = { ...prev }
+          for (let i = 0; i < DEV_WORKERS.length; i++) {
+            const w = DEV_WORKERS[i]
+            const wId = workerIds[i]
+            if (!wId) continue
+            const found = task.submissions.find(s => s.worker_id === wId)
+            if (found) next[w.storageKey] = found
+          }
+          return next
+        })
+
+        // Stop polling when all tracked subs have reached a terminal state
+        // (gate_passed is terminal for quality_first — batch scoring continues on backend)
+        setWorkerSubs(current => {
+          const allDone = Object.keys(current).length > 0 &&
+            Object.values(current).every(
+              s => TERMINAL.has(s.status) || s.status === 'gate_passed'
+            )
+          if (allDone) setIsPolling(false)
+          return current
+        })
+      } catch {}
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackedSub])
+
+    tick()
+    const id = setInterval(tick, 2000)
+    return () => clearInterval(id)
+  }, [isPolling, taskId, workerIds])
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
@@ -633,17 +715,14 @@ export function DevPanel() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitError(null)
-    setTrackedSub(null)
-    setPolledSub(null)
-    if (pollRef.current) clearInterval(pollRef.current)
     setSubmitting(true)
     try {
       const sub = await createSubmission(taskId, { worker_id: workerId, content })
-      setTrackedSub(sub)
-      setPolledSub(sub)
+      setWorkerSubs(prev => ({ ...prev, [activeWorker!.storageKey]: sub }))
       setContent('')
       setChallengeTaskId(taskId)
       setChallengeSubId(sub.id)
+      setIsPolling(true)
     } catch (err) {
       setSubmitError((err as Error).message)
     } finally {
@@ -1128,54 +1207,34 @@ export function DevPanel() {
             <p className="text-sm text-red-400 break-all">{submitError}</p>
           )}
 
-          {polledSub && (
-            <div className="p-3 bg-zinc-900 border border-zinc-700 rounded text-xs space-y-1">
-              <div className="flex items-center gap-2">
-                {polledSub.status === 'pending' && !polledSub.oracle_feedback ? (
-                  <>
-                    <span className="inline-block w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-yellow-400 font-medium">等待反馈…</span>
-                  </>
-                ) : polledSub.status === 'pending' && polledSub.oracle_feedback ? (
-                  <span className="text-blue-400 font-medium">已收到反馈</span>
-                ) : (
-                  <span className="text-green-400 font-medium">已评分</span>
+          {/* Worker Status Board */}
+          {Object.keys(workerSubs).length > 0 && (
+            <div className="mt-2 border border-zinc-700 rounded overflow-hidden text-xs">
+              <div className="px-3 py-1.5 bg-zinc-900 text-muted-foreground flex items-center gap-2">
+                <span className="font-medium text-white">提交状态</span>
+                {isPolling && (
+                  <span className="inline-block w-2.5 h-2.5 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
                 )}
               </div>
-              <p className="text-muted-foreground">
-                {(() => {
-                  const maxRev = polledTask?.max_revisions ?? publishedTask?.max_revisions
-                  return maxRev
-                    ? <>Revision: <span className="text-white">第{polledSub.revision}次 ({polledSub.revision}/{maxRev})</span></>
-                    : <>Revision: <span className="text-white">{polledSub.revision}</span></>
-                })()}
-              </p>
-              <p className="text-muted-foreground">
-                ID: <span className="font-mono text-white break-all">{polledSub.id}</span>
-              </p>
-              {polledSub.score !== null && (
-                <p className="text-muted-foreground">
-                  Score: <span className="text-white font-mono">{polledSub.score.toFixed(2)}</span>
-                </p>
-              )}
-              {polledSub.oracle_feedback && (() => {
-                let suggestions: string[] = []
-                try { suggestions = JSON.parse(polledSub.oracle_feedback) } catch { /* plain string */ }
-                return suggestions.length > 0 ? (
-                  <div>
-                    <p className="text-muted-foreground mb-1">修订建议：</p>
-                    <ul className="list-disc list-inside space-y-0.5">
-                      {suggestions.map((s, i) => (
-                        <li key={i} className="text-white">{s}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground">
-                    Feedback: <span className="text-white">{polledSub.oracle_feedback}</span>
-                  </p>
-                )
-              })()}
+              <div className="divide-y divide-zinc-800">
+                {DEV_WORKERS.map((w, i) => {
+                  const sub = workerSubs[w.storageKey]
+                  if (!sub) return null
+                  return (
+                    <WorkerSubRow
+                      key={w.storageKey}
+                      worker={w}
+                      sub={sub}
+                      isActive={i === activeWorkerIdx}
+                      maxRevisions={polledTask?.max_revisions ?? publishedTask?.max_revisions ?? null}
+                      onClick={() => {
+                        setActiveWorkerIdx(i)
+                        setWorkerId(workerIds[i] || '')
+                      }}
+                    />
+                  )
+                })}
+              </div>
             </div>
           )}
         </form>
