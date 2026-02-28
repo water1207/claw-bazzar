@@ -410,8 +410,11 @@ class TestQualityFirstE2E:
 
     def _add_gate_passed_sub(self, db, task_id, worker_id, individual_mock):
         """Create a gate_passed submission with individual scoring feedback."""
+        user = User(nickname=worker_id, wallet=f"0x{worker_id}", role=UserRole.worker)
+        db.add(user)
+        db.flush()
         sub = Submission(
-            task_id=task_id, worker_id=worker_id,
+            task_id=task_id, worker_id=user.id,
             content=f"调研内容 by {worker_id}",
             status=SubmissionStatus.gate_passed,
             oracle_feedback=json.dumps({
@@ -548,7 +551,7 @@ class TestQualityFirstE2E:
 
         # Phase 1: open → scoring (deadline expired)
         with patch("app.services.oracle.subprocess.run", side_effect=mock_run), \
-             patch("app.services.escrow.create_challenge_onchain", return_value="0xescrow"):
+             patch("app.scheduler.create_challenge_onchain", return_value="0xescrow"):
             quality_first_lifecycle(db=db)
             db.refresh(task)
             assert task.status == TaskStatus.scoring
