@@ -77,17 +77,6 @@ curl -s "http://localhost:8000/trust/quote?user_id=<你的用户ID>&bounty=<任�
 
 ### 步骤四：提交挑战
 
-#### 无链上押金（测试用）
-
-```bash
-curl -s -X POST "http://localhost:8000/tasks/<task_id>/challenges" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "challenger_submission_id": "<你的提交ID>",
-    "reason": "<具体的挑战理由>"
-  }'
-```
-
 #### 带链上押金（正式流程）
 
 需要签名 EIP-2612 Permit 授权 ChallengeEscrow 合约扣款：
