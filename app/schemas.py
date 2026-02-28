@@ -371,4 +371,14 @@ class SettlementOut(BaseModel):
     trust_changes: list[SettlementTrustChange] = []
 
 
+class UserStats(BaseModel):
+    tasks_participated: int
+    tasks_won: int
+    win_rate: float
+    total_earned: float
+    malicious_count: int
+    submissions_last_30d: int
+    registered_at: UTCDatetime
+
+
 TaskDetail.model_rebuild()

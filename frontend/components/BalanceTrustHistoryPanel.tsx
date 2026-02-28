@@ -37,7 +37,7 @@ function AmountCell({ amount, direction }: { amount: number; direction: string }
   )
 }
 
-function BalanceEventsTable({ events }: { events: BalanceEvent[] }) {
+export function BalanceEventsTable({ events }: { events: BalanceEvent[] }) {
   if (events.length === 0) {
     return <p className="text-xs text-muted-foreground py-6 text-center">No balance events</p>
   }
@@ -110,7 +110,7 @@ const TRUST_EVENT_LABELS: Record<string, string> = {
   stake_bonus: 'Stake Bonus',
 }
 
-function TrustEventsTable({ events }: { events: TrustEvent[] }) {
+export function TrustEventsTable({ events }: { events: TrustEvent[] }) {
   if (events.length === 0) {
     return <p className="text-xs text-muted-foreground py-6 text-center">No trust events</p>
   }

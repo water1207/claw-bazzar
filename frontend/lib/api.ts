@@ -276,6 +276,22 @@ export function useSettlement(taskId: string | null) {
   )
 }
 
+export interface UserStats {
+  tasks_participated: number
+  tasks_won: number
+  win_rate: number
+  total_earned: number
+  malicious_count: number
+  submissions_last_30d: number
+  registered_at: string
+}
+
+export function useUserStats(userId: string | null) {
+  return useSWR<UserStats>(userId ? `/api/users/${userId}/stats` : null, fetcher, {
+    refreshInterval: 30_000,
+  })
+}
+
 export function useWeeklyLeaderboard() {
   return useSWR<WeeklyLeaderboardEntry[]>('/api/leaderboard/weekly', fetcher, {
     refreshInterval: 60_000,
