@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from ..database import get_db
-from ..models import Task, TaskStatus, TaskType, Submission, ScoringDimension
+from ..models import Task, TaskStatus, TaskType, Submission, ScoringDimension, User
 from ..schemas import TaskCreate, TaskOut, TaskDetail, SubmissionOut, ScoringDimensionPublic
 from ..services.oracle import generate_dimensions
 from ..services.x402 import build_payment_requirements, verify_payment
@@ -44,6 +44,10 @@ def create_task(data: TaskCreate, request: Request, db: Session = Depends(get_db
     result_out.scoring_dimensions = [
         ScoringDimensionPublic(name=d.name, description=d.description) for d in dims
     ]
+    if task.publisher_id:
+        pub_user = db.query(User).filter(User.id == task.publisher_id).first()
+        if pub_user:
+            result_out.publisher_nickname = pub_user.nickname
     return result_out
 
 
@@ -58,7 +62,20 @@ def list_tasks(
         q = q.filter(Task.status == status)
     if type:
         q = q.filter(Task.type == type)
-    return q.order_by(Task.created_at.desc()).all()
+    tasks = q.order_by(Task.created_at.desc()).all()
+    # Resolve publisher nicknames
+    pub_ids = {t.publisher_id for t in tasks if t.publisher_id}
+    nickname_map: dict[str, str] = {}
+    if pub_ids:
+        users = db.query(User.id, User.nickname).filter(User.id.in_(pub_ids)).all()
+        nickname_map = {u.id: u.nickname for u in users}
+    results = []
+    for t in tasks:
+        out = TaskOut.model_validate(t)
+        if t.publisher_id:
+            out.publisher_nickname = nickname_map.get(t.publisher_id)
+        results.append(out)
+    return results
 
 
 @router.get("/{task_id}", response_model=TaskDetail)
@@ -72,6 +89,10 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
     result.scoring_dimensions = [
         ScoringDimensionPublic(name=d.name, description=d.description) for d in dims
     ]
+    if task.publisher_id:
+        pub_user = db.query(User).filter(User.id == task.publisher_id).first()
+        if pub_user:
+            result.publisher_nickname = pub_user.nickname
 
     hide_content = task.status in (
         TaskStatus.challenge_window,

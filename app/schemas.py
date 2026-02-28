@@ -91,6 +91,7 @@ class TaskOut(BaseModel):
     status: TaskStatus
     winner_submission_id: Optional[str] = None
     publisher_id: Optional[str] = None
+    publisher_nickname: Optional[str] = None
     bounty: Optional[float] = None
     payment_tx_hash: Optional[str] = None
     payout_status: PayoutStatus = PayoutStatus.pending

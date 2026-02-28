@@ -31,6 +31,7 @@ export interface Task {
   winner_submission_id: string | null
   created_at: string
   publisher_id: string | null
+  publisher_nickname?: string | null
   bounty: number | null
   payment_tx_hash: string | null
   payout_status: PayoutStatus | null

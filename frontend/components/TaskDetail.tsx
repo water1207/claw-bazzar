@@ -74,9 +74,18 @@ export function TaskDetail({ task }: Props) {
             <span className="font-mono">{formatBounty(task.bounty)}</span>
           </div>
           {task.publisher_id && (
-            <div>
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-muted-foreground">Publisher: </span>
-              <span className="font-mono">{task.publisher_id.slice(0, 8)}…</span>
+              {task.publisher_nickname && (
+                <span className="text-white">{task.publisher_nickname}</span>
+              )}
+              <span
+                className="font-mono text-muted-foreground cursor-pointer hover:text-blue-400"
+                title={`${task.publisher_id}（点击复制）`}
+                onClick={() => navigator.clipboard.writeText(task.publisher_id!)}
+              >
+                ({task.publisher_id.slice(0, 8)}…)
+              </span>
             </div>
           )}
           {task.payment_tx_hash && (
