@@ -499,7 +499,14 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
         return compute_penalized_total(dim_scores, dims_for_penalty)["final_score"]
 
     eligible.sort(key=_get_penalized_total, reverse=True)
-    top_subs = eligible[:3]
+    # Deduplicate by worker_id: keep only the highest-scoring submission per worker
+    seen_workers: set[str] = set()
+    deduped: list = []
+    for sub in eligible:
+        if sub.worker_id not in seen_workers:
+            seen_workers.add(sub.worker_id)
+            deduped.append(sub)
+    top_subs = deduped[:3]
 
     # Anonymize
     label_map = {}

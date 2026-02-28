@@ -509,6 +509,129 @@ def test_batch_score_threshold_filter(db):
     assert sub_bad.score < sub_good.score  # penalized score should be lower
 
 
+def test_batch_score_deduplicates_by_worker(db):
+    """Same worker with multiple submissions: only highest-scoring one enters horizontal comparison."""
+    from app.services.oracle import batch_score_submissions
+
+    task = Task(
+        title="调研", description="调研竞品", type=TaskType.quality_first,
+        deadline=datetime(2026, 1, 1, tzinfo=timezone.utc), bounty=10.0,
+        acceptance_criteria=json.dumps(["至少10个产品"]),
+    )
+    db.add(task)
+    db.commit()
+
+    dim1 = ScoringDimension(
+        task_id=task.id, dim_id="substantiveness", name="实质性",
+        dim_type="fixed", description="内容质量", weight=0.5, scoring_guidance="guide"
+    )
+    dim2 = ScoringDimension(
+        task_id=task.id, dim_id="completeness", name="完整性",
+        dim_type="fixed", description="覆盖度", weight=0.5, scoring_guidance="guide"
+    )
+    db.add_all([dim1, dim2])
+    db.commit()
+
+    # Worker w1 has TWO gate_passed submissions (higher and lower score)
+    sub_w1_high = Submission(
+        task_id=task.id, worker_id="w1", content="w1 best",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"band": "A", "score": 90, "evidence": "great", "feedback": "great"},
+                "completeness": {"band": "A", "score": 88, "evidence": "thorough", "feedback": "thorough"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    sub_w1_low = Submission(
+        task_id=task.id, worker_id="w1", content="w1 older",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"band": "B", "score": 70, "evidence": "ok", "feedback": "ok"},
+                "completeness": {"band": "B", "score": 65, "evidence": "partial", "feedback": "partial"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    # Worker w2 has one submission
+    sub_w2 = Submission(
+        task_id=task.id, worker_id="w2", content="w2 content",
+        status=SubmissionStatus.gate_passed,
+        oracle_feedback=json.dumps({
+            "type": "individual_scoring",
+            "dimension_scores": {
+                "substantiveness": {"band": "B", "score": 75, "evidence": "solid", "feedback": "solid"},
+                "completeness": {"band": "B", "score": 72, "evidence": "ok", "feedback": "ok"},
+            },
+            "revision_suggestions": []
+        })
+    )
+    db.add_all([sub_w1_high, sub_w1_low, sub_w2])
+    db.commit()
+
+    # Only 2 unique workers → 2 subs in horizontal comparison (Submission_A, Submission_B)
+    dim_score_sub = json.dumps({
+        "dimension_id": "substantiveness",
+        "scores": [
+            {"submission": "Submission_A", "raw_score": 90, "final_score": 90, "evidence": "great"},
+            {"submission": "Submission_B", "raw_score": 75, "final_score": 75, "evidence": "solid"},
+        ]
+    })
+    dim_score_comp = json.dumps({
+        "dimension_id": "completeness",
+        "scores": [
+            {"submission": "Submission_A", "raw_score": 88, "final_score": 88, "evidence": "thorough"},
+            {"submission": "Submission_B", "raw_score": 72, "final_score": 72, "evidence": "ok"},
+        ]
+    })
+    responses = [
+        type("R", (), {"stdout": dim_score_sub, "returncode": 0})(),
+        type("R", (), {"stdout": dim_score_comp, "returncode": 0})(),
+    ]
+    call_idx = 0
+    submissions_in_payload = []
+
+    def mock_subprocess(*args, **kwargs):
+        nonlocal call_idx
+        payload = json.loads(kwargs.get("input", args[0] if args else "{}"))
+        # Capture submission labels to verify dedup
+        submissions_in_payload.append(
+            [s["label"] for s in payload.get("submissions", [])]
+        )
+        result = responses[call_idx]
+        call_idx += 1
+        return result
+
+    with patch("app.services.oracle.subprocess.run", side_effect=mock_subprocess):
+        batch_score_submissions(db, task.id)
+
+    # Verify only 2 submissions entered horizontal comparison (not 3)
+    assert len(submissions_in_payload) == 2  # 2 dimensions
+    assert submissions_in_payload[0] == ["Submission_A", "Submission_B"]
+
+    db.refresh(sub_w1_high)
+    db.refresh(sub_w1_low)
+    db.refresh(sub_w2)
+
+    # w1's best submission went through horizontal scoring and won
+    feedback_w1_high = json.loads(sub_w1_high.oracle_feedback)
+    assert feedback_w1_high["type"] == "scoring"
+    assert feedback_w1_high["rank"] == 1
+    assert sub_w1_high.status == SubmissionStatus.scored
+
+    # w1's lower submission was NOT in horizontal comparison, still marked scored
+    assert sub_w1_low.status == SubmissionStatus.scored
+
+    # w2's submission ranked 2nd
+    feedback_w2 = json.loads(sub_w2.oracle_feedback)
+    assert feedback_w2["type"] == "scoring"
+    assert feedback_w2["rank"] == 2
+
+
 # --- Scheduler lifecycle test ---
 
 from app.scheduler import quality_first_lifecycle
