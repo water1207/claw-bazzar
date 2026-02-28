@@ -51,3 +51,4 @@ tmp_openapi.json
 
 # Misc
 *.tsbuildinfo
+.worktrees/
