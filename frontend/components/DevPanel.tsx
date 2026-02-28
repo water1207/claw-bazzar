@@ -350,7 +350,7 @@ export function DevPanel() {
   const [deadlineDuration, setDeadlineDuration] = useState('5')
   const [deadlineUnit, setDeadlineUnit] = useState<'minutes' | 'hours' | 'days'>('minutes')
   const [challengeDuration, setChallengeDuration] = useState('')
-  const [acceptanceCriteria, setAcceptanceCriteria] = useState('')
+  const [criteria, setCriteria] = useState<string[]>([''])
   const [bounty, setBounty] = useState('0.01')
   const [publishing, setPublishing] = useState(false)
   const [publishedTask, setPublishedTask] = useState<Task | null>(null)
@@ -609,10 +609,7 @@ export function DevPanel() {
           publisher_id: publisherId || null,
           bounty: bountyAmount,
           challenge_duration: challengeDuration ? parseInt(challengeDuration, 10) : null,
-          acceptance_criteria: acceptanceCriteria
-            .split('\n')
-            .map((s) => s.trim())
-            .filter(Boolean),
+          acceptance_criteria: criteria.map((s) => s.trim()).filter(Boolean),
         },
         paymentHeader,
       )
@@ -623,7 +620,7 @@ export function DevPanel() {
       setThreshold('0.8')
       setMaxRevisions('')
       setChallengeDuration('')
-      setAcceptanceCriteria('')
+      setCriteria([''])
       setBounty('')
     } catch (err) {
       setPublishError((err as Error).message)
@@ -821,14 +818,41 @@ export function DevPanel() {
           <div className="flex flex-col gap-1.5">
             <Label>
               Acceptance Criteria{' '}
-              <span className="text-muted-foreground text-xs">(drives Oracle V2 gate check + scoring dimensions)</span>
+              <span className="text-muted-foreground text-xs">(Oracle V3 gate check + scoring dimensions)</span>
             </Label>
-            <Textarea
-              value={acceptanceCriteria}
-              onChange={(e) => setAcceptanceCriteria(e.target.value)}
-              rows={3}
-              placeholder={"1. 至少列出5个工具\n2. 每个包含名称和官网\n3. 信息必须真实"}
-            />
+            <div className="flex flex-col gap-1.5">
+              {criteria.map((item, idx) => (
+                <div key={idx} className="flex gap-1.5 items-center">
+                  <span className="text-muted-foreground text-xs w-4 shrink-0 text-right">{idx + 1}.</span>
+                  <Input
+                    value={item}
+                    onChange={(e) => {
+                      const next = [...criteria]
+                      next[idx] = e.target.value
+                      setCriteria(next)
+                    }}
+                    placeholder="验收标准条目"
+                    className="flex-1 text-sm"
+                  />
+                  {criteria.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setCriteria(criteria.filter((_, i) => i !== idx))}
+                      className="text-muted-foreground hover:text-red-400 text-sm w-5 shrink-0"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setCriteria([...criteria, ''])}
+                className="text-xs text-blue-400 hover:text-blue-300 text-left mt-0.5 pl-5"
+              >
+                + Add criterion
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col gap-1.5">

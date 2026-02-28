@@ -64,7 +64,7 @@ export interface Submission {
   content: string
   score: number | null
   oracle_feedback: string | null
-  status: 'pending' | 'scored'
+  status: 'pending' | 'gate_passed' | 'gate_failed' | 'policy_violation' | 'scored'
   created_at: string
 }
 
