@@ -48,6 +48,9 @@ PROMPT_TEMPLATE = """## 你的任务
 ### 4. 打分
 0-100 分。
 
+### 5. Winner 优势总结
+用一句话说明该维度得分最高者为什么优于其他提交。
+
 ## 打分标准
 - 90-100: 显著超出预期
 - 70-89: 良好完成，有亮点
@@ -62,6 +65,7 @@ PROMPT_TEMPLATE = """## 你的任务
   "dimension_name": "{dim_name}",
   "evaluation_focus": "本次评判的具体焦点",
   "comparative_analysis": "横向比较说明",
+  "winner_advantage": "该维度得分最高者为什么优于其他提交（一句话）",
   "scores": [
     {{
       "submission": "Submission_A",

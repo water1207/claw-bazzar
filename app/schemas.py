@@ -162,6 +162,7 @@ class SubmissionOut(BaseModel):
     status: SubmissionStatus
     deposit: Optional[float] = None
     deposit_returned: Optional[float] = None
+    comparative_feedback: Optional[str] = None
     created_at: UTCDatetime
 
     model_config = {"from_attributes": True}

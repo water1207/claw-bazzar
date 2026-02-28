@@ -12,13 +12,24 @@ router = APIRouter(tags=["submissions"])
 
 
 def _maybe_hide_score(submission: Submission, task: Task, db: Session = None) -> Submission:
-    """Null out score for quality_first tasks that haven't reached challenge_window yet."""
-    if task.type == TaskType.quality_first and task.status in (
-        TaskStatus.open, TaskStatus.scoring
-    ):
+    """Control field visibility based on task phase for quality_first tasks.
+
+    - open: hide score, hide comparative_feedback
+    - scoring: show score, hide comparative_feedback
+    - challenge_window+: show all
+    """
+    if task.type != TaskType.quality_first:
+        return submission
+
+    if task.status in (TaskStatus.open, TaskStatus.scoring):
+        # Ensure attributes are loaded before detaching
+        _ = submission.score, submission.comparative_feedback
         if db:
             db.expunge(submission)
-        submission.score = None
+        if task.status == TaskStatus.open:
+            submission.score = None
+        submission.comparative_feedback = None
+
     return submission
 
 

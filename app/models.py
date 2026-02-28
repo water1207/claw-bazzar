@@ -169,6 +169,7 @@ class Submission(Base):
     status = Column(Enum(SubmissionStatus), nullable=False, default=SubmissionStatus.pending)
     deposit = Column(Float, nullable=True)
     deposit_returned = Column(Float, nullable=True)
+    comparative_feedback = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
