@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Submission } from '@/lib/api'
 import { useUser } from '@/lib/api'
 
@@ -26,6 +27,7 @@ interface ComparativePanelProps {
 }
 
 export function ComparativePanel({ submissions, taskStatus }: ComparativePanelProps) {
+  const [contentExpanded, setContentExpanded] = useState(false)
   const isVisible = !['open', 'scoring'].includes(taskStatus)
 
   if (!isVisible) {
@@ -53,6 +55,11 @@ export function ComparativePanel({ submissions, taskStatus }: ComparativePanelPr
     return null
   }
 
+  const winnerRanking = cf.rankings.find(r => r.rank === 1)
+  const winnerSubmission = winnerRanking
+    ? submissions.find(s => s.id === winnerRanking.submission_id)
+    : null
+
   return (
     <div className="space-y-5">
       <div>
@@ -78,6 +85,24 @@ export function ComparativePanel({ submissions, taskStatus }: ComparativePanelPr
           </tbody>
         </table>
       </div>
+
+      {winnerSubmission?.content && (
+        <div>
+          <button
+            onClick={() => setContentExpanded(!contentExpanded)}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-2.5 hover:text-foreground transition-colors"
+          >
+            <span className="text-xs">{contentExpanded ? '▼' : '▶'}</span>
+            Winner Submission
+          </button>
+          {contentExpanded && (
+            <div className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed bg-zinc-900/50 rounded-md p-3 border border-zinc-800 max-h-96 overflow-y-auto">
+              {winnerSubmission.content}
+            </div>
+          )}
+        </div>
+      )}
+
       <div>
         <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-2.5">
           Winner Analysis
