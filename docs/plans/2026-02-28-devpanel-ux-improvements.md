@@ -854,6 +854,113 @@ git commit -m "feat(devpanel): oracle log 记录输出内容，前端可展开�
 
 ---
 
+### Task G: Publisher Nickname 展示
+
+**Files:**
+- Modify: `app/schemas.py`（`TaskOut` 新增 `publisher_nickname` 字段）
+- Modify: `app/routers/tasks.py`（`list_tasks`、`get_task`、`create_task` 填充 nickname）
+- Modify: `frontend/lib/api.ts`（`Task` interface 新增 `publisher_nickname`）
+- Modify: `frontend/components/TaskDetail.tsx`（Publisher 行展示 nickname + 缩写 ID 可复制）
+
+**Step 1: 后端 TaskOut 加 publisher_nickname**
+
+在 `app/schemas.py` 的 `TaskOut` 类中，`publisher_id` 字段下方加：
+```python
+publisher_nickname: Optional[str] = None
+```
+
+**Step 2: 后端路由填充 publisher_nickname**
+
+在 `app/routers/tasks.py` 顶部 import 加（已有 User 模型则无需重复）：
+```python
+from ..models import User
+```
+
+在 `list_tasks` 函数末尾，将 `return q.order_by(Task.created_at.desc()).all()` 替换为：
+
+```python
+tasks = q.order_by(Task.created_at.desc()).all()
+# Resolve publisher nicknames
+pub_ids = {t.publisher_id for t in tasks if t.publisher_id}
+nickname_map: dict[str, str] = {}
+if pub_ids:
+    users = db.query(User.id, User.nickname).filter(User.id.in_(pub_ids)).all()
+    nickname_map = {u.id: u.nickname for u in users}
+results = []
+for t in tasks:
+    out = TaskOut.model_validate(t)
+    if t.publisher_id:
+        out.publisher_nickname = nickname_map.get(t.publisher_id)
+    results.append(out)
+return results
+```
+
+在 `get_task` 函数中，找到 `result = TaskDetail.model_validate(task)` 后加：
+```python
+if task.publisher_id:
+    pub_user = db.query(User).filter(User.id == task.publisher_id).first()
+    if pub_user:
+        result.publisher_nickname = pub_user.nickname
+```
+
+在 `create_task` 函数中，找到 `result_out = TaskOut.model_validate(task)` 后加：
+```python
+if task.publisher_id:
+    pub_user = db.query(User).filter(User.id == task.publisher_id).first()
+    if pub_user:
+        result_out.publisher_nickname = pub_user.nickname
+```
+
+**Step 3: TaskDetail schema 也加 publisher_nickname**
+
+`TaskDetail` 继承自 `TaskOut`（确认），无需单独加字段。
+
+**Step 4: 前端 api.ts Task interface 加字段**
+
+在 `frontend/lib/api.ts` 的 `Task` interface 中，`publisher_id` 字段下方加：
+```typescript
+publisher_nickname?: string | null
+```
+
+**Step 5: TaskDetail.tsx 更新 Publisher 展示**
+
+找到（约 76–80 行）：
+```tsx
+{task.publisher_id && (
+  <div>
+    <span className="text-muted-foreground">Publisher: </span>
+    <span className="font-mono">{task.publisher_id.slice(0, 8)}…</span>
+  </div>
+)}
+```
+替换为：
+```tsx
+{task.publisher_id && (
+  <div className="flex items-center gap-1.5">
+    <span className="text-muted-foreground">Publisher: </span>
+    {task.publisher_nickname && (
+      <span className="text-white">{task.publisher_nickname}</span>
+    )}
+    <span
+      className="font-mono text-muted-foreground cursor-pointer hover:text-blue-400"
+      title={`${task.publisher_id}（点击复制）`}
+      onClick={() => navigator.clipboard.writeText(task.publisher_id!)}
+    >
+      ({task.publisher_id.slice(0, 8)}…)
+    </span>
+  </div>
+)}
+```
+
+**Step 6: Commit**
+
+```bash
+git add app/schemas.py app/routers/tasks.py frontend/lib/api.ts frontend/components/TaskDetail.tsx
+git commit -m "feat: task 展示 publisher nickname，ID 缩写可复制"
+```
+
+---
+
 ### Task F: 端到端验证
 
 **Step 1: 启动服务**
