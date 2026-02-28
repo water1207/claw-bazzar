@@ -121,6 +121,17 @@ def test_task_create_acceptance_criteria_required():
 
 
 def test_scoring_dimension_public_schema():
-    dim = ScoringDimensionPublic(name="实质性", description="评估内容质量")
+    dim = ScoringDimensionPublic(
+        dim_id="substantiveness",
+        name="实质性",
+        dim_type="fixed",
+        description="评估内容质量",
+        weight=0.3,
+        scoring_guidance="评估内容深度与价值",
+    )
     assert dim.name == "实质性"
     assert dim.description == "评估内容质量"
+    assert dim.dim_id == "substantiveness"
+    assert dim.dim_type == "fixed"
+    assert dim.weight == 0.3
+    assert dim.scoring_guidance == "评估内容深度与价值"
