@@ -131,6 +131,7 @@ interface OracleLog {
   completion_tokens: number
   total_tokens: number
   duration_ms: number
+  output?: unknown
 }
 
 interface TaskGroup {
@@ -184,6 +185,46 @@ function groupByTask(logs: OracleLog[]): TaskGroup[] {
 
 function formatDuration(ms: number) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+}
+
+function OracleLogRow({ log }: { log: OracleLog }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div>
+      <div className="flex items-center gap-3 text-[11px] pl-2 py-0.5 hover:bg-zinc-900/50 rounded">
+        <span className="font-mono text-muted-foreground w-16 shrink-0">
+          {new Date(log.timestamp).toLocaleTimeString()}
+        </span>
+        <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-white shrink-0">
+          {log.mode}
+        </span>
+        <span className="text-muted-foreground ml-auto tabular-nums">
+          {log.prompt_tokens.toLocaleString()}
+          <span className="text-zinc-600 mx-0.5">/</span>
+          {log.completion_tokens.toLocaleString()}
+          <span className="text-zinc-600 mx-0.5">/</span>
+          <span className="text-white">{log.total_tokens.toLocaleString()}</span>
+        </span>
+        <span className="font-mono text-muted-foreground w-14 text-right shrink-0">
+          {formatDuration(log.duration_ms)}
+        </span>
+        {log.output !== undefined && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="text-muted-foreground hover:text-white text-[10px] w-4 shrink-0"
+          >
+            {expanded ? '▲' : '▼'}
+          </button>
+        )}
+      </div>
+      {expanded && log.output !== undefined && (
+        <pre className="text-[10px] text-muted-foreground bg-zinc-950 rounded mx-2 mt-1 p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all">
+          {JSON.stringify(log.output, null, 2)}
+        </pre>
+      )}
+    </div>
+  )
 }
 
 function OracleLogsPanel() {
@@ -284,24 +325,7 @@ function OracleLogsPanel() {
                         {/* Individual log rows */}
                         <div className="space-y-0.5">
                           {wInfo.logs.map((log, i) => (
-                            <div key={i} className="flex items-center gap-3 text-[11px] pl-2 py-0.5 hover:bg-zinc-900/50 rounded">
-                              <span className="font-mono text-muted-foreground w-16 shrink-0">
-                                {new Date(log.timestamp).toLocaleTimeString()}
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-white shrink-0">
-                                {log.mode}
-                              </span>
-                              <span className="text-muted-foreground ml-auto tabular-nums">
-                                {log.prompt_tokens.toLocaleString()}
-                                <span className="text-zinc-600 mx-0.5">/</span>
-                                {log.completion_tokens.toLocaleString()}
-                                <span className="text-zinc-600 mx-0.5">/</span>
-                                <span className="text-white">{log.total_tokens.toLocaleString()}</span>
-                              </span>
-                              <span className="font-mono text-muted-foreground w-14 text-right shrink-0">
-                                {formatDuration(log.duration_ms)}
-                              </span>
-                            </div>
+                            <OracleLogRow key={i} log={log} />
                           ))}
                         </div>
                       </div>

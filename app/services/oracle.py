@@ -132,6 +132,7 @@ def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
             "completion_tokens": token_usage.get("completion_tokens", 0),
             "total_tokens": token_usage.get("total_tokens", 0),
             "duration_ms": duration_ms,
+            "output": output,
         }
         with _oracle_logs_lock:
             _oracle_logs.append(log_entry)
