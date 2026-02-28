@@ -7,12 +7,13 @@ import { TypeBadge } from './TypeBadge'
 import { PayoutBadge } from './PayoutBadge'
 import { SubmissionTable } from './SubmissionTable'
 import { ChallengePanel } from './ChallengePanel'
+import { SettlementPanel } from './SettlementPanel'
 import { TaskStatusStepper } from './TaskStatusStepper'
 import { formatDeadline, formatBounty } from '@/lib/utils'
 
 const BASE_SEPOLIA_EXPLORER = 'https://sepolia.basescan.org/tx'
 
-type Tab = 'overview' | 'submissions' | 'challenges'
+type Tab = 'overview' | 'submissions' | 'challenges' | 'settlement'
 
 function TxLink({ hash }: { hash: string }) {
   const short = `${hash.slice(0, 10)}…${hash.slice(-6)}`
@@ -81,6 +82,7 @@ const CHALLENGE_STATUSES = new Set(['challenge_window', 'arbitrating', 'closed',
 export function TaskDetail({ task }: Props) {
   const { label, expired } = formatDeadline(task.deadline)
   const showChallengesTab = task.type === 'quality_first' && CHALLENGE_STATUSES.has(task.status)
+  const showSettlementTab = task.status === 'closed' || task.status === 'voided'
   const [tab, setTab] = useState<Tab>('overview')
 
   function handleTabHint(hint: 'submissions' | 'challenges' | null) {
@@ -124,6 +126,11 @@ export function TaskDetail({ task }: Props) {
           {showChallengesTab && (
             <TabButton active={tab === 'challenges'} onClick={() => setTab('challenges')}>
               Challenges
+            </TabButton>
+          )}
+          {showSettlementTab && (
+            <TabButton active={tab === 'settlement'} onClick={() => setTab('settlement')}>
+              Settlement
             </TabButton>
           )}
         </div>
@@ -266,6 +273,11 @@ export function TaskDetail({ task }: Props) {
         {/* ── Challenges tab ── */}
         {tab === 'challenges' && showChallengesTab && (
           <ChallengePanel task={task} />
+        )}
+
+        {/* ── Settlement tab ── */}
+        {tab === 'settlement' && showSettlementTab && (
+          <SettlementPanel task={task} />
         )}
       </div>
     </div>
