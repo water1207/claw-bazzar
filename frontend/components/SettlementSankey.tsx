@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import type { SettlementSource, SettlementDistribution } from '@/lib/api'
 
+/* ── Colors ── */
+
 const SOURCE_COLORS: Record<string, string> = {
   bounty: '#34d399',
   incentive: '#60a5fa',
@@ -26,274 +28,219 @@ const DIST_COLORS: Record<string, string> = {
   publisher_refund: '#60a5fa',
 }
 
+function distColor(d: SettlementDistribution): string {
+  return DIST_COLORS[d.type] ?? '#a1a1aa'
+}
+
+/* ── Layout constants ── */
+
+const ROW_H = 36
+const PAD_TOP = 12
+const PAD_BOTTOM = 12
+const LABEL_AREA_W = 180
+const GAP = 60
+
+function formatAmt(n: number): string {
+  return n < 0.01 ? n.toFixed(4) : n.toFixed(2)
+}
+
+/* ── Component ── */
+
 interface Props {
   sources: SettlementSource[]
   distributions: SettlementDistribution[]
   escrowTotal: number
 }
 
-const W = 600
-const H = 280
-const PAD_Y = 16
-const NODE_W = 120
-const POOL_W = 40
-const USABLE_H = H - PAD_Y * 2
-const MIN_NODE_H = 18
-
-const LEFT_X = 0
-const POOL_X = (W - POOL_W) / 2
-const RIGHT_X = W - NODE_W
-
 export function SettlementSankey({ sources, distributions, escrowTotal }: Props) {
-  const [hover, setHover] = useState<{ side: 'left' | 'right'; idx: number } | null>(null)
+  const [hover, setHover] = useState<{ side: 'src' | 'dst'; idx: number } | null>(null)
 
   if (escrowTotal <= 0) return null
 
-  // Calculate node heights proportional to amount (with minimum)
-  function layoutNodes<T extends { amount: number }>(items: T[]): { y: number; h: number }[] {
-    const total = items.reduce((s, i) => s + i.amount, 0)
-    if (total === 0) return items.map(() => ({ y: PAD_Y, h: MIN_NODE_H }))
+  const rows = Math.max(sources.length, distributions.length)
+  const svgH = PAD_TOP + rows * ROW_H + PAD_BOTTOM
+  const W = LABEL_AREA_W * 2 + GAP
 
-    const gap = Math.min(6, USABLE_H / (items.length * 4))
-    const totalGap = gap * Math.max(0, items.length - 1)
-    const availH = USABLE_H - totalGap
+  // Y center for each row
+  const rowCenterY = (idx: number) => PAD_TOP + idx * ROW_H + ROW_H / 2
 
-    const rawHeights = items.map((i) => (i.amount / total) * availH)
-    const heights = rawHeights.map((h) => Math.max(h, MIN_NODE_H))
-    const totalH = heights.reduce((s, h) => s + h, 0) + totalGap
-    const startY = PAD_Y + Math.max(0, (USABLE_H + totalGap - totalH) / 2)
+  // Stroke width scaling: min 1.5, max 20, proportional to escrow
+  const maxStroke = Math.min(20, ROW_H * 0.5)
+  const strokeW = (amount: number) => Math.max(1.5, (amount / escrowTotal) * maxStroke)
 
-    const result: { y: number; h: number }[] = []
-    let cy = startY
-    for (const h of heights) {
-      result.push({ y: cy, h })
-      cy += h + gap
+  // Build flow connections: each source flows through center to distributions
+  // Simple model: all sources merge, then split to distributions
+  const flows: { srcIdx: number; dstIdx: number; amount: number; color: string }[] = []
+
+  // Proportional distribution: each source contributes to each distribution proportionally
+  const totalSrc = sources.reduce((s, x) => s + x.amount, 0)
+  if (totalSrc > 0) {
+    for (let si = 0; si < sources.length; si++) {
+      const srcShare = sources[si].amount / totalSrc
+      for (let di = 0; di < distributions.length; di++) {
+        const flowAmt = srcShare * distributions[di].amount
+        if (flowAmt > 0) {
+          flows.push({
+            srcIdx: si,
+            dstIdx: di,
+            amount: flowAmt,
+            color: distColor(distributions[di]),
+          })
+        }
+      }
     }
-    return result
   }
 
-  const srcLayout = layoutNodes(sources)
-  const dstLayout = layoutNodes(distributions)
-  const poolY = PAD_Y
-  const poolH = USABLE_H
-
-  function bezier(
-    x1: number, y1: number,
-    x2: number, y2: number,
-  ): string {
-    const cx1 = x1 + (x2 - x1) * 0.45
-    const cx2 = x2 - (x2 - x1) * 0.45
-    return `M ${x1},${y1} C ${cx1},${y1} ${cx2},${y2} ${x2},${y2}`
+  // Bezier from left side to right side through center
+  function flowPath(srcY: number, dstY: number): string {
+    const x1 = LABEL_AREA_W
+    const x2 = LABEL_AREA_W + GAP
+    const cx1 = x1 + GAP * 0.4
+    const cx2 = x2 - GAP * 0.4
+    return `M ${x1},${srcY} C ${cx1},${srcY} ${cx2},${dstY} ${x2},${dstY}`
   }
 
-  function formatAmount(n: number): string {
-    return n < 0.01 ? n.toFixed(4) : n.toFixed(2)
+  const isHoverSrc = (i: number) => hover?.side === 'src' && hover.idx === i
+  const isHoverDst = (i: number) => hover?.side === 'dst' && hover.idx === i
+  const flowActive = (si: number, di: number) => {
+    if (!hover) return true
+    return (hover.side === 'src' && hover.idx === si) ||
+           (hover.side === 'dst' && hover.idx === di)
   }
-
-  const isActive = (side: 'left' | 'right', idx: number) =>
-    hover !== null && hover.side === side && hover.idx === idx
 
   return (
     <svg
-      viewBox={`0 0 ${W} ${H}`}
+      viewBox={`0 0 ${W} ${svgH}`}
       className="w-full"
-      style={{ maxHeight: 280 }}
+      style={{ maxHeight: Math.max(svgH, 160) }}
     >
-      {/* Left-to-pool flows */}
-      {sources.map((src, i) => {
-        const s = srcLayout[i]
-        const midS = s.y + s.h / 2
-        const poolBand = poolY + (poolH * (s.y - PAD_Y)) / USABLE_H
-        const poolBandH = (poolH * s.h) / USABLE_H
-        const midP = poolBand + poolBandH / 2
-        const strokeW = Math.max(2, (src.amount / escrowTotal) * (USABLE_H * 0.6))
-        const active = isActive('left', i)
+      {/* Flow curves */}
+      {flows.map((f, i) => {
+        const srcY = rowCenterY(f.srcIdx)
+        const dstY = rowCenterY(f.dstIdx)
+        const active = flowActive(f.srcIdx, f.dstIdx)
         return (
           <path
-            key={`lf-${i}`}
-            d={bezier(LEFT_X + NODE_W, midS, POOL_X, midP)}
+            key={`flow-${i}`}
+            d={flowPath(srcY, dstY)}
             fill="none"
-            stroke={sourceColor(src)}
-            strokeWidth={strokeW}
-            opacity={hover === null || active ? 0.45 : 0.12}
+            stroke={f.color}
+            strokeWidth={strokeW(f.amount)}
+            opacity={active ? 0.35 : 0.08}
             className="transition-opacity duration-150"
           />
         )
       })}
 
-      {/* Pool-to-right flows */}
-      {distributions.map((dst, i) => {
-        const d = dstLayout[i]
-        const midD = d.y + d.h / 2
-        const poolBand = poolY + (poolH * (d.y - PAD_Y)) / USABLE_H
-        const poolBandH = (poolH * d.h) / USABLE_H
-        const midP = poolBand + poolBandH / 2
-        const strokeW = Math.max(2, (dst.amount / escrowTotal) * (USABLE_H * 0.6))
-        const active = isActive('right', i)
-        return (
-          <path
-            key={`rf-${i}`}
-            d={bezier(POOL_X + POOL_W, midP, RIGHT_X, midD)}
-            fill="none"
-            stroke={DIST_COLORS[dst.type] ?? '#a1a1aa'}
-            strokeWidth={strokeW}
-            opacity={hover === null || active ? 0.45 : 0.12}
-            className="transition-opacity duration-150"
-          />
-        )
-      })}
-
-      {/* Pool node */}
-      <rect
-        x={POOL_X}
-        y={poolY}
-        width={POOL_W}
-        height={poolH}
-        rx={6}
-        fill="#27272a"
-        stroke="#52525b"
-        strokeWidth={1}
-      />
-      <text
-        x={POOL_X + POOL_W / 2}
-        y={poolY + poolH / 2 - 8}
-        textAnchor="middle"
-        fill="#a1a1aa"
-        fontSize={10}
-        fontWeight={600}
-      >
-        Pool
-      </text>
-      <text
-        x={POOL_X + POOL_W / 2}
-        y={poolY + poolH / 2 + 8}
-        textAnchor="middle"
-        fill="#e4e4e7"
-        fontSize={11}
-        fontFamily="monospace"
-      >
-        {formatAmount(escrowTotal)}
-      </text>
-
-      {/* Source nodes (left) */}
+      {/* Source rows (left) */}
       {sources.map((src, i) => {
-        const s = srcLayout[i]
-        const active = isActive('left', i)
+        const cy = rowCenterY(i)
+        const color = sourceColor(src)
+        const active = isHoverSrc(i)
+        const dimmed = hover !== null && !active
         return (
           <g
-            key={`sn-${i}`}
-            onMouseEnter={() => setHover({ side: 'left', idx: i })}
+            key={`src-${i}`}
+            onMouseEnter={() => setHover({ side: 'src', idx: i })}
             onMouseLeave={() => setHover(null)}
             className="cursor-pointer"
           >
+            {/* Accent bar */}
             <rect
-              x={LEFT_X}
-              y={s.y}
-              width={NODE_W}
-              height={s.h}
-              rx={4}
-              fill={sourceColor(src)}
-              opacity={hover === null || active ? 0.85 : 0.3}
+              x={0}
+              y={cy - ROW_H / 2 + 4}
+              width={4}
+              height={ROW_H - 8}
+              rx={2}
+              fill={color}
+              opacity={dimmed ? 0.3 : 1}
               className="transition-opacity duration-150"
             />
-            {s.h >= 28 && (
-              <>
-                <text
-                  x={LEFT_X + 8}
-                  y={s.y + s.h / 2 - 4}
-                  fill="#18181b"
-                  fontSize={10}
-                  fontWeight={600}
-                >
-                  {src.label.length > 16 ? src.label.slice(0, 14) + '..' : src.label}
-                </text>
-                <text
-                  x={LEFT_X + 8}
-                  y={s.y + s.h / 2 + 10}
-                  fill="#18181b"
-                  fontSize={10}
-                  fontFamily="monospace"
-                >
-                  {formatAmount(src.amount)}
-                </text>
-              </>
-            )}
-            {s.h < 28 && s.h >= MIN_NODE_H && (
-              <text
-                x={LEFT_X + 8}
-                y={s.y + s.h / 2 + 3.5}
-                fill="#18181b"
-                fontSize={9}
-                fontWeight={600}
-              >
-                {formatAmount(src.amount)}
-              </text>
-            )}
-            {/* Tooltip on hover */}
+            {/* Label */}
+            <text
+              x={12}
+              y={cy + 1}
+              fill={dimmed ? '#52525b' : '#d4d4d8'}
+              fontSize={11}
+              fontWeight={500}
+              dominantBaseline="middle"
+              className="transition-all duration-150"
+            >
+              {src.label.length > 18 ? src.label.slice(0, 16) + '..' : src.label}
+            </text>
+            {/* Amount (right-aligned near center) */}
+            <text
+              x={LABEL_AREA_W - 6}
+              y={cy + 1}
+              fill={dimmed ? '#3f3f46' : '#a1a1aa'}
+              fontSize={11}
+              fontFamily="monospace"
+              textAnchor="end"
+              dominantBaseline="middle"
+              className="transition-all duration-150"
+            >
+              {formatAmt(src.amount)}
+            </text>
+            {/* Hover tooltip */}
             {active && (
-              <title>{`${src.label}: ${formatAmount(src.amount)} USDC${src.verdict ? ` (${src.verdict})` : ''}`}</title>
+              <title>{`${src.label}: ${formatAmt(src.amount)} USDC${src.verdict ? ` (${src.verdict})` : ''}`}</title>
             )}
           </g>
         )
       })}
 
-      {/* Distribution nodes (right) */}
+      {/* Distribution rows (right) */}
       {distributions.map((dst, i) => {
-        const d = dstLayout[i]
-        const color = DIST_COLORS[dst.type] ?? '#a1a1aa'
-        const active = isActive('right', i)
+        const cy = rowCenterY(i)
+        const color = distColor(dst)
+        const active = isHoverDst(i)
+        const dimmed = hover !== null && !active
         return (
           <g
-            key={`dn-${i}`}
-            onMouseEnter={() => setHover({ side: 'right', idx: i })}
+            key={`dst-${i}`}
+            onMouseEnter={() => setHover({ side: 'dst', idx: i })}
             onMouseLeave={() => setHover(null)}
             className="cursor-pointer"
           >
+            {/* Accent bar */}
             <rect
-              x={RIGHT_X}
-              y={d.y}
-              width={NODE_W}
-              height={d.h}
-              rx={4}
+              x={LABEL_AREA_W + GAP}
+              y={cy - ROW_H / 2 + 4}
+              width={4}
+              height={ROW_H - 8}
+              rx={2}
               fill={color}
-              opacity={hover === null || active ? 0.85 : 0.3}
+              opacity={dimmed ? 0.3 : 1}
               className="transition-opacity duration-150"
             />
-            {d.h >= 28 && (
-              <>
-                <text
-                  x={RIGHT_X + 8}
-                  y={d.y + d.h / 2 - 4}
-                  fill="#18181b"
-                  fontSize={10}
-                  fontWeight={600}
-                >
-                  {dst.label.length > 16 ? dst.label.slice(0, 14) + '..' : dst.label}
-                </text>
-                <text
-                  x={RIGHT_X + 8}
-                  y={d.y + d.h / 2 + 10}
-                  fill="#18181b"
-                  fontSize={10}
-                  fontFamily="monospace"
-                >
-                  {formatAmount(dst.amount)}
-                </text>
-              </>
-            )}
-            {d.h < 28 && d.h >= MIN_NODE_H && (
-              <text
-                x={RIGHT_X + 8}
-                y={d.y + d.h / 2 + 3.5}
-                fill="#18181b"
-                fontSize={9}
-                fontWeight={600}
-              >
-                {formatAmount(dst.amount)}
-              </text>
-            )}
+            {/* Label */}
+            <text
+              x={LABEL_AREA_W + GAP + 12}
+              y={cy + 1}
+              fill={dimmed ? '#52525b' : '#d4d4d8'}
+              fontSize={11}
+              fontWeight={500}
+              dominantBaseline="middle"
+              className="transition-all duration-150"
+            >
+              {dst.label.length > 18 ? dst.label.slice(0, 16) + '..' : dst.label}
+            </text>
+            {/* Amount (right edge) */}
+            <text
+              x={W - 4}
+              y={cy + 1}
+              fill={dimmed ? '#3f3f46' : '#a1a1aa'}
+              fontSize={11}
+              fontFamily="monospace"
+              textAnchor="end"
+              dominantBaseline="middle"
+              className="transition-all duration-150"
+            >
+              {formatAmt(dst.amount)}
+            </text>
+            {/* Hover tooltip */}
             {active && (
-              <title>{`${dst.label}: ${formatAmount(dst.amount)} USDC`}</title>
+              <title>{`${dst.label}: ${formatAmt(dst.amount)} USDC`}</title>
             )}
           </g>
         )
