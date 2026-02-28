@@ -17,6 +17,11 @@ def get_accumulated_usage() -> dict:
     return dict(_accumulated_usage)
 
 
+def _clean_surrogates(s: str) -> str:
+    """Replace lone surrogate characters (e.g. \\udca0) that are invalid in UTF-8."""
+    return s.encode("utf-8", errors="replace").decode("utf-8")
+
+
 def call_llm(prompt: str, system: str = None) -> tuple[str, dict]:
     """Call LLM API and return (text, usage_dict).
 
@@ -27,6 +32,9 @@ def call_llm(prompt: str, system: str = None) -> tuple[str, dict]:
         ANTHROPIC_API_KEY: API key for Anthropic provider
         OPENAI_API_KEY: API key for OpenAI-compatible provider
     """
+    prompt = _clean_surrogates(prompt)
+    if system:
+        system = _clean_surrogates(system)
     global _accumulated_usage
     provider = os.environ.get("ORACLE_LLM_PROVIDER", "openai")
     model = os.environ.get("ORACLE_LLM_MODEL", "")
