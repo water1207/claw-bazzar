@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 pip install -e ".[dev]"                          # Install deps
-uvicorn app.main:app --reload --port 8000        # Dev server
+uvicorn app.main:app --port 8000                 # Dev server (不要加 --reload，见下方说明)
 pytest -v                                        # All tests (252)
 pytest tests/test_tasks.py::test_create_task -v  # Single test
 pytest -k "test_submission" -v                   # Pattern match
@@ -214,6 +214,42 @@ alembic upgrade head                                         # Apply to local DB
 The migration script under `alembic/versions/` must be committed together with the `models.py` change. Colleagues get the schema update automatically when they restart the server (Alembic runs `upgrade head` on every startup via `lifespan`).
 
 Never use `Base.metadata.create_all()` to apply schema changes — Alembic owns the schema.
+
+### 故障排查
+
+**问题一：`--reload` 导致启动挂起**
+
+`uvicorn --reload` 在 lifespan 启动期间触发热重载，Alembic 写 SQLite 时产生死锁，服务器无法完成启动。**始终不加 `--reload` 启动后端。**
+
+**问题二：DB 版本与本地迁移文件不匹配**
+
+拉取远端代码后，本地 DB 的 `alembic_version` 可能指向一个本地不存在的 revision，导致报错：
+```
+alembic.util.exc.CommandError: Can't locate revision identified by 'xxxxxxxx'
+```
+
+修复步骤：
+```bash
+# 1. 查看本地实际 head
+alembic heads
+
+# 2. 把 DB 版本强制指向本地 head（替换为实际 revision id）
+sqlite3 claw_bazzar.db "UPDATE alembic_version SET version_num = '<local_head>';"
+
+# 3. 验证
+alembic current
+```
+
+> ⚠️ 仅在本地 schema 已与 head 一致时使用（如 DB 是本地新建的）。若 schema 真有差异，应先跑 `alembic upgrade head` 或删 DB 重建。
+
+**问题三：多头（multiple heads）冲突**
+
+两个分支各自生成迁移导致分叉：
+```bash
+alembic merge heads -m "merge_heads"
+alembic upgrade head
+# 将 merge 文件与其他改动一起 commit
+```
 
 ## Conventions
 
