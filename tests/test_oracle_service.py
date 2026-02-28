@@ -148,7 +148,7 @@ def test_give_feedback_marks_policy_violation_on_injection(db_session):
         "field": "submission_payload"
     }
     with patch("app.services.oracle._call_oracle", return_value=injection_result), \
-         patch("app.services.staking.check_and_slash", return_value=False) as mock_slash:
+         patch("app.services.staking.check_and_slash", return_value=False):
         give_feedback(db_session, sub.id, task.id)
 
     db_session.refresh(sub)
@@ -162,7 +162,6 @@ def test_give_feedback_marks_policy_violation_on_injection(db_session):
     assert event is not None
     db_session.refresh(worker)
     assert worker.trust_score == 400.0  # 500 - 100
-    mock_slash.assert_called_once_with(db_session, "w1")
 
 
 def test_score_submission_marks_policy_violation_on_injection(db_session):
@@ -193,7 +192,7 @@ def test_score_submission_marks_policy_violation_on_injection(db_session):
         "field": "submission_payload"
     }
     with patch("app.services.oracle._call_oracle", return_value=injection_result), \
-         patch("app.services.staking.check_and_slash", return_value=False) as mock_slash:
+         patch("app.services.staking.check_and_slash", return_value=False):
         score_submission(db_session, sub.id, task.id)
 
     db_session.refresh(sub)
@@ -204,4 +203,3 @@ def test_score_submission_marks_policy_violation_on_injection(db_session):
     assert event is not None
     db_session.refresh(worker)
     assert worker.trust_score == 400.0  # 500 - 100
-    mock_slash.assert_called_once_with(db_session, "w1")

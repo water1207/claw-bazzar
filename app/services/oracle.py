@@ -210,9 +210,7 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
             "field": gate_result.get("field", ""),
         })
         from .trust import apply_event, TrustEventType
-        from .staking import check_and_slash
         apply_event(db, submission.worker_id, TrustEventType.worker_malicious, task_id=task.id)
-        check_and_slash(db, submission.worker_id)
         db.commit()
         return
 
@@ -287,9 +285,7 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
             "field": gate_result.get("field", ""),
         })
         from .trust import apply_event, TrustEventType
-        from .staking import check_and_slash
         apply_event(db, submission.worker_id, TrustEventType.worker_malicious, task_id=task.id)
-        check_and_slash(db, submission.worker_id)
         db.commit()
         return
 

@@ -196,3 +196,41 @@ def test_check_permissions_b_level(client):
     assert perms["can_accept_tasks"] is True
     assert perms["can_challenge"] is True
     assert perms["max_task_amount"] == 50.0
+
+
+def test_apply_event_auto_slash_below_300(client):
+    """apply_event automatically triggers check_and_slash when score drops below 300."""
+    from unittest.mock import patch
+    db = next(next(iter(client.app.dependency_overrides.values()))())
+    user = User(nickname="slashme", wallet="0xSlash", role=UserRole.worker,
+                trust_score=350.0, trust_tier=TrustTier.B, staked_amount=50.0)
+    db.add(user)
+    db.commit()
+
+    with patch("app.services.staking.slash_onchain", return_value="0xfake") as mock_onchain:
+        apply_event(db, user.id, TrustEventType.worker_malicious)
+
+    db.refresh(user)
+    # 350 - 100 = 250 < 300 → auto-slash triggered
+    assert user.staked_amount == 0.0
+    assert user.is_arbiter is False
+    mock_onchain.assert_called_once()
+
+
+def test_apply_event_no_slash_above_300(client):
+    """apply_event does NOT trigger slash when score stays >= 300."""
+    from unittest.mock import patch
+    db = next(next(iter(client.app.dependency_overrides.values()))())
+    user = User(nickname="safeguy", wallet="0xSafe", role=UserRole.worker,
+                trust_score=500.0, trust_tier=TrustTier.A, staked_amount=50.0)
+    db.add(user)
+    db.commit()
+
+    with patch("app.services.staking.slash_onchain") as mock_onchain:
+        apply_event(db, user.id, TrustEventType.worker_malicious)
+
+    db.refresh(user)
+    # 500 - 100 = 400 >= 300 → no slash
+    assert user.trust_score == 400.0
+    assert user.staked_amount == 50.0
+    mock_onchain.assert_not_called()
