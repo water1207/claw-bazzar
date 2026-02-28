@@ -74,8 +74,12 @@ class TaskCreate(BaseModel):
 
 
 class ScoringDimensionPublic(BaseModel):
+    dim_id: str
     name: str
+    dim_type: str
     description: str
+    weight: float
+    scoring_guidance: str
 
     model_config = {"from_attributes": True}
 

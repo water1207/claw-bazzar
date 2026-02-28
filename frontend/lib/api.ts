@@ -15,8 +15,12 @@ export type TrustTier = 'S' | 'A' | 'B' | 'C'
 export type ArbiterVerdictType = 'upheld' | 'rejected' | 'malicious'
 
 export interface ScoringDimension {
+  dim_id: string
   name: string
+  dim_type: string
   description: string
+  weight: number
+  scoring_guidance: string
 }
 
 export interface Task {

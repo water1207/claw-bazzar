@@ -250,12 +250,25 @@ export function TaskDetail({ task }: Props) {
 
             {task.scoring_dimensions && task.scoring_dimensions.length > 0 && (
               <Section title="Scoring Dimensions">
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {task.scoring_dimensions.map((dim, i) => (
-                    <div key={i} className="text-sm">
-                      <span className="font-medium text-blue-300">{dim.name}</span>
+                    <div key={dim.dim_id ?? i} className="text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-blue-300">{dim.name}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-muted-foreground">
+                          {dim.dim_type}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          weight: {(dim.weight * 100).toFixed(0)}%
+                        </span>
+                      </div>
                       {dim.description && (
-                        <span className="text-muted-foreground ml-2 text-xs">{dim.description}</span>
+                        <p className="text-muted-foreground text-xs mt-0.5">{dim.description}</p>
+                      )}
+                      {dim.scoring_guidance && (
+                        <p className="text-muted-foreground/70 text-xs mt-0.5 italic">
+                          {dim.scoring_guidance}
+                        </p>
                       )}
                     </div>
                   ))}

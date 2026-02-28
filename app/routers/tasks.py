@@ -97,17 +97,14 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
     dims = db.query(ScoringDimension).filter(ScoringDimension.task_id == task_id).all()
     result = TaskDetail.model_validate(task)
     result.scoring_dimensions = [
-        ScoringDimensionPublic(name=d.name, description=d.description) for d in dims
+        ScoringDimensionPublic.model_validate(d) for d in dims
     ]
     if task.publisher_id:
         pub_user = db.query(User).filter(User.id == task.publisher_id).first()
         if pub_user:
             result.publisher_nickname = pub_user.nickname
 
-    hide_content = task.status in (
-        TaskStatus.challenge_window,
-        TaskStatus.arbitrating,
-    )
+    hide_content = task.status == TaskStatus.challenge_window
     sub_outs = []
     for s in subs:
         out = SubmissionOut.model_validate(s)

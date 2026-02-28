@@ -246,3 +246,110 @@ def test_policy_violation_worker_cannot_resubmit(client_with_db):
         )
     assert resp2.status_code == 403
     assert "违规" in resp2.json()["detail"]
+
+
+def test_content_visible_during_arbitrating(client_with_db):
+    """During arbitrating, all submission content should be visible."""
+    from app.models import Task, Submission, TaskStatus, SubmissionStatus
+
+    client, db = client_with_db
+    task = Task(
+        title="t", description="d", type="quality_first",
+        deadline=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        publisher_id="pub", bounty=1.0,
+        acceptance_criteria='["c1"]',
+        status=TaskStatus.arbitrating,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    sub1 = Submission(task_id=task.id, worker_id="w1", content="winner content", status=SubmissionStatus.scored)
+    sub2 = Submission(task_id=task.id, worker_id="w2", content="challenger content", status=SubmissionStatus.scored)
+    db.add_all([sub1, sub2])
+    db.commit()
+    db.refresh(sub1)
+
+    task.winner_submission_id = sub1.id
+    db.commit()
+
+    resp = client.get(f"/tasks/{task.id}")
+    assert resp.status_code == 200
+    subs = resp.json()["submissions"]
+    for s in subs:
+        assert s["content"] != "[hidden]"
+    assert any(s["content"] == "winner content" for s in subs)
+    assert any(s["content"] == "challenger content" for s in subs)
+
+
+def test_content_hidden_during_challenge_window(client_with_db):
+    """During challenge_window, non-winner content should still be hidden."""
+    from app.models import Task, Submission, TaskStatus, SubmissionStatus
+
+    client, db = client_with_db
+    task = Task(
+        title="t", description="d", type="quality_first",
+        deadline=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        publisher_id="pub", bounty=1.0,
+        acceptance_criteria='["c1"]',
+        status=TaskStatus.challenge_window,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    sub1 = Submission(task_id=task.id, worker_id="w1", content="winner content", status=SubmissionStatus.scored)
+    sub2 = Submission(task_id=task.id, worker_id="w2", content="challenger content", status=SubmissionStatus.scored)
+    db.add_all([sub1, sub2])
+    db.commit()
+    db.refresh(sub1)
+
+    task.winner_submission_id = sub1.id
+    db.commit()
+
+    resp = client.get(f"/tasks/{task.id}")
+    assert resp.status_code == 200
+    subs = resp.json()["submissions"]
+    winner_sub = next(s for s in subs if s["id"] == sub1.id)
+    loser_sub = next(s for s in subs if s["id"] == sub2.id)
+    assert winner_sub["content"] == "winner content"
+    assert loser_sub["content"] == "[hidden]"
+
+
+def test_task_detail_includes_full_scoring_dimensions(client_with_db):
+    """scoring_dimensions should include dim_id, dim_type, weight, scoring_guidance."""
+    from app.models import Task, ScoringDimension
+
+    client, db = client_with_db
+    task = Task(
+        title="t", description="d", type="quality_first",
+        deadline=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        publisher_id="pub", bounty=1.0,
+        acceptance_criteria='["c1"]',
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    dim = ScoringDimension(
+        task_id=task.id,
+        dim_id="substantiveness",
+        name="Substantiveness",
+        dim_type="fixed",
+        description="Content depth",
+        weight=0.3,
+        scoring_guidance="Evaluate depth of analysis",
+    )
+    db.add(dim)
+    db.commit()
+
+    resp = client.get(f"/tasks/{task.id}")
+    assert resp.status_code == 200
+    dims = resp.json()["scoring_dimensions"]
+    assert len(dims) == 1
+    assert dims[0]["dim_id"] == "substantiveness"
+    assert dims[0]["dim_type"] == "fixed"
+    assert dims[0]["weight"] == 0.3
+    assert dims[0]["scoring_guidance"] == "Evaluate depth of analysis"
+    assert dims[0]["name"] == "Substantiveness"
+    assert dims[0]["description"] == "Content depth"
