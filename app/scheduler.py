@@ -223,28 +223,33 @@ def quality_first_lifecycle(db: Optional[Session] = None) -> None:
                 task.status = TaskStatus.challenge_window
 
                 # Lock 95% bounty into escrow contract at start of challenge window
-                try:
-                    from .models import User
-                    winner_sub = db.query(Submission).filter(
-                        Submission.id == best.id
-                    ).first()
-                    winner_user = db.query(User).filter(
-                        User.id == winner_sub.worker_id
-                    ).first() if winner_sub else None
-                    if winner_user:
-                        escrow_amount = round(task.bounty * 0.95, 6)
-                        incentive = round(task.bounty * 0.05, 6)
-                        tx_hash = create_challenge_onchain(
-                            task.id, winner_user.wallet, escrow_amount, incentive
-                        )
-                        task.escrow_tx_hash = tx_hash
-                except Exception as e:
-                    print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
-                    # Revert: do NOT enter challenge_window if escrow lock failed
-                    task.winner_submission_id = None
-                    task.challenge_window_end = None
-                    task.status = TaskStatus.scoring
-                    continue
+                if task.escrow_tx_hash:
+                    # Escrow already created on-chain (previous tick succeeded but
+                    # DB commit may have failed); skip contract call.
+                    print(f"[scheduler] escrow already exists for {task.id}, skipping createChallenge", flush=True)
+                else:
+                    try:
+                        from .models import User
+                        winner_sub = db.query(Submission).filter(
+                            Submission.id == best.id
+                        ).first()
+                        winner_user = db.query(User).filter(
+                            User.id == winner_sub.worker_id
+                        ).first() if winner_sub else None
+                        if winner_user:
+                            escrow_amount = round(task.bounty * 0.95, 6)
+                            incentive = round(task.bounty * 0.05, 6)
+                            tx_hash = create_challenge_onchain(
+                                task.id, winner_user.wallet, escrow_amount, incentive
+                            )
+                            task.escrow_tx_hash = tx_hash
+                    except Exception as e:
+                        print(f"[scheduler] createChallenge failed for {task.id}: {e}", flush=True)
+                        # Revert: do NOT enter challenge_window if escrow lock failed
+                        task.winner_submission_id = None
+                        task.challenge_window_end = None
+                        task.status = TaskStatus.scoring
+                        continue
             else:
                 # No qualifying submissions → 95% refund if there were submissions, close
                 task.status = TaskStatus.closed
