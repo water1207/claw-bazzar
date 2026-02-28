@@ -621,6 +621,7 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
         # Only winner gets comparative_feedback
         if rank_idx == 0 and comparative_feedback_json:
             sub.comparative_feedback = comparative_feedback_json
+            print(f"[batch_score] Setting comparative_feedback on winner sub={sub.id[:8]}, len={len(comparative_feedback_json)}", flush=True)
 
     # Mark remaining eligible subs (outside top 3) as scored
     for sub in eligible:
