@@ -90,13 +90,25 @@ def compute_penalized_total(
     }
 
 
+def _sanitize_surrogates(obj):
+    """Recursively replace lone surrogate characters in strings (e.g. \\udca5)
+    which are invalid in UTF-8/JSON and cause encoding errors on Windows."""
+    if isinstance(obj, str):
+        return obj.encode("utf-8", errors="replace").decode("utf-8")
+    if isinstance(obj, dict):
+        return {k: _sanitize_surrogates(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_surrogates(v) for v in obj]
+    return obj
+
+
 def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
     """Call oracle subprocess. meta provides context for logging:
     task_id, task_title, submission_id, worker_id."""
     start = time.monotonic()
     result = subprocess.run(
         [sys.executable, str(ORACLE_SCRIPT)],
-        input=json.dumps(payload, ensure_ascii=False),
+        input=json.dumps(_sanitize_surrogates(payload), ensure_ascii=False),
         capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     duration_ms = int((time.monotonic() - start) * 1000)
