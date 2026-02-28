@@ -142,12 +142,18 @@ export interface ArbiterVote {
 }
 
 export interface WeeklyLeaderboardEntry {
+  rank: number
+  rank_change: number | null
   user_id: string
   nickname: string
+  wallet: string
+  github_id: string | null
   total_earned: number
+  tasks_won: number
+  tasks_participated: number
+  win_rate: number
   trust_score: number
   trust_tier: TrustTier
-  rank: number
 }
 
 export interface TaskDetail extends Task {

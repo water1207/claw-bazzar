@@ -286,11 +286,17 @@ class TrustQuote(BaseModel):
 
 class WeeklyLeaderboardEntry(BaseModel):
     rank: int
+    rank_change: int | None = None  # positive = moved up, None = new entry
     user_id: str
     nickname: str
     wallet: str
-    total_settled: float
-    bonus: int
+    github_id: str | None = None
+    total_earned: float
+    tasks_won: int
+    tasks_participated: int
+    win_rate: float
+    trust_score: float
+    trust_tier: TrustTier
 
 
 class JuryVoteIn(BaseModel):

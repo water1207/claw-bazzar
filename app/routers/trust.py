@@ -6,7 +6,7 @@ from app.models import (
     User, TrustEvent, ArbiterVote, Challenge, ChallengeVerdict,
     Task, Submission, StakeRecord, PayoutStatus,
 )
-from app.schemas import TrustProfile, TrustQuote, TrustEventOut, ArbiterVoteOut, BalanceEventOut
+from app.schemas import TrustProfile, TrustQuote, TrustEventOut, ArbiterVoteOut, BalanceEventOut, WeeklyLeaderboardEntry
 from app.services.trust import (
     get_challenge_deposit_rate, get_platform_fee_rate, check_permissions,
 )
@@ -284,55 +284,103 @@ def submit_arbiter_vote(
     return vote
 
 
-@router.get("/leaderboard/weekly")
+@router.get("/leaderboard/weekly", response_model=list[WeeklyLeaderboardEntry])
 def weekly_leaderboard(db: Session = Depends(get_db)):
     """Return this week's leaderboard: workers ranked by total payout from closed tasks."""
     from datetime import timedelta
+    from sqlalchemy import func
     from app.models import Task, Submission, TaskStatus
 
     now = datetime.now(timezone.utc)
     # Start of current week (Monday 00:00 UTC)
-    monday = now - timedelta(days=now.weekday(), hours=now.hour, minutes=now.minute, seconds=now.second, microseconds=now.microsecond)
-
-    # Find all closed tasks from this week with winners
-    closed_tasks = (
-        db.query(Task)
-        .filter(
-            Task.status == TaskStatus.closed,
-            Task.created_at >= monday,
-            Task.winner_submission_id.isnot(None),
-        )
-        .all()
+    monday = now - timedelta(
+        days=now.weekday(), hours=now.hour, minutes=now.minute,
+        seconds=now.second, microseconds=now.microsecond,
     )
+    prev_monday = monday - timedelta(days=7)
 
-    # Aggregate earnings per worker
-    worker_earnings: dict[str, float] = {}
-    for task in closed_tasks:
-        winner_sub = (
-            db.query(Submission)
-            .filter_by(id=task.winner_submission_id)
-            .first()
-        )
-        if winner_sub:
-            worker_earnings[winner_sub.worker_id] = (
-                worker_earnings.get(winner_sub.worker_id, 0.0)
-                + (task.payout_amount or task.bounty * 0.8)
+    def _aggregate_earnings(start: datetime, end: datetime) -> dict[str, float]:
+        """Aggregate worker earnings for closed tasks in a time range."""
+        tasks = (
+            db.query(Task)
+            .filter(
+                Task.status == TaskStatus.closed,
+                Task.created_at >= start,
+                Task.created_at < end,
+                Task.winner_submission_id.isnot(None),
             )
+            .all()
+        )
+        earnings: dict[str, float] = {}
+        for task in tasks:
+            sub = db.query(Submission).filter_by(id=task.winner_submission_id).first()
+            if sub:
+                earnings[sub.worker_id] = (
+                    earnings.get(sub.worker_id, 0.0)
+                    + (task.payout_amount or task.bounty * 0.8)
+                )
+        return earnings
 
-    # Sort by earnings, take top 100
-    sorted_workers = sorted(worker_earnings.items(), key=lambda x: x[1], reverse=True)[:100]
+    # Current week rankings
+    current_earnings = _aggregate_earnings(monday, now)
+    sorted_current = sorted(current_earnings.items(), key=lambda x: x[1], reverse=True)[:100]
+
+    # Previous week rankings (for rank_change)
+    prev_earnings = _aggregate_earnings(prev_monday, monday)
+    sorted_prev = sorted(prev_earnings.items(), key=lambda x: x[1], reverse=True)[:100]
+    prev_ranks = {wid: rank for rank, (wid, _) in enumerate(sorted_prev, start=1)}
+
+    # Batch-fetch user info and stats for all current workers
+    worker_ids = [wid for wid, _ in sorted_current]
+    users_map: dict[str, User] = {}
+    if worker_ids:
+        users = db.query(User).filter(User.id.in_(worker_ids)).all()
+        users_map = {u.id: u for u in users}
+
+    # Batch stats: tasks_participated and tasks_won per worker
+    participated_map: dict[str, int] = {}
+    won_map: dict[str, int] = {}
+    if worker_ids:
+        participated_rows = (
+            db.query(Submission.worker_id, func.count(func.distinct(Submission.task_id)))
+            .filter(Submission.worker_id.in_(worker_ids))
+            .group_by(Submission.worker_id)
+            .all()
+        )
+        participated_map = {wid: cnt for wid, cnt in participated_rows}
+
+        won_rows = (
+            db.query(Submission.worker_id, func.count(Task.id))
+            .join(Task, Task.winner_submission_id == Submission.id)
+            .filter(Submission.worker_id.in_(worker_ids), Task.status == TaskStatus.closed)
+            .group_by(Submission.worker_id)
+            .all()
+        )
+        won_map = {wid: cnt for wid, cnt in won_rows}
 
     result = []
-    for rank, (worker_id, total_earned) in enumerate(sorted_workers, start=1):
-        user = db.query(User).filter_by(id=worker_id).first()
-        if user:
-            result.append({
-                "user_id": user.id,
-                "nickname": user.nickname,
-                "total_earned": round(total_earned, 2),
-                "trust_score": user.trust_score,
-                "trust_tier": user.trust_tier,
-                "rank": rank,
-            })
+    for rank, (worker_id, total_earned) in enumerate(sorted_current, start=1):
+        user = users_map.get(worker_id)
+        if not user:
+            continue
+        prev_rank = prev_ranks.get(worker_id)
+        rank_change = (prev_rank - rank) if prev_rank is not None else None
+        tasks_participated = participated_map.get(worker_id, 0)
+        tasks_won = won_map.get(worker_id, 0)
+        win_rate = tasks_won / tasks_participated if tasks_participated > 0 else 0.0
+        result.append(WeeklyLeaderboardEntry(
+            rank=rank,
+            rank_change=rank_change,
+            user_id=user.id,
+            nickname=user.nickname,
+            wallet=user.wallet,
+            github_id=user.github_id,
+            total_earned=round(total_earned, 2),
+            tasks_won=tasks_won,
+            tasks_participated=tasks_participated,
+            win_rate=round(win_rate, 4),
+            trust_score=user.trust_score,
+            trust_tier=user.trust_tier,
+        ))
 
     return result

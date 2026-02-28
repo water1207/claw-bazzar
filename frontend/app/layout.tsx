@@ -21,6 +21,12 @@ export default function RootLayout({
           </Link>
           <div className="flex-1" />
           <Link
+            href="/rank"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Rank
+          </Link>
+          <Link
             href="/profile"
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
