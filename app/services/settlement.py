@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 from ..models import (
     Task, TaskStatus, TaskType, Submission, Challenge, ChallengeVerdict,
-    User, JuryBallot, TrustEvent,
+    User, JuryBallot, TrustEvent, PayoutStatus,
 )
 from ..schemas import (
     SettlementOut, SettlementSource, SettlementDistribution, SettlementSummary,
@@ -119,6 +119,34 @@ def _quality_first_settlement(db: Session, task: Task) -> SettlementOut | None:
 
     if task.status == TaskStatus.voided:
         return _voided_settlement(db, task, sources, escrow_total, challenges)
+
+    # Refunded (no qualifying submissions → publisher gets refund)
+    if task.payout_status == PayoutStatus.refunded and task.refund_amount:
+        publisher = db.query(User).filter_by(id=task.publisher_id).first()
+        refund = task.refund_amount
+        distributions.append(SettlementDistribution(
+            label=f"Publisher refund ({publisher.nickname})" if publisher else "Publisher refund",
+            amount=refund, type="publisher_refund",
+            wallet=publisher.wallet if publisher else None,
+            nickname=publisher.nickname if publisher else None,
+        ))
+        platform_fee = round(bounty - refund, 6)
+        if platform_fee > 0:
+            distributions.append(SettlementDistribution(
+                label="Platform fee", amount=platform_fee, type="platform",
+            ))
+        return SettlementOut(
+            escrow_total=bounty,
+            sources=[SettlementSource(label="Bounty", amount=bounty, type="bounty")],
+            distributions=distributions,
+            resolve_tx_hash=task.refund_tx_hash,
+            summary=SettlementSummary(
+                winner_payout=0, winner_nickname=None, winner_tier=None, payout_rate=0,
+                deposits_forfeited=0, deposits_refunded=0,
+                arbiter_reward_total=0, platform_fee=max(platform_fee, 0),
+            ),
+            trust_changes=_query_trust_changes(db, task.id),
+        )
 
     # Winner
     winner_sub = db.query(Submission).filter_by(id=task.winner_submission_id).first() if task.winner_submission_id else None
