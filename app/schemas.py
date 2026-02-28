@@ -331,4 +331,35 @@ class MaliciousTagOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SettlementSource(BaseModel):
+    label: str
+    amount: float
+    type: str           # "bounty" | "incentive" | "deposit"
+    verdict: Optional[str] = None  # "upheld" | "rejected" | "malicious"
+
+class SettlementDistribution(BaseModel):
+    label: str
+    amount: float
+    type: str           # "winner" | "refund" | "arbiter" | "platform" | "publisher_refund"
+    wallet: Optional[str] = None
+    nickname: Optional[str] = None
+
+class SettlementSummary(BaseModel):
+    winner_payout: float
+    winner_nickname: Optional[str] = None
+    winner_tier: Optional[str] = None
+    payout_rate: float
+    deposits_forfeited: float
+    deposits_refunded: float
+    arbiter_reward_total: float
+    platform_fee: float
+
+class SettlementOut(BaseModel):
+    escrow_total: float
+    sources: list[SettlementSource]
+    distributions: list[SettlementDistribution]
+    resolve_tx_hash: Optional[str] = None
+    summary: SettlementSummary
+
+
 TaskDetail.model_rebuild()
