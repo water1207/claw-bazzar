@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import User, Submission, Task, TaskStatus, PayoutStatus, SubmissionStatus
+from ..models import User, Submission, Task, TaskStatus, PayoutStatus, SubmissionStatus, UserRole
 from ..schemas import UserCreate, UserOut, UserStats
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -20,12 +20,19 @@ def get_user_by_nickname(nickname: str = Query(...), db: Session = Depends(get_d
 
 @router.post("", response_model=UserOut)
 def register_user(data: UserCreate, response: Response, db: Session = Depends(get_db)):
-    # Check if wallet+role already registered — return existing user
-    # Use func.lower() for case-insensitive comparison to handle EIP-55 checksum variants
+    # Check if same wallet already registered (any role) — one wallet = one identity
     existing_wallet = db.query(User).filter(
-        func.lower(User.wallet) == data.wallet.lower(), User.role == data.role
+        func.lower(User.wallet) == data.wallet.lower()
     ).first()
     if existing_wallet:
+        # Same wallet + same role: idempotent return
+        if existing_wallet.role == data.role:
+            return existing_wallet
+        # Same wallet + different role: upgrade to 'both' and return
+        if existing_wallet.role != UserRole.both:
+            existing_wallet.role = UserRole.both
+            db.commit()
+            db.refresh(existing_wallet)
         return existing_wallet
 
     existing_nick = db.query(User).filter(User.nickname == data.nickname).first()

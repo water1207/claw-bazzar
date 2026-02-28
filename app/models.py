@@ -143,7 +143,7 @@ class User(Base):
 
     id = Column(String, primary_key=True, default=_uuid)
     nickname = Column(String, unique=True, nullable=False)
-    wallet = Column(String, nullable=False)
+    wallet = Column(String, nullable=False, unique=True)
     role = Column(Enum(UserRole), nullable=False)
     trust_score = Column(Float, nullable=False, default=500.0)
     trust_tier = Column(Enum(TrustTier), nullable=False, default=TrustTier.A)
