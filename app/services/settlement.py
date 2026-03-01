@@ -94,11 +94,18 @@ def _quality_first_settlement(db: Session, task: Task) -> SettlementOut | None:
     challenges = db.query(Challenge).filter(Challenge.task_id == task.id).all()
     total_deposits = sum(c.deposit_amount or 0 for c in challenges if c.challenger_wallet)
 
+    upheld_challenges = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]
+    is_challenger_win = len(upheld_challenges) > 0
+
     # --- Sources ---
-    sources: list[SettlementSource] = [
-        SettlementSource(label="Bounty (95%)", amount=escrow_amount, type="bounty"),
-        SettlementSource(label="Incentive (5%)", amount=incentive, type="incentive"),
-    ]
+    # Only show Incentive as a separate source when a challenger won;
+    # otherwise the incentive is just part of platform fee.
+    sources: list[SettlementSource] = []
+    if is_challenger_win:
+        sources.append(SettlementSource(label="Bounty (95%)", amount=escrow_amount, type="bounty"))
+        sources.append(SettlementSource(label="Incentive (5%)", amount=incentive, type="incentive"))
+    else:
+        sources.append(SettlementSource(label="Bounty", amount=bounty, type="bounty"))
     for c in challenges:
         if not c.challenger_wallet or not c.deposit_amount:
             continue
@@ -185,10 +192,8 @@ def _quality_first_settlement(db: Session, task: Task) -> SettlementOut | None:
         (c.deposit_amount or 0) for c in challenges
         if c.verdict != ChallengeVerdict.upheld and c.challenger_wallet
     )
-    upheld = [c for c in challenges if c.verdict == ChallengeVerdict.upheld]
-    is_challenger_win = len(upheld) > 0
     arbiter_from_pool = round(losing_deposits * 0.30, 6)
-    arbiter_from_incentive = round((upheld[0].deposit_amount or 0) * 0.30, 6) if is_challenger_win else 0
+    arbiter_from_incentive = round((upheld_challenges[0].deposit_amount or 0) * 0.30, 6) if is_challenger_win else 0
     arbiter_reward = round(arbiter_from_pool + arbiter_from_incentive, 6)
 
     ballots = db.query(JuryBallot).filter_by(task_id=task.id).all()
