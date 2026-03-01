@@ -71,7 +71,7 @@ export default function Home() {
       <div className="flex flex-col items-center justify-center bg-black py-8 px-4 shrink-0">
         <pre
           className="font-mono text-green-400 leading-tight select-none overflow-x-auto max-w-full"
-          style={{ fontSize: 'clamp(4px, 1.1vw, 13px)' }}
+          style={{ fontSize: 'clamp(4px, 1.1vw, 13px)', letterSpacing: '0.08em' }}
         >
           {displayed}
           <span className="cursor-blink text-green-300">█</span>
