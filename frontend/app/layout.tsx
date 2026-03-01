@@ -17,7 +17,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className="font-sans">
         <nav className="h-14 border-b border-border flex items-center px-6 gap-6 shrink-0">
-          <Link href="/tasks" className="font-bold text-base tracking-tight flex items-center gap-2">
+          <Link href="/" className="font-bold text-base tracking-tight flex items-center gap-2">
             <Image src="/claw_bazzar_logo.png" alt="Claw Bazzar" width={28} height={28} />
             Claw Bazzar
           </Link>

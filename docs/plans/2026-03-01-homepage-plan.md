@@ -1,8 +1,155 @@
+# Homepage Dual-Entry Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** 将主页改为带 ASCII Art 打字机动效 + 左右分割双入口的炫酷落地页。
+
+**Architecture:** 单个 Client Component (`page.tsx`) 管理打字机状态和 hover 状态；CSS 动画（浮动粒子、扫描线、光标闪烁）定义在 `globals.css`；无新依赖。
+
+**Tech Stack:** Next.js 16 App Router, React 19, Tailwind v4, tw-animate-css, lucide-react
+
+---
+
+## Task 1: 添加 CSS 动画到 globals.css
+
+**Files:**
+- Modify: `frontend/app/globals.css`
+
+**Step 1: 在 globals.css 末尾追加动画定义**
+
+在文件末尾（`@layer base { ... }` 之后）添加：
+
+```css
+/* 光标闪烁 */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* 粒子浮动 */
+@keyframes float-up {
+  0%   { transform: translateY(0) translateX(0); opacity: 0; }
+  10%  { opacity: 0.6; }
+  90%  { opacity: 0.3; }
+  100% { transform: translateY(-120px) translateX(20px); opacity: 0; }
+}
+
+@keyframes float-up-2 {
+  0%   { transform: translateY(0) translateX(0); opacity: 0; }
+  10%  { opacity: 0.4; }
+  90%  { opacity: 0.2; }
+  100% { transform: translateY(-100px) translateX(-15px); opacity: 0; }
+}
+
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #818cf8;
+  pointer-events: none;
+}
+
+.particle:nth-child(1)  { left: 15%; bottom: 20%; animation: float-up 4s ease-in-out 0s infinite; }
+.particle:nth-child(2)  { left: 30%; bottom: 35%; animation: float-up-2 5s ease-in-out 0.8s infinite; }
+.particle:nth-child(3)  { left: 50%; bottom: 15%; animation: float-up 6s ease-in-out 1.2s infinite; }
+.particle:nth-child(4)  { left: 65%; bottom: 40%; animation: float-up-2 4.5s ease-in-out 0.4s infinite; }
+.particle:nth-child(5)  { left: 80%; bottom: 25%; animation: float-up 5.5s ease-in-out 2s infinite; }
+.particle:nth-child(6)  { left: 10%; bottom: 60%; animation: float-up-2 4s ease-in-out 1.6s infinite; }
+.particle:nth-child(7)  { left: 45%; bottom: 55%; animation: float-up 5s ease-in-out 0.2s infinite; background: #a78bfa; }
+.particle:nth-child(8)  { left: 70%; bottom: 70%; animation: float-up-2 6s ease-in-out 1s infinite; background: #a78bfa; }
+
+/* 扫描线覆盖层 */
+.scanlines {
+  position: relative;
+}
+
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 255, 128, 0.03) 2px,
+    rgba(0, 255, 128, 0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 分割线光晕 */
+.divider-glow {
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(0, 255, 255, 0.5) 20%,
+    rgba(0, 255, 255, 0.8) 50%,
+    rgba(0, 255, 255, 0.5) 80%,
+    transparent
+  );
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.4), 0 0 16px rgba(0, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+```
+
+**Step 2: 验证 CSS 文件无语法错误**
+
+```bash
+cd frontend && npm run lint
+```
+Expected: 无报错（ESLint 不检查 CSS，但确保没有破坏其他文件）
+
+**Step 3: Commit**
+
+```bash
+cd frontend
+git add app/globals.css
+git commit -m "feat: add homepage CSS animations (particles, scanlines, cursor blink)"
+```
+
+---
+
+## Task 2: 重写 page.tsx — 主页组件
+
+**Files:**
+- Modify: `frontend/app/page.tsx`（完全重写）
+
+**Step 1: 准备 ASCII Art 常量**
+
+ASCII art 使用以下字符串（两行，Big 风格）：
+
+```
+ ██████╗██╗      █████╗ ██╗    ██╗
+██╔════╝██║     ██╔══██╗██║    ██║
+██║     ██║     ███████║██║ █╗ ██║
+██║     ██║     ██╔══██║██║███╗██║
+╚██████╗███████╗██║  ██║╚███╔███╔╝
+ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+
+██████╗  █████╗ ███████╗███████╗ █████╗ ██████╗
+██╔══██╗██╔══██╗╚══███╔╝╚══███╔╝██╔══██╗██╔══██╗
+██████╔╝███████║  ███╔╝   ███╔╝ ███████║██████╔╝
+██╔══██╗██╔══██║ ███╔╝   ███╔╝  ██╔══██║██╔══██╗
+██████╔╝██║  ██║███████╗███████╗██║  ██║██║  ██║
+╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
+```
+
+**Step 2: 编写完整 page.tsx**
+
+完全替换 `frontend/app/page.tsx` 内容：
+
+```tsx
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Users, Bot, ExternalLink, Copy, Check } from 'lucide-react'
 
 const ASCII_LINE_1 = ` ██████╗██╗      █████╗ ██╗    ██╗
@@ -29,10 +176,6 @@ export default function Home() {
   const [hovered, setHovered] = useState<'human' | 'agent' | null>(null)
   const [copied, setCopied] = useState(false)
   const indexRef = useRef(0)
-  const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const panelsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const router = useRouter()
 
   // 打字机效果
   useEffect(() => {
@@ -43,35 +186,20 @@ export default function Home() {
       } else {
         clearInterval(interval)
         // ASCII 完成后 400ms 显示副标题
-        subtitleTimerRef.current = setTimeout(() => {
+        setTimeout(() => {
           setShowSubtitle(true)
           // 再 600ms 后显示面板
-          panelsTimerRef.current = setTimeout(() => setShowPanels(true), 600)
+          setTimeout(() => setShowPanels(true), 600)
         }, 400)
       }
-    }, 8)
-    return () => {
-      clearInterval(interval)
-      if (subtitleTimerRef.current !== null) clearTimeout(subtitleTimerRef.current)
-      if (panelsTimerRef.current !== null) clearTimeout(panelsTimerRef.current)
-    }
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
-    }
+    }, 18)
+    return () => clearInterval(interval)
   }, [])
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(CURL_CMD)
-      setCopied(true)
-      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500)
-    } catch (err) {
-      console.warn('Failed to copy to clipboard:', err)
-    }
+    await navigator.clipboard.writeText(CURL_CMD)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
   }
 
   const humanWidth = hovered === 'human' ? 'flex-[65]' : hovered === 'agent' ? 'flex-[35]' : 'flex-[50]'
@@ -112,7 +240,7 @@ export default function Home() {
           }}
           onMouseEnter={() => setHovered('human')}
           onMouseLeave={() => setHovered(null)}
-          onClick={() => router.push('/tasks')}
+          onClick={() => window.location.href = '/tasks'}
         >
           {/* 粒子 */}
           <div className="absolute inset-0 pointer-events-none">
@@ -177,7 +305,7 @@ export default function Home() {
 
             {/* curl 命令 */}
             <div className="w-full">
-              <p className="text-xs text-emerald-500/50 font-mono mb-2 text-left">{'// install skill'}</p>
+              <p className="text-xs text-emerald-500/50 font-mono mb-2 text-left">// install skill</p>
               <div
                 className="flex items-center gap-2 px-4 py-3 rounded-lg font-mono text-sm cursor-pointer group transition-all duration-200 hover:scale-[1.02]"
                 style={{
@@ -229,3 +357,79 @@ export default function Home() {
     </div>
   )
 }
+```
+
+**Step 3: 启动开发服务器验证**
+
+```bash
+cd frontend && npm run dev
+```
+
+打开 `http://localhost:3000` 验证：
+- [ ] ASCII art 从第一个字符开始逐字打印
+- [ ] 光标 `█` 在打印结束前持续闪烁
+- [ ] 打印完成后 "AI Task Marketplace" 渐显
+- [ ] 面板淡入，默认左右各 50%
+- [ ] 悬停左侧 → 左侧扩展到 65%，过渡平滑
+- [ ] 悬停右侧 → 右侧扩展到 65%，过渡平滑
+- [ ] 点击 curl 命令块 → 剪贴板复制 + 显示 "Copied!"
+- [ ] "View Documentation" 点击打开 GitHub 链接
+- [ ] "Enter Marketplace →" 跳转到 `/tasks`
+- [ ] 粒子在左侧面板浮动
+- [ ] 右侧面板有扫描线叠加效果
+
+**Step 4: Lint 检查**
+
+```bash
+cd frontend && npm run lint
+```
+Expected: 无报错
+
+**Step 5: Commit**
+
+```bash
+cd /Users/lee/Code/claw-bazzar
+git add frontend/app/page.tsx
+git commit -m "feat: homepage dual-entry with ASCII typewriter + split panels"
+```
+
+---
+
+## Task 3: 收尾检查
+
+**Step 1: 确认 layout.tsx 导航链接正常**
+
+打开 `http://localhost:3000`，点击导航栏 "Claw Bazzar" logo，应回到主页（非直接跳 tasks）。
+
+检查 `frontend/app/layout.tsx:20`：
+```tsx
+<Link href="/tasks" ...>  // ← 这行改为 href="/" 更合理
+```
+
+修改为：
+```tsx
+<Link href="/" className="font-bold text-base tracking-tight flex items-center gap-2">
+```
+
+**Step 2: Commit**
+
+```bash
+git add frontend/app/layout.tsx
+git commit -m "fix: logo link points to homepage instead of /tasks"
+```
+
+---
+
+## 验收标准
+
+| 项目 | 验证方式 |
+|------|---------|
+| ASCII 打字机动效 | 目视确认逐字打印 + 光标闪烁 |
+| 副标题渐显 | 打印完成后淡入 |
+| 面板 hover 扩展 | 悬停时平滑 65/35 分配 |
+| 粒子浮动 | 左侧面板可见浮动光点 |
+| 扫描线 | 右侧面板可见细线纹理 |
+| curl 复制 | 点击后剪贴板有内容 + Copied! 反馈 |
+| 文档跳转 | 新标签打开 GitHub |
+| Marketplace 跳转 | 导航到 /tasks |
+| 响应式 | 1440px 和 1024px 下不错乱 |
