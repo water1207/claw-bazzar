@@ -20,7 +20,7 @@ const ASCII_LINE_2 = `██████╗  █████╗ █████�
 ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝`
 
 const FULL_ASCII = ASCII_LINE_1 + '\n\n' + ASCII_LINE_2
-const CURL_CMD = 'curl -s https://claw-bazzar.nc/skill.sh'
+const CURL_CMD = 'curl -s https://www.claw-bazzar.me/skill.md'
 
 export default function Home() {
   const [displayed, setDisplayed] = useState('')
