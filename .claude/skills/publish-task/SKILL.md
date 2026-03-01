@@ -66,68 +66,102 @@ curl -s -X POST http://localhost:8000/users \
 
 ### 步骤四：发布任务
 
-发布需通过 x402 协议签名支付赏金。流程：
+发布需通过 x402 协议签名支付赏金。**使用以下 Python 脚本签名**（项目已依赖 `web3`，自带 `eth_account`，无需额外安装）。
 
-1. 先不带 X-PAYMENT header 发送请求，获取 402 支付要求
-2. 根据返回的 payment requirements 构造 EIP-712 签名
-3. 将签名 base64 编码后放入 X-PAYMENT header 重新发送
+#### 4a. 获取 402 支付要求，记录 `payTo`
 
 ```bash
-# 第一步：获取支付要求（HTTP 402）
 curl -s -X POST http://localhost:8000/tasks \
   -H 'Content-Type: application/json' \
   -d '{"title":"...","description":"...","type":"fastest_first","threshold":0.6,"deadline":"...","publisher_id":"...","bounty":5.0,"acceptance_criteria":["..."]}'
+# 返回 402，记录其中的 payTo 地址
+```
 
-# 返回 402 响应包含: scheme, network, asset, amount, payTo
-# 用这些信息构造 EIP-712 TransferWithAuthorization 签名
+#### 4b. 用 Python 生成 X-PAYMENT header
 
-# 第二步：带签名重新发送
+将以下脚本保存为 `/tmp/sign_x402.py`，填入私钥、payTo、赏金后执行：
+
+```python
+# /tmp/sign_x402.py
+import secrets, time, json, base64
+from eth_account import Account
+
+PRIVATE_KEY  = '0x<你的钱包私钥>'
+PAY_TO       = '0x<步骤4a返回的payTo地址>'
+BOUNTY_USDC  = 5.0   # 赏金金额（USDC）
+
+USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
+acct = Account.from_key(PRIVATE_KEY)
+amount = int(BOUNTY_USDC * 1e6)
+valid_before = int(time.time()) + 3600
+nonce_hex = '0x' + secrets.token_bytes(32).hex()
+
+signed = Account.sign_typed_data(
+    PRIVATE_KEY,
+    domain_data={
+        'name': 'USDC', 'version': '2',
+        'chainId': 84532,
+        'verifyingContract': USDC,
+    },
+    message_types={
+        'TransferWithAuthorization': [
+            {'name': 'from',        'type': 'address'},
+            {'name': 'to',          'type': 'address'},
+            {'name': 'value',       'type': 'uint256'},
+            {'name': 'validAfter',  'type': 'uint256'},
+            {'name': 'validBefore', 'type': 'uint256'},
+            {'name': 'nonce',       'type': 'bytes32'},
+        ]
+    },
+    message_data={
+        'from': acct.address, 'to': PAY_TO,
+        'value': amount, 'validAfter': 0,
+        'validBefore': valid_before, 'nonce': nonce_hex,
+    }
+)
+# 注意：HexBytes.hex() 不含 0x 前缀，必须手动补
+sig = '0x' + signed.signature.hex()
+
+payload = {
+    'x402Version': 2,
+    'resource': {
+        'url': 'task-creation',
+        'description': 'Task creation payment',
+        'mimeType': 'application/json',
+    },
+    'accepted': {
+        'scheme': 'exact', 'network': 'eip155:84532', 'asset': USDC,
+        'amount': str(amount), 'payTo': PAY_TO, 'maxTimeoutSeconds': 30,
+        'extra': {'assetTransferMethod': 'eip3009', 'name': 'USDC', 'version': '2'},
+    },
+    'payload': {
+        'signature': sig,
+        'authorization': {
+            'from': acct.address, 'to': PAY_TO,
+            'value': str(amount), 'validAfter': '0',
+            'validBefore': str(valid_before), 'nonce': nonce_hex,
+        },
+    },
+}
+print(base64.b64encode(json.dumps(payload).encode()).decode())
+```
+
+```bash
+python3 /tmp/sign_x402.py
+```
+
+输出的字符串即为 `X-PAYMENT` header 的值。
+
+#### 4c. 带签名发布
+
+```bash
 curl -s -X POST http://localhost:8000/tasks \
   -H 'Content-Type: application/json' \
-  -H 'X-PAYMENT: <base64编码的支付签名>' \
-  -d '{...同上...}'
+  -H 'X-PAYMENT: <上一步输出的字符串>' \
+  -d '{...同 4a 的 body...}'
 ```
 
-x402 签名结构（base64 编码前的 JSON）：
-```json
-{
-  "x402Version": 2,
-  "resource": {
-    "url": "task-creation",
-    "description": "Task creation payment",
-    "mimeType": "application/json"
-  },
-  "accepted": {
-    "scheme": "exact",
-    "network": "eip155:84532",
-    "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-    "amount": "<bounty×1e6 的字符串>",
-    "payTo": "<平台钱包地址>",
-    "maxTimeoutSeconds": 30,
-    "extra": {"assetTransferMethod": "eip3009", "name": "USDC", "version": "2"}
-  },
-  "payload": {
-    "signature": "<EIP-712签名>",
-    "authorization": {
-      "from": "<你的钱包>", "to": "<平台钱包>",
-      "value": "<amount>", "validAfter": "0",
-      "validBefore": "<当前时间+3600>", "nonce": "<随机32字节hex>"
-    }
-  }
-}
-```
-
-**EIP-712 域（签名时使用）：**
-```json
-{
-  "name": "USDC",
-  "version": "2",
-  "chainId": 84532,
-  "verifyingContract": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
-}
-```
-
-> ⚠️ **域名必须是 `"USDC"`，不是 `"USD Coin"`**。写错会得到 `invalid_exact_evm_payload_signature`。
+> ⚠️ EIP-712 域名必须是 `"USDC"`，写错会返回 `invalid_exact_evm_payload_signature`。
 
 ### 步骤五：验证发布结果
 
