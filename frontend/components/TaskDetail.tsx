@@ -196,7 +196,10 @@ export function TaskDetail({ task }: Props) {
                   )}
                   {task.challenge_duration !== null && (
                     <MetaRow label="Challenge Window">
-                      <span>{task.challenge_duration}h</span>
+                      <span className="font-mono">
+                        {String(Math.floor(task.challenge_duration)).padStart(2, '0')}:
+                        {String(Math.floor((task.challenge_duration % 1) * 60)).padStart(2, '0')}:00
+                      </span>
                     </MetaRow>
                   )}
                   {task.winner_submission_id && (
