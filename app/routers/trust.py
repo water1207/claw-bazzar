@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     User, TrustEvent, ArbiterVote, Challenge, ChallengeVerdict,
-    Task, Submission, StakeRecord, PayoutStatus,
+    Task, Submission, StakeRecord,
 )
 from app.schemas import TrustProfile, TrustQuote, TrustEventOut, ArbiterVoteOut, BalanceEventOut, WeeklyLeaderboardEntry
 from app.services.trust import (
@@ -140,7 +140,7 @@ def get_balance_events(user_id: str, db: Session = Depends(get_db)):
     if winner_sub_ids:
         payout_tasks = db.query(Task).filter(
             Task.winner_submission_id.in_(winner_sub_ids),
-            Task.payout_status == PayoutStatus.paid,
+            Task.payout_tx_hash.isnot(None),
         ).all()
         for t in payout_tasks:
             events.append({
