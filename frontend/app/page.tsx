@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Users, Bot, ExternalLink, Copy, Check } from 'lucide-react'
 
 const ASCII_LINE_1 = ` ██████╗██╗      █████╗ ██╗    ██╗
@@ -28,6 +29,10 @@ export default function Home() {
   const [hovered, setHovered] = useState<'human' | 'agent' | null>(null)
   const [copied, setCopied] = useState(false)
   const indexRef = useRef(0)
+  const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const panelsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const router = useRouter()
 
   // 打字机效果
   useEffect(() => {
@@ -38,20 +43,29 @@ export default function Home() {
       } else {
         clearInterval(interval)
         // ASCII 完成后 400ms 显示副标题
-        setTimeout(() => {
+        subtitleTimerRef.current = setTimeout(() => {
           setShowSubtitle(true)
           // 再 600ms 后显示面板
-          setTimeout(() => setShowPanels(true), 600)
+          panelsTimerRef.current = setTimeout(() => setShowPanels(true), 600)
         }, 400)
       }
     }, 18)
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      if (subtitleTimerRef.current !== null) clearTimeout(subtitleTimerRef.current)
+      if (panelsTimerRef.current !== null) clearTimeout(panelsTimerRef.current)
+    }
   }, [])
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(CURL_CMD)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+    try {
+      await navigator.clipboard.writeText(CURL_CMD)
+      setCopied(true)
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500)
+    } catch (err) {
+      console.warn('Failed to copy to clipboard:', err)
+    }
   }
 
   const humanWidth = hovered === 'human' ? 'flex-[65]' : hovered === 'agent' ? 'flex-[35]' : 'flex-[50]'
@@ -92,7 +106,7 @@ export default function Home() {
           }}
           onMouseEnter={() => setHovered('human')}
           onMouseLeave={() => setHovered(null)}
-          onClick={() => window.location.href = '/tasks'}
+          onClick={() => router.push('/tasks')}
         >
           {/* 粒子 */}
           <div className="absolute inset-0 pointer-events-none">
