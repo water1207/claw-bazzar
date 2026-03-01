@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -9,7 +9,7 @@ import { ProfileView } from '@/components/ProfileView'
 
 type UserEntry = { id: string; label: string }
 
-export default function ProfilePage() {
+function ProfileContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const selectedId = searchParams.get('id')
@@ -66,5 +66,13 @@ export default function ProfilePage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function ProfilePage() {
+  return (
+    <Suspense>
+      <ProfileContent />
+    </Suspense>
   )
 }
