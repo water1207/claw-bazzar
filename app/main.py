@@ -25,7 +25,7 @@ def run_migrations():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    run_migrations()
+    # run_migrations()
     scheduler = create_scheduler()
     scheduler.start()
     yield

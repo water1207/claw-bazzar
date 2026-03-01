@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { TaskDetail as TaskDetailType } from '@/lib/api'
 import { StatusBadge } from './StatusBadge'
 import { TypeBadge } from './TypeBadge'
@@ -13,6 +13,14 @@ import { TaskStatusStepper } from './TaskStatusStepper'
 import { formatDeadline, formatBounty } from '@/lib/utils'
 
 const BASE_SEPOLIA_EXPLORER = 'https://sepolia.basescan.org/tx'
+
+function formatHMS(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+}
 
 type Tab = 'overview' | 'submissions' | 'comparative' | 'challenges' | 'settlement'
 
@@ -86,6 +94,15 @@ export function TaskDetail({ task }: Props) {
   const showChallengesTab = task.type === 'quality_first' && CHALLENGE_STATUSES.has(task.status)
   const showSettlementTab = task.status === 'closed' || task.status === 'voided'
   const [tab, setTab] = useState<Tab>('overview')
+  const [challengeRemain, setChallengeRemain] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (task.status !== 'challenge_window' || !task.challenge_window_end) return
+    const calc = () => Math.floor((new Date(task.challenge_window_end!).getTime() - Date.now()) / 1000)
+    setChallengeRemain(calc())
+    const timer = setInterval(() => setChallengeRemain(calc()), 1000)
+    return () => clearInterval(timer)
+  }, [task.status, task.challenge_window_end])
 
   function handleTabHint(hint: 'submissions' | 'challenges' | null) {
     if (hint === 'submissions') setTab('submissions')
@@ -196,10 +213,13 @@ export function TaskDetail({ task }: Props) {
                   )}
                   {task.challenge_duration !== null && (
                     <MetaRow label="Challenge Window">
-                      <span className="font-mono">
-                        {String(Math.floor(task.challenge_duration)).padStart(2, '0')}:
-                        {String(Math.floor((task.challenge_duration % 1) * 60)).padStart(2, '0')}:00
-                      </span>
+                      {challengeRemain !== null ? (
+                        <span className={`font-mono ${challengeRemain <= 0 ? 'text-red-400' : ''}`}>
+                          {challengeRemain <= 0 ? 'expired' : formatHMS(challengeRemain)}
+                        </span>
+                      ) : (
+                        <span className="font-mono">{formatHMS(task.challenge_duration)}</span>
+                      )}
                     </MetaRow>
                   )}
                   {task.winner_submission_id && (
