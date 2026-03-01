@@ -98,14 +98,9 @@ def _quality_first_settlement(db: Session, task: Task) -> SettlementOut | None:
     is_challenger_win = len(upheld_challenges) > 0
 
     # --- Sources ---
-    # Only show Incentive as a separate source when a challenger won;
-    # otherwise the incentive is just part of platform fee.
-    sources: list[SettlementSource] = []
-    if is_challenger_win:
-        sources.append(SettlementSource(label="Bounty (95%)", amount=escrow_amount, type="bounty"))
-        sources.append(SettlementSource(label="Incentive (5%)", amount=incentive, type="incentive"))
-    else:
-        sources.append(SettlementSource(label="Bounty", amount=bounty, type="bounty"))
+    sources: list[SettlementSource] = [
+        SettlementSource(label="Bounty", amount=bounty, type="bounty"),
+    ]
     for c in challenges:
         if not c.challenger_wallet or not c.deposit_amount:
             continue

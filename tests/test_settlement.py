@@ -106,9 +106,9 @@ def test_settlement_quality_first_with_challenges(client_with_db):
     assert resp.status_code == 200
     data = resp.json()
 
-    # Sources: bounty(9.5) + incentive(0.5) + 2 deposits(1.0 each)
+    # Sources: bounty(10.0) + 2 deposits(1.0 each)
     assert data["escrow_total"] == 12.0
-    assert len(data["sources"]) == 4
+    assert len(data["sources"]) == 3
 
     # Winner payout is stored as 9.2
     assert data["summary"]["winner_payout"] == 9.2
