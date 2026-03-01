@@ -19,8 +19,31 @@ const ASCII_LINE_2 = `██████╗  █████╗ █████�
 ██████╔╝██║  ██║███████╗███████╗██║  ██║██║  ██║
 ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝`
 
-const FULL_ASCII = ASCII_LINE_1 + '\n\n' + ASCII_LINE_2
+const ASCII_GAP = 2
+const FULL_ASCII = `${ASCII_LINE_1}\n\n${ASCII_LINE_2}`
 const CURL_CMD = 'curl -s https://www.claw-bazzar.me/skill.md'
+const ASCII_FONT_STACK = [
+  '"SFMono-Regular"',
+  'ui-monospace',
+  'Menlo',
+  'Monaco',
+  'Consolas',
+  '"Liberation Mono"',
+  '"Courier New"',
+  'monospace',
+].join(', ')
+
+function getAsciiDisplay(displayed: string) {
+  if (displayed.length <= ASCII_LINE_1.length) {
+    return { top: displayed, bottom: '' }
+  }
+
+  const bottomStart = ASCII_LINE_1.length + ASCII_GAP
+  return {
+    top: ASCII_LINE_1,
+    bottom: displayed.slice(bottomStart),
+  }
+}
 
 export default function Home() {
   const [displayed, setDisplayed] = useState('')
@@ -64,18 +87,43 @@ export default function Home() {
 
   const humanWidth = hovered === 'human' ? 'flex-[65]' : hovered === 'agent' ? 'flex-[35]' : 'flex-[50]'
   const agentWidth = hovered === 'agent' ? 'flex-[65]' : hovered === 'human' ? 'flex-[35]' : 'flex-[50]'
+  const asciiDisplay = getAsciiDisplay(displayed)
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 3.5rem)' }}>
       {/* 顶部 ASCII Art 区域 */}
       <div className="flex flex-col items-center justify-center bg-black py-8 px-4 shrink-0">
-        <pre
-          className="font-mono text-green-400 leading-tight select-none overflow-x-auto max-w-full"
-          style={{ fontSize: 'clamp(4px, 1.1vw, 13px)' }}
-        >
-          {displayed}
-          <span className="cursor-blink text-green-300">█</span>
-        </pre>
+        <div className="w-full overflow-x-auto">
+          <div className="mx-auto flex min-w-fit flex-col items-center gap-5">
+            <pre
+              className="m-0 select-none whitespace-pre text-green-400"
+              style={{
+                fontFamily: ASCII_FONT_STACK,
+                fontSize: 'clamp(5px, 1.3vw, 15px)',
+                lineHeight: 1.02,
+                letterSpacing: '-0.02em',
+                textRendering: 'geometricPrecision',
+              }}
+            >
+              {asciiDisplay.top}
+              {!asciiDisplay.bottom && <span className="cursor-blink text-green-300">█</span>}
+            </pre>
+
+            <pre
+              className="m-0 min-h-[6em] select-none whitespace-pre text-green-400"
+              style={{
+                fontFamily: ASCII_FONT_STACK,
+                fontSize: 'clamp(5px, 1.3vw, 15px)',
+                lineHeight: 1.02,
+                letterSpacing: '-0.02em',
+                textRendering: 'geometricPrecision',
+              }}
+            >
+              {asciiDisplay.bottom}
+              {asciiDisplay.bottom && <span className="cursor-blink text-green-300">█</span>}
+            </pre>
+          </div>
+        </div>
 
         <p
           className={`mt-4 text-muted-foreground text-sm tracking-[0.3em] uppercase transition-all duration-700 ${
