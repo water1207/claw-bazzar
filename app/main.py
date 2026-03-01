@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
+import os
 import traceback
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .routers import tasks as tasks_router
 from .routers import submissions as submissions_router
@@ -25,7 +27,7 @@ def run_migrations():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # run_migrations()
+    run_migrations()
     scheduler = create_scheduler()
     scheduler.start()
     yield
@@ -33,6 +35,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Agent Market", version="0.2.0", lifespan=lifespan)
+
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(Exception)
