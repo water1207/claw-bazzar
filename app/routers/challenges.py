@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
-from ..models import Task, Submission, Challenge, User, TaskStatus, JuryBallot
+from ..models import Task, Submission, Challenge, User, TaskStatus, JuryBallot, MaliciousTag
 from ..schemas import ChallengeCreate, ChallengeOut, JuryVoteIn, JuryBallotOut
 from ..services.escrow import check_usdc_balance, join_challenge_onchain
 from ..services.trust import check_permissions, get_challenge_deposit_rate
@@ -180,10 +180,25 @@ def get_jury_ballots(task_id: str, db: Session = Depends(get_db)):
     ballots = db.query(JuryBallot).filter_by(task_id=task_id).all()
     all_voted = all(b.winner_submission_id is not None for b in ballots)
 
+    # Build arbiter nickname map
+    arbiter_ids = {b.arbiter_user_id for b in ballots}
+    nickname_map: dict[str, str] = {}
+    if arbiter_ids:
+        users = db.query(User.id, User.nickname).filter(User.id.in_(arbiter_ids)).all()
+        nickname_map = {u.id: u.nickname for u in users}
+
+    # Build malicious tags map: arbiter_user_id -> list of target_submission_ids
+    tags_by_arbiter: dict[str, list[str]] = {}
+    if all_voted:
+        tags = db.query(MaliciousTag).filter_by(task_id=task_id).all()
+        for t in tags:
+            tags_by_arbiter.setdefault(t.arbiter_user_id, []).append(t.target_submission_id)
+
     if not all_voted:
         result = []
         for b in ballots:
             out = JuryBallotOut.model_validate(b)
+            out.arbiter_nickname = nickname_map.get(b.arbiter_user_id)
             has_voted = b.winner_submission_id is not None
             out.winner_submission_id = None
             out.feedback = None
@@ -191,4 +206,10 @@ def get_jury_ballots(task_id: str, db: Session = Depends(get_db)):
             result.append(out)
         return result
 
-    return ballots
+    result = []
+    for b in ballots:
+        out = JuryBallotOut.model_validate(b)
+        out.arbiter_nickname = nickname_map.get(b.arbiter_user_id)
+        out.malicious_tags = tags_by_arbiter.get(b.arbiter_user_id, [])
+        result.append(out)
+    return result

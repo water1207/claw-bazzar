@@ -45,7 +45,7 @@ function buildCandidatePool(
   if (pwSub) {
     pool.push({
       id: pwSub.id,
-      label: `PW: ${pwSub.worker_id.slice(0, 8)}... (score: ${pwSub.score?.toFixed(2) ?? '\u2014'})`,
+      label: `PW: ${pwSub.worker_nickname ?? pwSub.worker_id.slice(0, 8) + '...'} (score: ${pwSub.score?.toFixed(2) ?? '\u2014'})`,
       isPW: true,
     })
   }
@@ -57,7 +57,7 @@ function buildCandidatePool(
     if (sub) {
       pool.push({
         id: sub.id,
-        label: `Challenger: ${sub.worker_id.slice(0, 8)}... (score: ${sub.score?.toFixed(2) ?? '\u2014'})`,
+        label: `Challenger: ${sub.worker_nickname ?? sub.worker_id.slice(0, 8) + '...'} (score: ${sub.score?.toFixed(2) ?? '\u2014'})`,
         isPW: false,
       })
     } else {
@@ -165,7 +165,7 @@ export function MergedVoteCard({ task, challenges, arbiterId, onVoted }: MergedV
         {ballots.map((b) => (
           <div key={b.id} className="flex items-center justify-between text-xs">
             <span className={`font-mono ${b.arbiter_user_id === arbiterId ? 'text-blue-400' : 'text-muted-foreground'}`}>
-              {b.arbiter_user_id === arbiterId ? '(you)' : b.arbiter_user_id.slice(0, 8) + '...'}
+              {b.arbiter_user_id === arbiterId ? '(you)' : (b.arbiter_nickname ?? b.arbiter_user_id.slice(0, 8) + '...')}
             </span>
             {b.voted_at ? (
               <div className="flex items-center gap-1.5">
@@ -274,7 +274,13 @@ export function MergedVoteCard({ task, challenges, arbiterId, onVoted }: MergedV
 
       {alreadyVoted && (
         <p className="text-xs text-green-400 pt-1 border-t border-zinc-700">
-          You voted: winner = {myBallot?.winner_submission_id?.slice(0, 8)}...
+          {(() => {
+            const winnerSub = task.submissions?.find((s) => s.id === myBallot?.winner_submission_id)
+            const winnerLabel = winnerSub
+              ? (winnerSub.worker_nickname ?? winnerSub.worker_id.slice(0, 8) + '...')
+              : myBallot?.winner_submission_id?.slice(0, 8) + '...'
+            return `You voted: winner = ${winnerLabel}`
+          })()}
         </p>
       )}
 

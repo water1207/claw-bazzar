@@ -16,7 +16,7 @@ function VerdictBadge({ verdict }: { verdict: ChallengeVerdict | null }) {
   return <Badge variant={c.variant}>{c.label}</Badge>
 }
 
-function MergedVotingProgress({ taskId }: { taskId: string }) {
+function MergedVotingProgress({ taskId, task }: { taskId: string; task: TaskDetail }) {
   const { data: ballots = [] } = useJuryBallots(taskId)
 
   if (ballots.length === 0) return null
@@ -24,6 +24,12 @@ function MergedVotingProgress({ taskId }: { taskId: string }) {
   const voted = ballots.filter((b) => b.voted_at !== null).length
   const total = ballots.length
   const allVoted = total > 0 && voted === total
+
+  // Build submission ID -> worker nickname map from task submissions
+  const subNicknameMap: Record<string, string> = {}
+  for (const s of task.submissions ?? []) {
+    subNicknameMap[s.id] = s.worker_nickname ?? s.worker_id.slice(0, 8) + '...'
+  }
 
   // Count winner picks and malicious tags
   const winnerCounts: Record<string, number> = {}
@@ -57,7 +63,7 @@ function MergedVotingProgress({ taskId }: { taskId: string }) {
             {Object.entries(winnerCounts).map(([subId, count]) => (
               <div key={subId} className="flex items-center justify-between text-xs">
                 <span className="font-mono text-muted-foreground">
-                  {subId.slice(0, 8)}...
+                  {subNicknameMap[subId] ?? subId.slice(0, 8) + '...'}
                 </span>
                 <Badge variant="default">{count} vote{count > 1 ? 's' : ''}</Badge>
               </div>
@@ -71,7 +77,7 @@ function MergedVotingProgress({ taskId }: { taskId: string }) {
               {Object.entries(maliciousCounts).map(([subId, count]) => (
                 <div key={subId} className="flex items-center justify-between text-xs">
                   <span className="font-mono text-muted-foreground">
-                    {subId.slice(0, 8)}...
+                    {subNicknameMap[subId] ?? subId.slice(0, 8) + '...'}
                   </span>
                   <Badge variant="destructive">{count} tag{count > 1 ? 's' : ''}</Badge>
                 </div>
@@ -84,12 +90,12 @@ function MergedVotingProgress({ taskId }: { taskId: string }) {
             {ballots.map((b) => (
               <div key={b.id} className="flex items-center justify-between text-xs">
                 <span className="font-mono text-muted-foreground">
-                  {b.arbiter_user_id.slice(0, 8)}...
+                  {b.arbiter_nickname ?? b.arbiter_user_id.slice(0, 8) + '...'}
                 </span>
                 <div className="flex items-center gap-1.5">
                   {b.winner_submission_id && (
                     <span className="text-muted-foreground">
-                      picked {b.winner_submission_id.slice(0, 8)}...
+                      picked {subNicknameMap[b.winner_submission_id] ?? b.winner_submission_id.slice(0, 8) + '...'}
                     </span>
                   )}
                   {b.malicious_tags && b.malicious_tags.length > 0 && (
@@ -146,13 +152,17 @@ function ChallengeCard({ challenge, task }: {
         <div>
           <span className="text-muted-foreground">Challenger: </span>
           <span className="font-mono">
-            {challengerSub ? `${challengerSub.worker_id.slice(0, 8)}... (${challengerSub.score?.toFixed(2) ?? '\u2014'})` : challenge.challenger_submission_id.slice(0, 8) + '...'}
+            {challengerSub
+              ? `${challengerSub.worker_nickname ?? challengerSub.worker_id.slice(0, 8) + '...'} (${challengerSub.score?.toFixed(2) ?? '\u2014'})`
+              : challenge.challenger_submission_id.slice(0, 8) + '...'}
           </span>
         </div>
         <div>
-          <span className="text-muted-foreground">Target: </span>
+          <span className="text-muted-foreground">Target (Winner): </span>
           <span className="font-mono">
-            {targetSub ? `${targetSub.worker_id.slice(0, 8)}... (${targetSub.score?.toFixed(2) ?? '\u2014'})` : challenge.target_submission_id.slice(0, 8) + '...'}
+            {targetSub
+              ? `${targetSub.worker_nickname ?? targetSub.worker_id.slice(0, 8) + '...'} (${targetSub.score?.toFixed(2) ?? '\u2014'})`
+              : challenge.target_submission_id.slice(0, 8) + '...'}
           </span>
         </div>
       </div>
@@ -264,7 +274,7 @@ export function ChallengePanel({ task }: Props) {
 
       {/* Merged voting progress (replaces per-challenge voting display) */}
       {(task.status === 'arbitrating' || task.status === 'closed' || task.status === 'voided') && (
-        <MergedVotingProgress taskId={task.id} />
+        <MergedVotingProgress taskId={task.id} task={task} />
       )}
 
       {challenges.length === 0 && (

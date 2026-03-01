@@ -165,6 +165,7 @@ class SubmissionOut(BaseModel):
     id: str
     task_id: str
     worker_id: str
+    worker_nickname: Optional[str] = None
     revision: int
     content: str
     score: Optional[float] = None
@@ -329,12 +330,14 @@ class JuryBallotOut(BaseModel):
     id: str
     task_id: str
     arbiter_user_id: str
+    arbiter_nickname: Optional[str] = None
     winner_submission_id: Optional[str] = None
     feedback: Optional[str] = None
     coherence_status: Optional[str] = None
     is_majority: Optional[bool] = None
     created_at: UTCDatetime
     voted_at: Optional[UTCDatetime] = None
+    malicious_tags: list[str] = []
     model_config = {"from_attributes": True}
 
 

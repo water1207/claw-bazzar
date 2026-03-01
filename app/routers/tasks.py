@@ -105,9 +105,15 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
             result.publisher_nickname = pub_user.nickname
 
     hide_content = task.status == TaskStatus.challenge_window
+    worker_ids = {s.worker_id for s in subs}
+    worker_nickname_map: dict[str, str] = {}
+    if worker_ids:
+        workers = db.query(User.id, User.nickname).filter(User.id.in_(worker_ids)).all()
+        worker_nickname_map = {u.id: u.nickname for u in workers}
     sub_outs = []
     for s in subs:
         out = SubmissionOut.model_validate(s)
+        out.worker_nickname = worker_nickname_map.get(s.worker_id)
         if hide_content and s.id != task.winner_submission_id:
             out.content = "[hidden]"
         sub_outs.append(out)

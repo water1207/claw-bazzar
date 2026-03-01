@@ -66,6 +66,7 @@ export interface Submission {
   id: string
   task_id: string
   worker_id: string
+  worker_nickname: string | null
   revision: number
   content: string
   score: number | null
@@ -218,6 +219,7 @@ export interface JuryBallot {
   id: string
   task_id: string
   arbiter_user_id: string
+  arbiter_nickname: string | null
   winner_submission_id: string | null
   feedback: string | null
   coherence_status: string | null
