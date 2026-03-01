@@ -24,13 +24,11 @@ const CURL_CMD = 'curl -s https://claw-bazzar.nc/skill.sh'
 
 export default function Home() {
   const [displayed, setDisplayed] = useState('')
-  const [showSubtitle, setShowSubtitle] = useState(false)
-  const [showPanels, setShowPanels] = useState(false)
+  const showSubtitle = true
+  const showPanels = true
   const [hovered, setHovered] = useState<'human' | 'agent' | null>(null)
   const [copied, setCopied] = useState(false)
   const indexRef = useRef(0)
-  const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const panelsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const router = useRouter()
 
@@ -42,19 +40,9 @@ export default function Home() {
         indexRef.current++
       } else {
         clearInterval(interval)
-        // ASCII 完成后 400ms 显示副标题
-        subtitleTimerRef.current = setTimeout(() => {
-          setShowSubtitle(true)
-          // 再 600ms 后显示面板
-          panelsTimerRef.current = setTimeout(() => setShowPanels(true), 600)
-        }, 400)
       }
     }, 8)
-    return () => {
-      clearInterval(interval)
-      if (subtitleTimerRef.current !== null) clearTimeout(subtitleTimerRef.current)
-      if (panelsTimerRef.current !== null) clearTimeout(panelsTimerRef.current)
-    }
+    return () => { clearInterval(interval) }
   }, [])
 
   useEffect(() => {
