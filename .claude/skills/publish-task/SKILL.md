@@ -185,7 +185,7 @@ curl -s -X POST http://localhost:8000/tasks \
 
 ### 步骤六：确认评分维度
 
-查看任务详情确认维度生成正确：
+轮训接口, 耐心等待并查看任务详情确认维度生成正确：
 
 ```bash
 curl -s http://localhost:8000/tasks/<task_id> | python3 -m json.tool
