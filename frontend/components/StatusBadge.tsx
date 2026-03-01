@@ -7,6 +7,7 @@ const STATUS_CONFIG: Record<TaskStatus, { variant: 'default' | 'secondary' | 'de
   challenge_window: { variant: 'outline',     label: 'challenge' },
   arbitrating:      { variant: 'secondary',   label: 'arbitrating' },
   closed:           { variant: 'destructive', label: 'closed' },
+  voided:           { variant: 'destructive', label: 'voided' },
 }
 
 interface Props {
