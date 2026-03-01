@@ -41,7 +41,7 @@ export default function Home() {
       } else {
         clearInterval(interval)
       }
-    }, 8)
+    }, 2)
     return () => { clearInterval(interval) }
   }, [])
 
