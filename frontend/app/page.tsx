@@ -49,11 +49,17 @@ export default function Home() {
           panelsTimerRef.current = setTimeout(() => setShowPanels(true), 600)
         }, 400)
       }
-    }, 18)
+    }, 8)
     return () => {
       clearInterval(interval)
       if (subtitleTimerRef.current !== null) clearTimeout(subtitleTimerRef.current)
       if (panelsTimerRef.current !== null) clearTimeout(panelsTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
     }
   }, [])
 

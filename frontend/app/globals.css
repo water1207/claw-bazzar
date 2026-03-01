@@ -171,6 +171,7 @@
 /* 扫描线覆盖层 */
 .scanlines {
   position: relative;
+  isolation: isolate;
 }
 
 .scanlines::after {
