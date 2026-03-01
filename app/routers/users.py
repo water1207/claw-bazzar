@@ -10,6 +10,11 @@ from ..schemas import UserCreate, UserOut, UserStats
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+@router.get("/list", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db)):
+    return db.query(User).order_by(User.created_at).all()
+
+
 @router.get("", response_model=UserOut)
 def get_user_by_nickname(nickname: str = Query(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.nickname == nickname).first()
