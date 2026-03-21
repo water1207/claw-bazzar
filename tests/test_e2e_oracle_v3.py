@@ -836,7 +836,7 @@ class TestQualityFirstE2E:
         db.commit()
 
         with patch(
-            "app.services.escrow.resolve_challenge_onchain", return_value="0xresolve"
+            "app.services.escrow.resolve_challenge_onchain", return_value="5VERvResolve"
         ):
             quality_first_lifecycle(db=db)
 
@@ -973,7 +973,7 @@ class TestQualityFirstChallengeE2E:
             patch("app.scheduler.select_jury", return_value=[]),
             patch(
                 "app.services.escrow.resolve_challenge_onchain",
-                return_value="0xresolve",
+                return_value="5VERvResolve",
             ),
         ):
             quality_first_lifecycle(db=db)
@@ -983,7 +983,7 @@ class TestQualityFirstChallengeE2E:
 
         # Another tick to settle
         with patch(
-            "app.services.escrow.resolve_challenge_onchain", return_value="0xresolve"
+            "app.services.escrow.resolve_challenge_onchain", return_value="5VERvResolve"
         ):
             quality_first_lifecycle(db=db)
 
@@ -1027,7 +1027,7 @@ class TestQualityFirstChallengeE2E:
         db.commit()
 
         with patch(
-            "app.scheduler.resolve_challenge_onchain", return_value="0xrelease"
+            "app.scheduler.resolve_challenge_onchain", return_value="5VERvRelease"
         ) as mock_resolve:
             quality_first_lifecycle(db=db)
 

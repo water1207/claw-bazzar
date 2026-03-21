@@ -1,238 +1,106 @@
-"""ChallengeEscrow contract interaction layer."""
-import json
+"""ChallengeEscrow Anchor program interaction layer."""
+
+import struct
+import base64
 import os
-from pathlib import Path
-from web3 import Web3
+from .solana_utils import (
+    get_client,
+    get_platform_keypair,
+    get_associated_token_address,
+    task_id_to_seed,
+    usdc_to_lamports,
+    lamports_to_usdc,
+    build_instruction,
+    find_pda,
+    USDC_MINT,
+)
+from solders.pubkey import Pubkey
+from solders.transaction import Transaction
+from solana.rpc.types import TxOpts
+from solders.instruction import AccountMeta
+from spl.token.constants import TOKEN_PROGRAM_ID
 
-PLATFORM_PRIVATE_KEY = os.environ.get("PLATFORM_PRIVATE_KEY", "")
-RPC_URL = os.environ.get("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org")
-USDC_CONTRACT = os.environ.get("USDC_CONTRACT", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
-ESCROW_CONTRACT_ADDRESS = os.environ.get("ESCROW_CONTRACT_ADDRESS", "")
-
-# Minimal ERC-20 ABI for balanceOf
-ERC20_BALANCE_ABI = [
-    {
-        "constant": True,
-        "inputs": [{"name": "account", "type": "address"}],
-        "name": "balanceOf",
-        "outputs": [{"name": "", "type": "uint256"}],
-        "type": "function",
-    }
-]
-
-
-def _load_escrow_abi() -> list:
-    """Load ChallengeEscrow ABI from Foundry output."""
-    abi_path = Path(__file__).parent.parent.parent / "contracts" / "out" / "ChallengeEscrow.sol" / "ChallengeEscrow.json"
-    if abi_path.exists():
-        with open(abi_path, encoding="utf-8") as f:
-            return json.load(f)["abi"]
-    # Fallback: minimal ABI for the 4 functions we use
-    return _MINIMAL_ESCROW_ABI
+ESCROW_PROGRAM_ID = Pubkey.from_string(
+    os.environ.get("ESCROW_PROGRAM_ID", "11111111111111111111111111111111")
+)
 
 
-# Minimal ABI fallback (used when Foundry artifacts not available, e.g. in tests)
-_MINIMAL_ESCROW_ABI = [
-    {
-        "inputs": [
-            {"name": "taskId", "type": "bytes32"},
-            {"name": "winner_", "type": "address"},
-            {"name": "bounty", "type": "uint256"},
-            {"name": "incentive", "type": "uint256"},
-        ],
-        "name": "createChallenge",
-        "outputs": [],
-        "type": "function",
-    },
-    {
-        "inputs": [
-            {"name": "taskId", "type": "bytes32"},
-            {"name": "challenger", "type": "address"},
-            {"name": "depositAmount", "type": "uint256"},
-            {"name": "deadline", "type": "uint256"},
-            {"name": "v", "type": "uint8"},
-            {"name": "r", "type": "bytes32"},
-            {"name": "s", "type": "bytes32"},
-        ],
-        "name": "joinChallenge",
-        "outputs": [],
-        "type": "function",
-    },
-    {
-        "inputs": [
-            {"name": "taskId", "type": "bytes32"},
-            {"name": "finalWinner", "type": "address"},
-            {"name": "winnerPayout", "type": "uint256"},
-            {
-                "name": "refunds",
-                "type": "tuple[]",
-                "components": [
-                    {"name": "challenger", "type": "address"},
-                    {"name": "refund", "type": "bool"},
-                ],
-            },
-            {"name": "arbiters", "type": "address[]"},
-            {"name": "arbiterReward", "type": "uint256"},
-        ],
-        "name": "resolveChallenge",
-        "outputs": [],
-        "type": "function",
-    },
-    {
-        "inputs": [{"name": "taskId", "type": "bytes32"}],
-        "name": "emergencyWithdraw",
-        "outputs": [],
-        "type": "function",
-    },
-    {
-        "inputs": [
-            {"name": "taskId", "type": "bytes32"},
-            {"name": "publisher", "type": "address"},
-            {"name": "publisherRefund", "type": "uint256"},
-            {
-                "name": "refunds",
-                "type": "tuple[]",
-                "components": [
-                    {"name": "challenger", "type": "address"},
-                    {"name": "refund", "type": "bool"},
-                ],
-            },
-            {"name": "arbiters", "type": "address[]"},
-            {"name": "arbiterReward", "type": "uint256"},
-        ],
-        "name": "voidChallenge",
-        "outputs": [],
-        "type": "function",
-    },
-]
-
-
-def _get_w3_and_contract():
-    """Create web3 instance and contract object. Separated for mocking."""
-    w3 = Web3(Web3.HTTPProvider(RPC_URL))
-    abi = _load_escrow_abi()
-    contract = w3.eth.contract(
-        address=Web3.to_checksum_address(ESCROW_CONTRACT_ADDRESS), abi=abi
+def _get_escrow_pdas(task_id: str):
+    """Derive all PDAs needed for escrow instructions."""
+    task_seed = task_id_to_seed(task_id)
+    challenge_pda, challenge_bump = find_pda(
+        [b"challenge", task_seed], ESCROW_PROGRAM_ID
     )
-    return w3, contract
-
-
-def _task_id_to_bytes32(task_id: str) -> bytes:
-    """Convert task UUID string to bytes32 via keccak256."""
-    return Web3.keccak(text=task_id)
-
-
-def _send_tx(w3, contract_fn, description: str) -> str:
-    """Build, sign, send a contract transaction. Returns tx hash hex."""
-    account = w3.eth.account.from_key(PLATFORM_PRIVATE_KEY)
-    tx = contract_fn.build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 300_000,
-        "gasPrice": w3.eth.gas_price,
-    })
-    signed = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-    if receipt["status"] != 1:
-        raise RuntimeError(f"{description} reverted (tx={tx_hash.hex()})")
-    print(f"[escrow] {description} tx={tx_hash.hex()}", flush=True)
-    return tx_hash.hex()
+    vault_pda, vault_bump = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
+    config_pda, _ = find_pda([b"config"], ESCROW_PROGRAM_ID)
+    return task_seed, challenge_pda, vault_pda, config_pda
 
 
 def check_usdc_balance(wallet_address: str) -> float:
-    """Check USDC balance of a wallet. Returns amount in USDC (not wei)."""
-    w3 = Web3(Web3.HTTPProvider(RPC_URL))
-    contract = w3.eth.contract(
-        address=Web3.to_checksum_address(USDC_CONTRACT), abi=ERC20_BALANCE_ABI
-    )
-    balance_wei = contract.functions.balanceOf(
-        Web3.to_checksum_address(wallet_address)
-    ).call()
-    return balance_wei / 10**6
+    """Check USDC balance of a Solana wallet. Returns amount in USDC."""
+    client = get_client()
+    owner = Pubkey.from_string(wallet_address)
+    ata = get_associated_token_address(owner, USDC_MINT)
+    try:
+        resp = client.get_token_account_balance(ata)
+        if resp.value:
+            return float(resp.value.ui_amount or 0)
+    except Exception:
+        pass
+    return 0.0
 
 
 def create_challenge_onchain(
     task_id: str, winner_wallet: str, bounty: float, incentive: float
 ) -> str:
-    """Call ChallengeEscrow.createChallenge(). Locks bounty + incentive into escrow.
-    bounty = task.bounty * 0.90, incentive = task.bounty * 0.05.
-    Returns tx hash."""
-    w3, contract = _get_w3_and_contract()
-    task_bytes = _task_id_to_bytes32(task_id)
-    bounty_wei = int(bounty * 10**6)
-    incentive_wei = int(incentive * 10**6)
+    """Call ChallengeEscrow create_challenge instruction."""
+    client = get_client()
+    payer = get_platform_keypair()
+    task_seed, challenge_pda, vault_pda, config_pda = _get_escrow_pdas(task_id)
 
-    fn = contract.functions.createChallenge(
-        task_bytes,
-        Web3.to_checksum_address(winner_wallet),
-        bounty_wei,
-        incentive_wei,
-    )
-    return _send_tx(w3, fn, f"createChallenge({task_id})")
+    bounty_lamports = usdc_to_lamports(bounty)
+    incentive_lamports = usdc_to_lamports(incentive)
+    winner_pubkey = Pubkey.from_string(winner_wallet)
 
+    # Borsh serialize: task_id_hash(32) + bounty(u64) + incentive(u64)
+    args = task_seed + struct.pack("<QQ", bounty_lamports, incentive_lamports)
 
-def join_challenge_onchain(
-    task_id: str,
-    challenger_wallet: str,
-    deposit_amount: float,
-    deadline: int,
-    v: int,
-    r: str,
-    s: str,
-) -> str:
-    """Call ChallengeEscrow.joinChallenge() with per-challenger deposit and EIP-2612 permit params.
-    Returns tx hash."""
-    w3, contract = _get_w3_and_contract()
-    task_bytes = _task_id_to_bytes32(task_id)
-    deposit_wei = int(deposit_amount * 10**6)
+    payer_ata = get_associated_token_address(payer.pubkey(), USDC_MINT)
 
-    fn = contract.functions.joinChallenge(
-        task_bytes,
-        Web3.to_checksum_address(challenger_wallet),
-        deposit_wei,
-        deadline,
-        v,
-        bytes.fromhex(r[2:]) if r.startswith("0x") else bytes.fromhex(r),
-        bytes.fromhex(s[2:]) if s.startswith("0x") else bytes.fromhex(s),
-    )
-    return _send_tx(w3, fn, f"joinChallenge({task_id}, {challenger_wallet})")
-
-
-def void_challenge_onchain(
-    task_id: str,
-    publisher_wallet: str,
-    publisher_refund: float,
-    refunds: list[dict],
-    arbiter_wallets: list[str],
-    arbiter_reward: float,
-) -> str:
-    """Call ChallengeEscrow.voidChallenge() for voided tasks.
-    refunds: [{"challenger": "0x...", "refund": True/False}, ...]
-    Returns tx hash."""
-    w3, contract = _get_w3_and_contract()
-    task_bytes = _task_id_to_bytes32(task_id)
-    publisher_refund_wei = int(publisher_refund * 10**6)
-    arbiter_reward_wei = int(arbiter_reward * 10**6)
-
-    refund_tuples = [
-        (
-            Web3.to_checksum_address(r["challenger"]),
-            r["refund"],
-        )
-        for r in refunds
+    accounts = [
+        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),  # authority
+        AccountMeta(config_pda, is_signer=False, is_writable=False),  # config
+        AccountMeta(challenge_pda, is_signer=False, is_writable=True),  # challenge_info
+        AccountMeta(vault_pda, is_signer=False, is_writable=True),  # escrow_vault
+        AccountMeta(payer_ata, is_signer=False, is_writable=True),  # authority_ata
+        AccountMeta(winner_pubkey, is_signer=False, is_writable=False),  # winner
+        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),  # mint
+        AccountMeta(
+            TOKEN_PROGRAM_ID, is_signer=False, is_writable=False
+        ),  # token_program
+        AccountMeta(
+            Pubkey.from_string("11111111111111111111111111111111"),
+            is_signer=False,
+            is_writable=False,
+        ),  # system_program
     ]
-    arbiter_addrs = [Web3.to_checksum_address(a) for a in arbiter_wallets]
 
-    fn = contract.functions.voidChallenge(
-        task_bytes,
-        Web3.to_checksum_address(publisher_wallet),
-        publisher_refund_wei,
-        refund_tuples,
-        arbiter_addrs,
-        arbiter_reward_wei,
-    )
-    return _send_tx(w3, fn, f"voidChallenge({task_id})")
+    ix = build_instruction(ESCROW_PROGRAM_ID, "create_challenge", args, accounts)
+    tx = Transaction().add(ix)
+    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    sig = str(resp.value)
+    print(f"[escrow] createChallenge({task_id}) tx={sig}", flush=True)
+    return sig
+
+
+def join_challenge_onchain(task_id: str, signed_transaction: str) -> str:
+    """Submit a pre-signed join_challenge transaction to the network."""
+    client = get_client()
+    raw_tx = base64.b64decode(signed_transaction)
+    resp = client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
+    sig = str(resp.value)
+    print(f"[escrow] joinChallenge({task_id}) tx={sig}", flush=True)
+    return sig
 
 
 def resolve_challenge_onchain(
@@ -243,29 +111,114 @@ def resolve_challenge_onchain(
     arbiter_wallets: list[str],
     arbiter_reward: float,
 ) -> str:
-    """Call ChallengeEscrow.resolveChallenge() with unified pool distribution.
-    refunds: [{"challenger": "0x...", "refund": True/False}, ...]
-    Returns tx hash."""
-    w3, contract = _get_w3_and_contract()
-    task_bytes = _task_id_to_bytes32(task_id)
-    winner_payout_wei = int(winner_payout * 10**6)
-    arbiter_reward_wei = int(arbiter_reward * 10**6)
+    """Call ChallengeEscrow resolve_challenge instruction with remaining accounts."""
+    client = get_client()
+    payer = get_platform_keypair()
+    task_seed, challenge_pda, vault_pda, config_pda = _get_escrow_pdas(task_id)
 
-    refund_tuples = [
-        (
-            Web3.to_checksum_address(r["challenger"]),
-            r["refund"],
-        )
-        for r in refunds
+    winner_pubkey = Pubkey.from_string(final_winner_wallet)
+    winner_payout_lamports = usdc_to_lamports(winner_payout)
+    arbiter_reward_lamports = usdc_to_lamports(arbiter_reward)
+    num_refunds = len(refunds)
+    num_arbiters = len(arbiter_wallets)
+
+    # Borsh: task_id_hash(32) + winner_payout(u64) + arbiter_reward(u64) + num_refunds(u32) + refund_flags(bool[]) + num_arbiters(u32)
+    args = task_seed
+    args += struct.pack("<QQ", winner_payout_lamports, arbiter_reward_lamports)
+    args += struct.pack("<I", num_refunds)
+    for r in refunds:
+        args += struct.pack("<?", r["refund"])
+    args += struct.pack("<I", num_arbiters)
+
+    vault_authority_pda, _ = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
+
+    accounts = [
+        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),
+        AccountMeta(config_pda, is_signer=False, is_writable=False),
+        AccountMeta(challenge_pda, is_signer=False, is_writable=True),
+        AccountMeta(vault_pda, is_signer=False, is_writable=True),
+        AccountMeta(vault_authority_pda, is_signer=False, is_writable=False),
+        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),
+        AccountMeta(TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
     ]
-    arbiter_addrs = [Web3.to_checksum_address(a) for a in arbiter_wallets]
 
-    fn = contract.functions.resolveChallenge(
-        task_bytes,
-        Web3.to_checksum_address(final_winner_wallet),
-        winner_payout_wei,
-        refund_tuples,
-        arbiter_addrs,
-        arbiter_reward_wei,
-    )
-    return _send_tx(w3, fn, f"resolveChallenge({task_id})")
+    # Remaining accounts: winner ATA, then refund ATAs, then arbiter ATAs
+    winner_ata = get_associated_token_address(winner_pubkey, USDC_MINT)
+    accounts.append(AccountMeta(winner_ata, is_signer=False, is_writable=True))
+
+    for r in refunds:
+        challenger_pubkey = Pubkey.from_string(r["challenger"])
+        challenger_ata = get_associated_token_address(challenger_pubkey, USDC_MINT)
+        accounts.append(AccountMeta(challenger_ata, is_signer=False, is_writable=True))
+
+    for a in arbiter_wallets:
+        arbiter_pubkey = Pubkey.from_string(a)
+        arbiter_ata = get_associated_token_address(arbiter_pubkey, USDC_MINT)
+        accounts.append(AccountMeta(arbiter_ata, is_signer=False, is_writable=True))
+
+    ix = build_instruction(ESCROW_PROGRAM_ID, "resolve_challenge", args, accounts)
+    tx = Transaction().add(ix)
+    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    sig = str(resp.value)
+    print(f"[escrow] resolveChallenge({task_id}) tx={sig}", flush=True)
+    return sig
+
+
+def void_challenge_onchain(
+    task_id: str,
+    publisher_wallet: str,
+    publisher_refund: float,
+    refunds: list[dict],
+    arbiter_wallets: list[str],
+    arbiter_reward: float,
+) -> str:
+    """Call ChallengeEscrow void_challenge instruction."""
+    client = get_client()
+    payer = get_platform_keypair()
+    task_seed, challenge_pda, vault_pda, config_pda = _get_escrow_pdas(task_id)
+
+    publisher_pubkey = Pubkey.from_string(publisher_wallet)
+    publisher_refund_lamports = usdc_to_lamports(publisher_refund)
+    arbiter_reward_lamports = usdc_to_lamports(arbiter_reward)
+    num_refunds = len(refunds)
+    num_arbiters = len(arbiter_wallets)
+
+    args = task_seed
+    args += struct.pack("<QQ", publisher_refund_lamports, arbiter_reward_lamports)
+    args += struct.pack("<I", num_refunds)
+    for r in refunds:
+        args += struct.pack("<?", r["refund"])
+    args += struct.pack("<I", num_arbiters)
+
+    vault_authority_pda, _ = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
+
+    accounts = [
+        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),
+        AccountMeta(config_pda, is_signer=False, is_writable=False),
+        AccountMeta(challenge_pda, is_signer=False, is_writable=True),
+        AccountMeta(vault_pda, is_signer=False, is_writable=True),
+        AccountMeta(vault_authority_pda, is_signer=False, is_writable=False),
+        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),
+        AccountMeta(TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
+    ]
+
+    # Remaining accounts: publisher ATA, refund ATAs, arbiter ATAs
+    publisher_ata = get_associated_token_address(publisher_pubkey, USDC_MINT)
+    accounts.append(AccountMeta(publisher_ata, is_signer=False, is_writable=True))
+
+    for r in refunds:
+        challenger_pubkey = Pubkey.from_string(r["challenger"])
+        challenger_ata = get_associated_token_address(challenger_pubkey, USDC_MINT)
+        accounts.append(AccountMeta(challenger_ata, is_signer=False, is_writable=True))
+
+    for a in arbiter_wallets:
+        arbiter_pubkey = Pubkey.from_string(a)
+        arbiter_ata = get_associated_token_address(arbiter_pubkey, USDC_MINT)
+        accounts.append(AccountMeta(arbiter_ata, is_signer=False, is_writable=True))
+
+    ix = build_instruction(ESCROW_PROGRAM_ID, "void_challenge", args, accounts)
+    tx = Transaction().add(ix)
+    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    sig = str(resp.value)
+    print(f"[escrow] voidChallenge({task_id}) tx={sig}", flush=True)
+    return sig
