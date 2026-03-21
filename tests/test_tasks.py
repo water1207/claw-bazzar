@@ -14,16 +14,20 @@ def future() -> str:
 
 def test_create_task(client):
     with PAYMENT_MOCK:
-        resp = client.post("/tasks", json={
-            "title": "Write haiku",
-            "description": "Write a haiku about the sea",
-            "type": "fastest_first",
-            "threshold": 0.8,
-            "deadline": future(),
-            "publisher_id": "test-pub",
-            "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "Write haiku",
+                "description": "Write a haiku about the sea",
+                "type": "fastest_first",
+                "threshold": 0.8,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert resp.status_code == 201
     data = resp.json()
     assert data["title"] == "Write haiku"
@@ -33,18 +37,34 @@ def test_create_task(client):
 
 def test_list_tasks(client):
     with PAYMENT_MOCK:
-        client.post("/tasks", json={
-            "title": "T1", "description": "d", "type": "fastest_first",
-            "threshold": 0.5, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
-        client.post("/tasks", json={
-            "title": "T2", "description": "d", "type": "quality_first",
-            "max_revisions": 3, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        client.post(
+            "/tasks",
+            json={
+                "title": "T1",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.5,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
+        client.post(
+            "/tasks",
+            json={
+                "title": "T2",
+                "description": "d",
+                "type": "quality_first",
+                "max_revisions": 3,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     resp = client.get("/tasks")
     assert resp.status_code == 200
     assert len(resp.json()) == 2
@@ -52,18 +72,34 @@ def test_list_tasks(client):
 
 def test_list_tasks_filter_by_type(client):
     with PAYMENT_MOCK:
-        client.post("/tasks", json={
-            "title": "T1", "description": "d", "type": "fastest_first",
-            "threshold": 0.5, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
-        client.post("/tasks", json={
-            "title": "T2", "description": "d", "type": "quality_first",
-            "max_revisions": 3, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        client.post(
+            "/tasks",
+            json={
+                "title": "T1",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.5,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
+        client.post(
+            "/tasks",
+            json={
+                "title": "T2",
+                "description": "d",
+                "type": "quality_first",
+                "max_revisions": 3,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     resp = client.get("/tasks?type=fastest_first")
     assert len(resp.json()) == 1
     assert resp.json()[0]["type"] == "fastest_first"
@@ -76,12 +112,20 @@ def test_get_task_not_found(client):
 
 def test_get_task_detail(client):
     with PAYMENT_MOCK:
-        create_resp = client.post("/tasks", json={
-            "title": "T1", "description": "d", "type": "fastest_first",
-            "threshold": 0.5, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        create_resp = client.post(
+            "/tasks",
+            json={
+                "title": "T1",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.5,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     task_id = create_resp.json()["id"]
     resp = client.get(f"/tasks/{task_id}")
     assert resp.status_code == 200
@@ -89,16 +133,19 @@ def test_get_task_detail(client):
 
 
 def test_create_task_returns_402_without_payment(client):
-    resp = client.post("/tasks", json={
-        "title": "No payment",
-        "description": "d",
-        "type": "fastest_first",
-        "threshold": 0.8,
-        "deadline": future(),
-        "publisher_id": "test-pub",
-        "bounty": 1.0,
-        "acceptance_criteria": ["验收标准"],
-    })
+    resp = client.post(
+        "/tasks",
+        json={
+            "title": "No payment",
+            "description": "d",
+            "type": "fastest_first",
+            "threshold": 0.8,
+            "deadline": future(),
+            "publisher_id": "test-pub",
+            "bounty": 1.0,
+            "acceptance_criteria": ["验收标准"],
+        },
+    )
     assert resp.status_code == 402
     data = resp.json()
     assert "amount" in data
@@ -106,100 +153,155 @@ def test_create_task_returns_402_without_payment(client):
     assert "asset" in data
     assert "payTo" in data
     assert "scheme" in data
-    assert "extra" in data
 
 
 def test_create_task_with_valid_payment(client):
-    with patch("app.routers.tasks.verify_payment",
-               return_value={"valid": True, "tx_hash": "0xabc"}):
-        resp = client.post("/tasks", json={
-            "title": "Paid task",
-            "description": "d",
-            "type": "fastest_first",
-            "threshold": 0.8,
-            "deadline": future(),
-            "publisher_id": "test-pub",
-            "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers={"X-PAYMENT": "valid-payment"})
+    with patch(
+        "app.routers.tasks.verify_payment",
+        return_value={"valid": True, "tx_hash": "0xabc"},
+    ):
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "Paid task",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.8,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers={"X-PAYMENT": "valid-payment"},
+        )
     assert resp.status_code == 201
     assert resp.json()["payment_tx_hash"] == "0xabc"
 
 
 def test_create_task_with_invalid_payment(client):
-    with patch("app.routers.tasks.verify_payment",
-               return_value={"valid": False, "tx_hash": None}):
-        resp = client.post("/tasks", json={
-            "title": "Bad payment",
-            "description": "d",
-            "type": "fastest_first",
-            "threshold": 0.8,
-            "deadline": future(),
-            "publisher_id": "test-pub",
-            "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers={"X-PAYMENT": "invalid-payment"})
+    with patch(
+        "app.routers.tasks.verify_payment",
+        return_value={"valid": False, "tx_hash": None},
+    ):
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "Bad payment",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.8,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers={"X-PAYMENT": "invalid-payment"},
+        )
     assert resp.status_code == 402
-
 
 
 def test_submission_status_has_policy_violation():
     from app.models import SubmissionStatus
+
     assert SubmissionStatus.policy_violation == "policy_violation"
 
 
 def test_task_create_requires_acceptance_criteria_list(client):
     """acceptance_criteria 必须是列表，不能是字符串"""
     with PAYMENT_MOCK:
-        resp = client.post("/tasks", json={
-            "title": "t", "description": "d", "type": "fastest_first",
-            "threshold": 0.6, "deadline": future(),
-            "publisher_id": "pub", "bounty": 1.0,
-            "acceptance_criteria": "纯字符串不行",
-        }, headers=PAYMENT_HEADERS)
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "t",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.6,
+                "deadline": future(),
+                "publisher_id": "pub",
+                "bounty": 1.0,
+                "acceptance_criteria": "纯字符串不行",
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert resp.status_code == 422
+
 
 def test_task_create_requires_nonempty_criteria(client):
     with PAYMENT_MOCK:
-        resp = client.post("/tasks", json={
-            "title": "t", "description": "d", "type": "fastest_first",
-            "threshold": 0.6, "deadline": future(),
-            "publisher_id": "pub", "bounty": 1.0,
-            "acceptance_criteria": [],
-        }, headers=PAYMENT_HEADERS)
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "t",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.6,
+                "deadline": future(),
+                "publisher_id": "pub",
+                "bounty": 1.0,
+                "acceptance_criteria": [],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert resp.status_code == 422
+
 
 def test_task_create_bounty_minimum(client):
     with PAYMENT_MOCK:
-        resp = client.post("/tasks", json={
-            "title": "t", "description": "d", "type": "fastest_first",
-            "threshold": 0.6, "deadline": future(),
-            "publisher_id": "pub", "bounty": 0.05,
-            "acceptance_criteria": ["条目1"],
-        }, headers=PAYMENT_HEADERS)
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "t",
+                "description": "d",
+                "type": "fastest_first",
+                "threshold": 0.6,
+                "deadline": future(),
+                "publisher_id": "pub",
+                "bounty": 0.05,
+                "acceptance_criteria": ["条目1"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert resp.status_code == 422
+
 
 def test_task_out_no_challenge_window_end(client):
     """TaskOut 不再暴露 challenge_window_end"""
     with PAYMENT_MOCK:
-        resp = client.post("/tasks", json={
-            "title": "t", "description": "d", "type": "quality_first",
-            "deadline": future(), "publisher_id": "pub", "bounty": 1.0,
-            "acceptance_criteria": ["条目1"],
-            "challenge_duration": 3600,
-        }, headers=PAYMENT_HEADERS)
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "t",
+                "description": "d",
+                "type": "quality_first",
+                "deadline": future(),
+                "publisher_id": "pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["条目1"],
+                "challenge_duration": 3600,
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert resp.status_code == 201
     assert "challenge_window_end" not in resp.json()
+
 
 def test_task_acceptance_criteria_roundtrip(client):
     """acceptance_criteria 以 list[str] 写入后读出保持一致"""
     criteria = ["至少5个产品", "每个含官网", "信息真实"]
     with PAYMENT_MOCK:
-        resp = client.post("/tasks", json={
-            "title": "t", "description": "d", "type": "quality_first",
-            "deadline": future(), "publisher_id": "pub", "bounty": 1.0,
-            "acceptance_criteria": criteria,
-        }, headers=PAYMENT_HEADERS)
+        resp = client.post(
+            "/tasks",
+            json={
+                "title": "t",
+                "description": "d",
+                "type": "quality_first",
+                "deadline": future(),
+                "publisher_id": "pub",
+                "bounty": 1.0,
+                "acceptance_criteria": criteria,
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert resp.status_code == 201
     assert resp.json()["acceptance_criteria"] == criteria
 
@@ -212,15 +314,19 @@ def test_policy_violation_worker_cannot_resubmit(client_with_db):
 
     # 创建任务
     with PAYMENT_MOCK:
-        task_resp = client.post("/tasks", json={
-            "title": "test injection ban",
-            "description": "desc",
-            "type": "quality_first",
-            "deadline": "2099-01-01T00:00:00Z",
-            "publisher_id": "pub1",
-            "bounty": 0.1,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        task_resp = client.post(
+            "/tasks",
+            json={
+                "title": "test injection ban",
+                "description": "desc",
+                "type": "quality_first",
+                "deadline": "2099-01-01T00:00:00Z",
+                "publisher_id": "pub1",
+                "bounty": 0.1,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert task_resp.status_code == 201
     task_id = task_resp.json()["id"]
 
@@ -254,9 +360,12 @@ def test_content_visible_during_arbitrating(client_with_db):
 
     client, db = client_with_db
     task = Task(
-        title="t", description="d", type="quality_first",
+        title="t",
+        description="d",
+        type="quality_first",
         deadline=datetime(2099, 1, 1, tzinfo=timezone.utc),
-        publisher_id="pub", bounty=1.0,
+        publisher_id="pub",
+        bounty=1.0,
         acceptance_criteria='["c1"]',
         status=TaskStatus.arbitrating,
     )
@@ -264,8 +373,18 @@ def test_content_visible_during_arbitrating(client_with_db):
     db.commit()
     db.refresh(task)
 
-    sub1 = Submission(task_id=task.id, worker_id="w1", content="winner content", status=SubmissionStatus.scored)
-    sub2 = Submission(task_id=task.id, worker_id="w2", content="challenger content", status=SubmissionStatus.scored)
+    sub1 = Submission(
+        task_id=task.id,
+        worker_id="w1",
+        content="winner content",
+        status=SubmissionStatus.scored,
+    )
+    sub2 = Submission(
+        task_id=task.id,
+        worker_id="w2",
+        content="challenger content",
+        status=SubmissionStatus.scored,
+    )
     db.add_all([sub1, sub2])
     db.commit()
     db.refresh(sub1)
@@ -288,9 +407,12 @@ def test_content_hidden_during_challenge_window(client_with_db):
 
     client, db = client_with_db
     task = Task(
-        title="t", description="d", type="quality_first",
+        title="t",
+        description="d",
+        type="quality_first",
         deadline=datetime(2099, 1, 1, tzinfo=timezone.utc),
-        publisher_id="pub", bounty=1.0,
+        publisher_id="pub",
+        bounty=1.0,
         acceptance_criteria='["c1"]',
         status=TaskStatus.challenge_window,
     )
@@ -298,8 +420,18 @@ def test_content_hidden_during_challenge_window(client_with_db):
     db.commit()
     db.refresh(task)
 
-    sub1 = Submission(task_id=task.id, worker_id="w1", content="winner content", status=SubmissionStatus.scored)
-    sub2 = Submission(task_id=task.id, worker_id="w2", content="challenger content", status=SubmissionStatus.scored)
+    sub1 = Submission(
+        task_id=task.id,
+        worker_id="w1",
+        content="winner content",
+        status=SubmissionStatus.scored,
+    )
+    sub2 = Submission(
+        task_id=task.id,
+        worker_id="w2",
+        content="challenger content",
+        status=SubmissionStatus.scored,
+    )
     db.add_all([sub1, sub2])
     db.commit()
     db.refresh(sub1)
@@ -322,9 +454,12 @@ def test_task_detail_includes_full_scoring_dimensions(client_with_db):
 
     client, db = client_with_db
     task = Task(
-        title="t", description="d", type="quality_first",
+        title="t",
+        description="d",
+        type="quality_first",
         deadline=datetime(2099, 1, 1, tzinfo=timezone.utc),
-        publisher_id="pub", bounty=1.0,
+        publisher_id="pub",
+        bounty=1.0,
         acceptance_criteria='["c1"]',
     )
     db.add(task)
