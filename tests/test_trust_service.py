@@ -4,8 +4,11 @@ import pytest
 from unittest.mock import patch
 from app.models import User, TrustEvent, TrustTier, TrustEventType, UserRole
 from app.services.trust import (
-    _multiplier, _compute_tier, apply_event,
-    get_challenge_deposit_rate, get_platform_fee_rate,
+    _multiplier,
+    _compute_tier,
+    apply_event,
+    get_challenge_deposit_rate,
+    get_platform_fee_rate,
     get_winner_payout_rate,
     check_permissions,
 )
@@ -56,8 +59,9 @@ def test_apply_event_worker_won(client):
 def test_apply_event_worker_consolation_cap(client):
     """Consolation is fixed +1, capped at 50 total."""
     db = next(next(iter(client.app.dependency_overrides.values()))())
-    user = User(nickname="w2", wallet="0x2", role=UserRole.worker,
-                consolation_total=49.0)
+    user = User(
+        nickname="w2", wallet="0x2", role=UserRole.worker, consolation_total=49.0
+    )
     db.add(user)
     db.commit()
 
@@ -103,8 +107,13 @@ def test_apply_event_challenger_won(client):
 def test_apply_event_score_clamp(client):
     """Score never exceeds 1000 or drops below 0."""
     db = next(next(iter(client.app.dependency_overrides.values()))())
-    user = User(nickname="clamp", wallet="0x5", role=UserRole.worker,
-                trust_score=980.0, trust_tier=TrustTier.S)
+    user = User(
+        nickname="clamp",
+        wallet="0x5",
+        role=UserRole.worker,
+        trust_score=980.0,
+        trust_tier=TrustTier.S,
+    )
     db.add(user)
     db.commit()
 
@@ -112,8 +121,13 @@ def test_apply_event_score_clamp(client):
     db.refresh(user)
     assert user.trust_score == 1000.0
 
-    user2 = User(nickname="clamp2", wallet="0x6", role=UserRole.worker,
-                 trust_score=50.0, trust_tier=TrustTier.C)
+    user2 = User(
+        nickname="clamp2",
+        wallet="0x6",
+        role=UserRole.worker,
+        trust_score=50.0,
+        trust_tier=TrustTier.C,
+    )
     db.add(user2)
     db.commit()
     event2 = apply_event(db, user2.id, TrustEventType.worker_malicious)
@@ -174,8 +188,13 @@ def test_get_winner_payout_rate():
 def test_check_permissions_c_level(client):
     """C-level users cannot accept tasks or challenge."""
     db = next(next(iter(client.app.dependency_overrides.values()))())
-    user = User(nickname="banned", wallet="0x8", role=UserRole.worker,
-                trust_score=100.0, trust_tier=TrustTier.C)
+    user = User(
+        nickname="banned",
+        wallet="0x8",
+        role=UserRole.worker,
+        trust_score=100.0,
+        trust_tier=TrustTier.C,
+    )
     db.add(user)
     db.commit()
 
@@ -187,8 +206,13 @@ def test_check_permissions_c_level(client):
 def test_check_permissions_b_level(client):
     """B-level users have 50 USDC cap."""
     db = next(next(iter(client.app.dependency_overrides.values()))())
-    user = User(nickname="warning", wallet="0x9", role=UserRole.worker,
-                trust_score=400.0, trust_tier=TrustTier.B)
+    user = User(
+        nickname="warning",
+        wallet="0x9",
+        role=UserRole.worker,
+        trust_score=400.0,
+        trust_tier=TrustTier.B,
+    )
     db.add(user)
     db.commit()
 
@@ -201,13 +225,22 @@ def test_check_permissions_b_level(client):
 def test_apply_event_auto_slash_below_300(client):
     """apply_event automatically triggers check_and_slash when score drops below 300."""
     from unittest.mock import patch
+
     db = next(next(iter(client.app.dependency_overrides.values()))())
-    user = User(nickname="slashme", wallet="0xSlash", role=UserRole.worker,
-                trust_score=350.0, trust_tier=TrustTier.B, staked_amount=50.0)
+    user = User(
+        nickname="slashme",
+        wallet="0xSlash",
+        role=UserRole.worker,
+        trust_score=350.0,
+        trust_tier=TrustTier.B,
+        staked_amount=50.0,
+    )
     db.add(user)
     db.commit()
 
-    with patch("app.services.staking.slash_onchain", return_value="0xfake") as mock_onchain:
+    with patch(
+        "app.services.staking.slash_onchain", return_value="5VERvFake"
+    ) as mock_onchain:
         apply_event(db, user.id, TrustEventType.worker_malicious)
 
     db.refresh(user)
@@ -220,9 +253,16 @@ def test_apply_event_auto_slash_below_300(client):
 def test_apply_event_no_slash_above_300(client):
     """apply_event does NOT trigger slash when score stays >= 300."""
     from unittest.mock import patch
+
     db = next(next(iter(client.app.dependency_overrides.values()))())
-    user = User(nickname="safeguy", wallet="0xSafe", role=UserRole.worker,
-                trust_score=500.0, trust_tier=TrustTier.A, staked_amount=50.0)
+    user = User(
+        nickname="safeguy",
+        wallet="0xSafe",
+        role=UserRole.worker,
+        trust_score=500.0,
+        trust_tier=TrustTier.A,
+        staked_amount=50.0,
+    )
     db.add(user)
     db.commit()
 

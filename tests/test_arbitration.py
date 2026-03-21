@@ -5,9 +5,17 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base
 from app.models import (
-    Task, Submission, Challenge, User,
-    TaskType, TaskStatus, SubmissionStatus, ChallengeStatus, ChallengeVerdict,
-    UserRole, PayoutStatus,
+    Task,
+    Submission,
+    Challenge,
+    User,
+    TaskType,
+    TaskStatus,
+    SubmissionStatus,
+    ChallengeStatus,
+    ChallengeVerdict,
+    UserRole,
+    PayoutStatus,
 )
 
 
@@ -27,29 +35,44 @@ def setup_arbitrating_task(db):
     db.flush()
 
     task = Task(
-        title="Q", description="d", type=TaskType.quality_first,
-        max_revisions=3, deadline=datetime.now(timezone.utc) - timedelta(hours=1),
-        bounty=10.0, submission_deposit=1.0, challenge_duration=7200,
+        title="Q",
+        description="d",
+        type=TaskType.quality_first,
+        max_revisions=3,
+        deadline=datetime.now(timezone.utc) - timedelta(hours=1),
+        bounty=10.0,
+        submission_deposit=1.0,
+        challenge_duration=7200,
         status=TaskStatus.arbitrating,
     )
     db.add(task)
     db.flush()
 
     s1 = Submission(
-        task_id=task.id, worker_id=user_w1.id, revision=1,
-        content="winner", score=0.9, status=SubmissionStatus.scored,
+        task_id=task.id,
+        worker_id=user_w1.id,
+        revision=1,
+        content="winner",
+        score=0.9,
+        status=SubmissionStatus.scored,
     )
     s2 = Submission(
-        task_id=task.id, worker_id=user_w2.id, revision=1,
-        content="challenger", score=0.7, status=SubmissionStatus.scored,
+        task_id=task.id,
+        worker_id=user_w2.id,
+        revision=1,
+        content="challenger",
+        score=0.7,
+        status=SubmissionStatus.scored,
     )
     db.add_all([s1, s2])
     db.flush()
     task.winner_submission_id = s1.id
 
     challenge = Challenge(
-        task_id=task.id, challenger_submission_id=s2.id,
-        target_submission_id=s1.id, reason="I am better",
+        task_id=task.id,
+        challenger_submission_id=s2.id,
+        target_submission_id=s1.id,
+        reason="I am better",
     )
     db.add(challenge)
     db.commit()
@@ -68,6 +91,7 @@ def test_settle_upheld_changes_winner():
 
     with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
+
         quality_first_lifecycle(db=db)
 
     db.refresh(task)
@@ -76,9 +100,12 @@ def test_settle_upheld_changes_winner():
 
     # Challenger gets challenger_won trust event (weighted by bounty)
     from app.models import TrustEvent, TrustEventType
-    events = db.query(TrustEvent).filter_by(
-        user_id=w2.id, event_type=TrustEventType.challenger_won
-    ).all()
+
+    events = (
+        db.query(TrustEvent)
+        .filter_by(user_id=w2.id, event_type=TrustEventType.challenger_won)
+        .all()
+    )
     assert len(events) == 1
 
 
@@ -92,6 +119,7 @@ def test_settle_rejected_deducts_deposit():
 
     with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
+
         quality_first_lifecycle(db=db)
 
     db.refresh(task)
@@ -107,9 +135,12 @@ def test_settle_malicious_confiscates_deposit_and_credit():
     challenge.status = ChallengeStatus.judged
     db.commit()
 
-    with patch("app.scheduler._resolve_via_contract"), \
-         patch("app.services.staking.slash_onchain", return_value="0xslash"):
+    with (
+        patch("app.scheduler._resolve_via_contract"),
+        patch("app.services.staking.slash_onchain", return_value="5VERvSlash"),
+    ):
         from app.scheduler import quality_first_lifecycle
+
         quality_first_lifecycle(db=db)
 
     db.refresh(task)
@@ -118,9 +149,12 @@ def test_settle_malicious_confiscates_deposit_and_credit():
 
     # Challenger gets challenger_malicious trust event (-100)
     from app.models import TrustEvent, TrustEventType
-    events = db.query(TrustEvent).filter_by(
-        user_id=w2.id, event_type=TrustEventType.challenger_malicious
-    ).all()
+
+    events = (
+        db.query(TrustEvent)
+        .filter_by(user_id=w2.id, event_type=TrustEventType.challenger_malicious)
+        .all()
+    )
     assert len(events) == 1
     db.refresh(w2)
     assert w2.trust_score == 400.0  # 500 - 100
@@ -135,40 +169,71 @@ def test_settle_multiple_upheld_picks_highest():
     db.flush()
 
     task = Task(
-        title="Q", description="d", type=TaskType.quality_first,
-        max_revisions=3, deadline=datetime.now(timezone.utc) - timedelta(hours=1),
-        bounty=10.0, submission_deposit=1.0,
+        title="Q",
+        description="d",
+        type=TaskType.quality_first,
+        max_revisions=3,
+        deadline=datetime.now(timezone.utc) - timedelta(hours=1),
+        bounty=10.0,
+        submission_deposit=1.0,
         status=TaskStatus.arbitrating,
     )
     db.add(task)
     db.flush()
 
-    s1 = Submission(task_id=task.id, worker_id=user_w1.id, revision=1,
-                    content="a", score=0.9, status=SubmissionStatus.scored)
-    s2 = Submission(task_id=task.id, worker_id=user_w2.id, revision=1,
-                    content="b", score=0.7, status=SubmissionStatus.scored)
-    s3 = Submission(task_id=task.id, worker_id=user_w3.id, revision=1,
-                    content="c", score=0.8, status=SubmissionStatus.scored)
+    s1 = Submission(
+        task_id=task.id,
+        worker_id=user_w1.id,
+        revision=1,
+        content="a",
+        score=0.9,
+        status=SubmissionStatus.scored,
+    )
+    s2 = Submission(
+        task_id=task.id,
+        worker_id=user_w2.id,
+        revision=1,
+        content="b",
+        score=0.7,
+        status=SubmissionStatus.scored,
+    )
+    s3 = Submission(
+        task_id=task.id,
+        worker_id=user_w3.id,
+        revision=1,
+        content="c",
+        score=0.8,
+        status=SubmissionStatus.scored,
+    )
     db.add_all([s1, s2, s3])
     db.flush()
     task.winner_submission_id = s1.id
 
-    c1 = Challenge(task_id=task.id, challenger_submission_id=s2.id,
-                   target_submission_id=s1.id, reason="r1",
-                   verdict=ChallengeVerdict.upheld, arbiter_score=0.88,
-                   status=ChallengeStatus.judged)
-    c2 = Challenge(task_id=task.id, challenger_submission_id=s3.id,
-                   target_submission_id=s1.id, reason="r2",
-                   verdict=ChallengeVerdict.upheld, arbiter_score=0.95,
-                   status=ChallengeStatus.judged)
+    c1 = Challenge(
+        task_id=task.id,
+        challenger_submission_id=s2.id,
+        target_submission_id=s1.id,
+        reason="r1",
+        verdict=ChallengeVerdict.upheld,
+        arbiter_score=0.88,
+        status=ChallengeStatus.judged,
+    )
+    c2 = Challenge(
+        task_id=task.id,
+        challenger_submission_id=s3.id,
+        target_submission_id=s1.id,
+        reason="r2",
+        verdict=ChallengeVerdict.upheld,
+        arbiter_score=0.95,
+        status=ChallengeStatus.judged,
+    )
     db.add_all([c1, c2])
     db.commit()
 
     with patch("app.scheduler._resolve_via_contract"):
         from app.scheduler import quality_first_lifecycle
+
         quality_first_lifecycle(db=db)
 
     db.refresh(task)
     assert task.winner_submission_id == s3.id  # w3 had higher arbiter_score
-
-

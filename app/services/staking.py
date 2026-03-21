@@ -1,88 +1,75 @@
 import os
+import struct
+import base64
 import logging
 from sqlalchemy.orm import Session
 from app.models import User, StakeRecord, StakePurpose, TrustTier
 from app.services.trust import apply_event, TrustEventType
+from app.services.solana_utils import (
+    get_client,
+    get_platform_keypair,
+    get_associated_token_address,
+    find_pda,
+    build_instruction,
+    usdc_to_lamports,
+    USDC_MINT,
+)
+from solders.pubkey import Pubkey
+from solders.instruction import AccountMeta
+from solders.transaction import Transaction
+from solana.rpc.types import TxOpts
+from spl.token.constants import TOKEN_PROGRAM_ID
 
 logger = logging.getLogger(__name__)
 
 ARBITER_STAKE_AMOUNT = 100.0  # USDC
+STAKING_PROGRAM_ID = Pubkey.from_string(
+    os.environ.get("STAKING_PROGRAM_ID", "11111111111111111111111111111111")
+)
 
 
-def stake_onchain(wallet: str, amount: float, deadline: int,
-                  v: int, r: str, s: str) -> str:
-    """Call StakingVault.stake() on-chain. Returns tx hash."""
-    from web3 import Web3
-    rpc = os.environ.get("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org")
-    w3 = Web3(Web3.HTTPProvider(rpc))
-    contract_addr = os.environ.get("STAKING_CONTRACT_ADDRESS", "")
-    private_key = os.environ.get("PLATFORM_PRIVATE_KEY", "")
-
-    abi = [{
-        "inputs": [
-            {"name": "user", "type": "address"},
-            {"name": "amount", "type": "uint256"},
-            {"name": "deadline", "type": "uint256"},
-            {"name": "v", "type": "uint8"},
-            {"name": "r", "type": "bytes32"},
-            {"name": "s", "type": "bytes32"},
-        ],
-        "name": "stake",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function",
-    }]
-
-    contract = w3.eth.contract(address=contract_addr, abi=abi)
-    amount_wei = int(amount * 1e6)
-    account = w3.eth.account.from_key(private_key)
-
-    tx = contract.functions.stake(
-        wallet, amount_wei, deadline, v,
-        bytes.fromhex(r[2:]) if r.startswith("0x") else bytes.fromhex(r),
-        bytes.fromhex(s[2:]) if s.startswith("0x") else bytes.fromhex(s),
-    ).build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 200000,
-    })
-    signed = w3.eth.account.sign_transaction(tx, private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    return tx_hash.hex()
+def stake_onchain(signed_transaction: str) -> str:
+    """Submit a pre-signed stake transaction. Returns tx signature."""
+    client = get_client()
+    raw_tx = base64.b64decode(signed_transaction)
+    resp = client.send_raw_transaction(raw_tx, opts=TxOpts(skip_confirmation=False))
+    return str(resp.value)
 
 
 def slash_onchain(wallet: str) -> str:
-    """Call StakingVault.slash() on-chain. Returns tx hash."""
-    from web3 import Web3
-    rpc = os.environ.get("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org")
-    w3 = Web3(Web3.HTTPProvider(rpc))
-    contract_addr = os.environ.get("STAKING_CONTRACT_ADDRESS", "")
-    private_key = os.environ.get("PLATFORM_PRIVATE_KEY", "")
+    """Call StakingVault slash instruction. Platform authority signs."""
+    client = get_client()
+    payer = get_platform_keypair()
+    user_pubkey = Pubkey.from_string(wallet)
 
-    abi = [{
-        "inputs": [{"name": "user", "type": "address"}],
-        "name": "slash",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function",
-    }]
+    config_pda, _ = find_pda([b"config"], STAKING_PROGRAM_ID)
+    stake_record_pda, _ = find_pda([b"stake", bytes(user_pubkey)], STAKING_PROGRAM_ID)
+    vault_authority_pda, _ = find_pda([b"vault_authority"], STAKING_PROGRAM_ID)
+    vault_ata = get_associated_token_address(vault_authority_pda, USDC_MINT)
+    platform_ata = get_associated_token_address(payer.pubkey(), USDC_MINT)
 
-    contract = w3.eth.contract(address=contract_addr, abi=abi)
-    account = w3.eth.account.from_key(private_key)
+    accounts = [
+        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),
+        AccountMeta(config_pda, is_signer=False, is_writable=False),
+        AccountMeta(stake_record_pda, is_signer=False, is_writable=True),
+        AccountMeta(vault_authority_pda, is_signer=False, is_writable=False),
+        AccountMeta(vault_ata, is_signer=False, is_writable=True),
+        AccountMeta(platform_ata, is_signer=False, is_writable=True),
+        AccountMeta(user_pubkey, is_signer=False, is_writable=False),
+        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),
+        AccountMeta(TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
+    ]
 
-    tx = contract.functions.slash(wallet).build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 200000,
-    })
-    signed = w3.eth.account.sign_transaction(tx, private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    return tx_hash.hex()
+    ix = build_instruction(STAKING_PROGRAM_ID, "slash", b"", accounts)
+    tx = Transaction().add(ix)
+    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    return str(resp.value)
 
 
 def stake_for_arbiter(
-    db: Session, user_id: str,
-    deadline: int, v: int, r: str, s: str,
+    db: Session,
+    user_id: str,
+    signed_transaction: str,
 ) -> StakeRecord:
     """Stake 100 USDC for Arbiter registration."""
     user = db.query(User).filter_by(id=user_id).one()
@@ -94,8 +81,7 @@ def stake_for_arbiter(
     if user.is_arbiter:
         raise ValueError("Already an Arbiter")
 
-    tx_hash = stake_onchain(user.wallet, ARBITER_STAKE_AMOUNT,
-                            deadline, v, r, s)
+    tx_hash = stake_onchain(signed_transaction)
 
     user.staked_amount += ARBITER_STAKE_AMOUNT
     user.is_arbiter = True
@@ -113,17 +99,17 @@ def stake_for_arbiter(
 
 
 def stake_for_credit(
-    db: Session, user_id: str, amount: float,
-    deadline: int, v: int, r: str, s: str,
+    db: Session,
+    user_id: str,
+    amount: float,
+    signed_transaction: str,
 ) -> StakeRecord:
     """Stake USDC for credit recharge (+50 per $50, cap +100)."""
     user = db.query(User).filter_by(id=user_id).one()
 
-    tx_hash = stake_onchain(user.wallet, amount, deadline, v, r, s)
+    tx_hash = stake_onchain(signed_transaction)
 
     user.staked_amount += amount
-
-    # Apply stake bonus via TrustService
     apply_event(db, user_id, TrustEventType.stake_bonus, stake_amount=amount)
 
     record = StakeRecord(
@@ -145,7 +131,6 @@ def check_and_slash(db: Session, user_id: str) -> bool:
     if user.trust_score >= 300 or user.staked_amount <= 0:
         return False
 
-    # Capture original staked amount before apply_event zeroes it
     original_staked = user.staked_amount
 
     try:
@@ -154,10 +139,8 @@ def check_and_slash(db: Session, user_id: str) -> bool:
         logger.error(f"Slash on-chain failed for {user_id}: {e}")
         tx_hash = None
 
-    # Apply stake_slash event (removes stake_bonus)
     apply_event(db, user_id, TrustEventType.stake_slash)
 
-    # Record the slash
     record = StakeRecord(
         user_id=user_id,
         amount=original_staked,
@@ -176,39 +159,40 @@ def check_and_slash(db: Session, user_id: str) -> bool:
 
 
 def unstake(db: Session, user_id: str, amount: float) -> StakeRecord:
-    """Unstake USDC from the vault."""
+    """Unstake USDC from the vault. Platform authority signs unstake instruction."""
     user = db.query(User).filter_by(id=user_id).one()
     if user.staked_amount < amount:
         raise ValueError("Insufficient staked amount")
 
-    from web3 import Web3
-    rpc = os.environ.get("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org")
-    w3 = Web3(Web3.HTTPProvider(rpc))
-    contract_addr = os.environ.get("STAKING_CONTRACT_ADDRESS", "")
-    private_key = os.environ.get("PLATFORM_PRIVATE_KEY", "")
+    client = get_client()
+    payer = get_platform_keypair()
+    user_pubkey = Pubkey.from_string(user.wallet)
 
-    abi = [{
-        "inputs": [
-            {"name": "user", "type": "address"},
-            {"name": "amount", "type": "uint256"},
-        ],
-        "name": "unstake",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function",
-    }]
+    config_pda, _ = find_pda([b"config"], STAKING_PROGRAM_ID)
+    stake_record_pda, _ = find_pda([b"stake", bytes(user_pubkey)], STAKING_PROGRAM_ID)
+    vault_authority_pda, _ = find_pda([b"vault_authority"], STAKING_PROGRAM_ID)
+    vault_ata = get_associated_token_address(vault_authority_pda, USDC_MINT)
+    user_ata = get_associated_token_address(user_pubkey, USDC_MINT)
 
-    contract = w3.eth.contract(address=contract_addr, abi=abi)
-    amount_wei = int(amount * 1e6)
-    account = w3.eth.account.from_key(private_key)
+    amount_lamports = usdc_to_lamports(amount)
+    args = struct.pack("<Q", amount_lamports)
 
-    tx = contract.functions.unstake(user.wallet, amount_wei).build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 200000,
-    })
-    signed = w3.eth.account.sign_transaction(tx, private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    accounts = [
+        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),
+        AccountMeta(config_pda, is_signer=False, is_writable=False),
+        AccountMeta(stake_record_pda, is_signer=False, is_writable=True),
+        AccountMeta(vault_authority_pda, is_signer=False, is_writable=False),
+        AccountMeta(vault_ata, is_signer=False, is_writable=True),
+        AccountMeta(user_ata, is_signer=False, is_writable=True),
+        AccountMeta(user_pubkey, is_signer=False, is_writable=False),
+        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),
+        AccountMeta(TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
+    ]
+
+    ix = build_instruction(STAKING_PROGRAM_ID, "unstake", args, accounts)
+    tx = Transaction().add(ix)
+    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    tx_hash = str(resp.value)
 
     user.staked_amount -= amount
     if user.is_arbiter and user.staked_amount < ARBITER_STAKE_AMOUNT:
@@ -218,7 +202,7 @@ def unstake(db: Session, user_id: str, amount: float) -> StakeRecord:
         user_id=user_id,
         amount=amount,
         purpose=StakePurpose.credit_recharge,
-        tx_hash=tx_hash.hex(),
+        tx_hash=tx_hash,
     )
     db.add(record)
     db.commit()
