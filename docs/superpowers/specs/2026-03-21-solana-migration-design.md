@@ -105,7 +105,7 @@
 - `join_challenge(task_id, deposit_amount)` — 挑战者签名，从自己的 ATA 转入 escrow（+ 0.01 USDC 服务费），无需 Permit（Solana 交易本身就是签名授权）
 - `resolve_challenge(task_id, final_winner, winner_payout, refunds[], arbiters[], arbiter_reward)` — 平台签名，从 escrow 分发给各方
 - `void_challenge(task_id, publisher, publisher_refund, refunds[], arbiters[], arbiter_reward)` — 平台签名，退款 + 分发
-- `emergency_withdraw(task_id)` — 30 天超时回收
+- `emergency_withdraw(task_id)` — **平台 authority 签名**，30 天超时后可回收
 
 ### 关键差异 vs Solidity
 
@@ -281,7 +281,7 @@ Anchor.toml         → 新建（Anchor 配置）
 | `X402_NETWORK=eip155:84532` | `X402_NETWORK=solana-devnet` |
 | `USDC_CONTRACT=0x036C...` | `USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
 | `PLATFORM_WALLET=0x32dD...` | `PLATFORM_WALLET=<Base58 pubkey>` |
-| `PLATFORM_PRIVATE_KEY=0x...` | `PLATFORM_PRIVATE_KEY=<Base58 keypair>` |
+| `PLATFORM_PRIVATE_KEY=0x...` | `PLATFORM_PRIVATE_KEY=<JSON 字节数组, 64 字节>` |
 | `BASE_SEPOLIA_RPC_URL` | `SOLANA_RPC_URL=https://api.devnet.solana.com` |
 | `ESCROW_CONTRACT_ADDRESS` | `ESCROW_PROGRAM_ID=<program pubkey>` |
 | `STAKING_CONTRACT_ADDRESS` | `STAKING_PROGRAM_ID=<program pubkey>` |
@@ -315,7 +315,7 @@ Anchor.toml         → 新建（Anchor 配置）
 - `app/services/staking.py` — solana-py 原生指令构造
 - `app/schemas.py` — 移除 Permit 字段，新增 signed_transaction；移除地址 .lower()
 - `app/routers/challenges.py` — Permit 流程 → signed_transaction 上链
-- `app/routers/trust.py` — staking Permit 流程重写
+- `app/routers/trust.py` — 新增 staking API 端点（当前无 staking 路由，需新建）
 - `frontend/lib/x402.ts` — @solana/web3.js 签名
 - `frontend/lib/utils.ts` — Solana RPC 余额查询
 - `frontend/lib/dev-wallets.ts` — Solana keypair 格式
@@ -327,6 +327,7 @@ Anchor.toml         → 新建（Anchor 配置）
 - `app/routers/users.py` — 地址查重去掉 .lower()
 - `app/scheduler.py` — 调用签名不变，可能需微调
 - `frontend/components/ChallengePanel.tsx` — 地址格式 + 签名流程
+- `frontend/components/BalanceTrustHistoryPanel.tsx` — explorer 链接改为 Solana Devnet
 - `frontend/components/SettlementPanel.tsx` — explorer 链接改为 Solana Devnet
 - `frontend/components/TaskDetail.tsx` — explorer 链接改为 Solana Devnet
 - `frontend/components/LeaderboardTable.tsx` — 地址截断适配
