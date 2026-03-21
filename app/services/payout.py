@@ -1,51 +1,77 @@
 import os
 from typing import Optional
-from web3 import Web3
 from sqlalchemy.orm import Session
 from ..models import Task, Submission, User, PayoutStatus
 
-PLATFORM_PRIVATE_KEY = os.environ.get("PLATFORM_PRIVATE_KEY", "")
-PLATFORM_WALLET = os.environ.get("PLATFORM_WALLET", "")
-RPC_URL = os.environ.get("BASE_SEPOLIA_RPC_URL", "https://sepolia.base.org")
-USDC_CONTRACT = os.environ.get("USDC_CONTRACT", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+from .solana_utils import (
+    get_client,
+    get_platform_keypair,
+    get_associated_token_address,
+    usdc_to_lamports,
+    USDC_MINT,
+)
+from solders.pubkey import Pubkey
+from solders.message import Message
+from solders.transaction import Transaction
+from spl.token.instructions import (
+    transfer_checked,
+    TransferCheckedParams,
+    create_associated_token_account,
+)
+from spl.token.constants import TOKEN_PROGRAM_ID
+
 PLATFORM_FEE_RATE = float(os.environ.get("PLATFORM_FEE_RATE", "0.20"))
 
-# Minimal ERC-20 ABI for transfer
-ERC20_TRANSFER_ABI = [
-    {
-        "constant": False,
-        "inputs": [
-            {"name": "to", "type": "address"},
-            {"name": "amount", "type": "uint256"},
-        ],
-        "name": "transfer",
-        "outputs": [{"name": "", "type": "bool"}],
-        "type": "function",
-    }
-]
+# USDC has 6 decimals
+USDC_DECIMALS = 6
 
 
 def _send_usdc_transfer(to_address: str, amount: float) -> str:
-    """Send USDC transfer on-chain. Returns tx hash. Separated for mocking."""
-    w3 = Web3(Web3.HTTPProvider(RPC_URL))
-    contract = w3.eth.contract(
-        address=Web3.to_checksum_address(USDC_CONTRACT), abi=ERC20_TRANSFER_ABI
+    """Send USDC SPL Token transfer on Solana. Returns tx signature string. Separated for mocking."""
+    client = get_client()
+    platform_keypair = get_platform_keypair()
+    platform_pubkey = platform_keypair.pubkey()
+
+    recipient_pubkey = Pubkey.from_string(to_address)
+
+    sender_ata = get_associated_token_address(platform_pubkey, USDC_MINT)
+    recipient_ata = get_associated_token_address(recipient_pubkey, USDC_MINT)
+
+    # Check if recipient ATA exists; create it if not
+    instructions = []
+    account_info = client.get_account_info(recipient_ata)
+    if account_info.value is None:
+        create_ata_ix = create_associated_token_account(
+            payer=platform_pubkey,
+            owner=recipient_pubkey,
+            mint=USDC_MINT,
+        )
+        instructions.append(create_ata_ix)
+
+    # Build transfer_checked instruction
+    transfer_ix = transfer_checked(
+        TransferCheckedParams(
+            program_id=TOKEN_PROGRAM_ID,
+            source=sender_ata,
+            mint=USDC_MINT,
+            dest=recipient_ata,
+            owner=platform_pubkey,
+            amount=usdc_to_lamports(amount),
+            decimals=USDC_DECIMALS,
+        )
     )
-    # USDC has 6 decimals
-    amount_wei = int(amount * 10**6)
-    account = w3.eth.account.from_key(PLATFORM_PRIVATE_KEY)
-    tx = contract.functions.transfer(
-        Web3.to_checksum_address(to_address), amount_wei
-    ).build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 100_000,
-        "gasPrice": w3.eth.gas_price,
-    })
-    signed = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-    return tx_hash.hex()
+    instructions.append(transfer_ix)
+
+    # Get recent blockhash and build transaction
+    recent_blockhash_resp = client.get_latest_blockhash()
+    recent_blockhash = recent_blockhash_resp.value.blockhash
+
+    message = Message(instructions, platform_pubkey)
+    tx = Transaction([platform_keypair], message, recent_blockhash)
+
+    # Send and confirm transaction
+    resp = client.send_transaction(tx)
+    return str(resp.value)
 
 
 def refund_publisher(db: Session, task_id: str, rate: float = 1.0) -> None:
@@ -82,9 +108,9 @@ def pay_winner(db: Session, task_id: str) -> None:
     if task.payout_status == PayoutStatus.paid:
         return
 
-    submission = db.query(Submission).filter(
-        Submission.id == task.winner_submission_id
-    ).first()
+    submission = (
+        db.query(Submission).filter(Submission.id == task.winner_submission_id).first()
+    )
     if not submission:
         return
 
@@ -93,6 +119,7 @@ def pay_winner(db: Session, task_id: str) -> None:
         return
 
     from .trust import get_winner_payout_rate
+
     try:
         rate = get_winner_payout_rate(winner.trust_tier)
     except ValueError:
