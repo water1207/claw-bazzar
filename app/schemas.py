@@ -7,14 +7,21 @@ from pydantic import BaseModel, model_validator, field_validator, PlainSerialize
 def _utc_iso(dt: datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.isoformat().replace('+00:00', 'Z')
+    return dt.isoformat().replace("+00:00", "Z")
 
 
 UTCDatetime = Annotated[datetime, PlainSerializer(_utc_iso, return_type=str)]
 from .models import (
-    TaskType, TaskStatus, SubmissionStatus, UserRole, PayoutStatus,
-    ChallengeVerdict, ChallengeStatus,
-    TrustTier, TrustEventType, StakePurpose,
+    TaskType,
+    TaskStatus,
+    SubmissionStatus,
+    UserRole,
+    PayoutStatus,
+    ChallengeVerdict,
+    ChallengeStatus,
+    TrustTier,
+    TrustEventType,
+    StakePurpose,
 )
 
 
@@ -25,8 +32,11 @@ class UserCreate(BaseModel):
 
     @field_validator("wallet")
     @classmethod
-    def normalize_wallet(cls, v: str) -> str:
-        return v.lower()
+    def validate_wallet(cls, v: str) -> str:
+        # Solana Base58 addresses are case-sensitive, no lowering
+        if not v or len(v) < 32 or len(v) > 44:
+            raise ValueError("Invalid Solana wallet address")
+        return v
 
 
 class UserOut(BaseModel):
@@ -57,14 +67,14 @@ class TaskCreate(BaseModel):
     challenge_duration: Optional[int] = None
     acceptance_criteria: list[str]
 
-    @field_validator('acceptance_criteria')
+    @field_validator("acceptance_criteria")
     @classmethod
     def validate_criteria(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("acceptance_criteria must have at least one item")
         return v
 
-    @field_validator('bounty')
+    @field_validator("bounty")
     @classmethod
     def bounty_minimum(cls, v: float) -> float:
         if v < 0.1:
@@ -116,21 +126,23 @@ class TaskOut(BaseModel):
     challenge_window_end: Optional[UTCDatetime] = None
     created_at: UTCDatetime
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def parse_acceptance_criteria(cls, values):
         if isinstance(values, dict):
-            raw = values.get('acceptance_criteria')
+            raw = values.get("acceptance_criteria")
             if isinstance(raw, str):
                 try:
                     parsed = json.loads(raw)
-                    values['acceptance_criteria'] = parsed if isinstance(parsed, list) else []
+                    values["acceptance_criteria"] = (
+                        parsed if isinstance(parsed, list) else []
+                    )
                 except (json.JSONDecodeError, ValueError):
-                    values['acceptance_criteria'] = []
+                    values["acceptance_criteria"] = []
             return values
         else:
             # ORM object: convert to dict without modifying original object
-            raw = getattr(values, 'acceptance_criteria', None)
+            raw = getattr(values, "acceptance_criteria", None)
             if isinstance(raw, str):
                 try:
                     parsed = json.loads(raw)
@@ -141,12 +153,13 @@ class TaskOut(BaseModel):
                 parsed = raw if isinstance(raw, list) else []
             # Extract all fields from ORM object into a dict
             from sqlalchemy.inspection import inspect as sa_inspect
+
             try:
                 mapper = sa_inspect(values.__class__)
                 d = {c.key: getattr(values, c.key) for c in mapper.mapper.column_attrs}
             except Exception:
-                d = {k: v for k, v in values.__dict__.items() if not k.startswith('_')}
-            d['acceptance_criteria'] = parsed
+                d = {k: v for k, v in values.__dict__.items() if not k.startswith("_")}
+            d["acceptance_criteria"] = parsed
             return d
 
     model_config = {"from_attributes": True}
@@ -182,11 +195,8 @@ class SubmissionOut(BaseModel):
 class ChallengeCreate(BaseModel):
     challenger_submission_id: str
     reason: str
-    challenger_wallet: str
-    permit_deadline: int
-    permit_v: int
-    permit_r: str
-    permit_s: str
+    challenger_wallet: Optional[str] = None
+    signed_transaction: Optional[str] = None  # base64-encoded signed Solana transaction
 
 
 class ChallengeOut(BaseModel):
@@ -282,10 +292,7 @@ class ArbiterVoteOut(BaseModel):
 class StakeRequest(BaseModel):
     amount: float
     purpose: StakePurpose
-    permit_deadline: Optional[int] = None
-    permit_v: Optional[int] = None
-    permit_r: Optional[str] = None
-    permit_s: Optional[str] = None
+    signed_transaction: str  # base64-encoded signed Solana transaction
 
 
 class TrustQuote(BaseModel):
@@ -313,6 +320,7 @@ class WeeklyLeaderboardEntry(BaseModel):
 
 class JuryVoteIn(BaseModel):
     """Input for merged arbitration vote."""
+
     arbiter_user_id: str
     winner_submission_id: str
     malicious_submission_ids: list[str] = []
@@ -327,6 +335,7 @@ class JuryVoteIn(BaseModel):
 
 class JuryBallotOut(BaseModel):
     """Response for a single jury ballot."""
+
     id: str
     task_id: str
     arbiter_user_id: str
@@ -343,6 +352,7 @@ class JuryBallotOut(BaseModel):
 
 class MaliciousTagOut(BaseModel):
     """Response for a malicious tag."""
+
     id: str
     task_id: str
     arbiter_user_id: str
@@ -354,15 +364,17 @@ class MaliciousTagOut(BaseModel):
 class SettlementSource(BaseModel):
     label: str
     amount: float
-    type: str           # "bounty" | "incentive" | "deposit"
+    type: str  # "bounty" | "incentive" | "deposit"
     verdict: Optional[str] = None  # "upheld" | "rejected" | "malicious"
+
 
 class SettlementDistribution(BaseModel):
     label: str
     amount: float
-    type: str           # "winner" | "refund" | "arbiter" | "platform" | "publisher_refund"
+    type: str  # "winner" | "refund" | "arbiter" | "platform" | "publisher_refund"
     wallet: Optional[str] = None
     nickname: Optional[str] = None
+
 
 class SettlementSummary(BaseModel):
     winner_payout: float
@@ -374,6 +386,7 @@ class SettlementSummary(BaseModel):
     arbiter_reward_total: float
     platform_fee: float
 
+
 class SettlementTrustChange(BaseModel):
     nickname: str
     user_id: str
@@ -381,6 +394,7 @@ class SettlementTrustChange(BaseModel):
     delta: float
     score_before: float
     score_after: float
+
 
 class SettlementOut(BaseModel):
     escrow_total: float

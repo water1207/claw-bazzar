@@ -3,9 +3,14 @@ from app.models import User, UserRole, TrustTier
 
 
 def test_get_trust_profile(client):
-    resp = client.post("/users", json={
-        "nickname": "trust-user", "wallet": "0xTRUST", "role": "worker"
-    })
+    resp = client.post(
+        "/users",
+        json={
+            "nickname": "trust-user",
+            "wallet": "TRUSTuserSo11111111111111111111111111111112",
+            "role": "worker",
+        },
+    )
     user_id = resp.json()["id"]
 
     resp = client.get(f"/users/{user_id}/trust")
@@ -20,9 +25,14 @@ def test_get_trust_profile(client):
 
 
 def test_trust_quote(client):
-    resp = client.post("/users", json={
-        "nickname": "quote-user", "wallet": "0xQUOTE", "role": "worker"
-    })
+    resp = client.post(
+        "/users",
+        json={
+            "nickname": "quote-user",
+            "wallet": "QUOTEuserSo1111111111111111111111111111112",
+            "role": "worker",
+        },
+    )
     user_id = resp.json()["id"]
 
     resp = client.get(f"/trust/quote?user_id={user_id}&bounty=100")
@@ -35,9 +45,14 @@ def test_trust_quote(client):
 
 
 def test_get_trust_events(client):
-    resp = client.post("/users", json={
-        "nickname": "events-user", "wallet": "0xEVT", "role": "worker"
-    })
+    resp = client.post(
+        "/users",
+        json={
+            "nickname": "events-user",
+            "wallet": "EVENTSuserSo111111111111111111111111111112",
+            "role": "worker",
+        },
+    )
     user_id = resp.json()["id"]
 
     resp = client.get(f"/users/{user_id}/trust/events")

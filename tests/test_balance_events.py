@@ -1,14 +1,23 @@
 from unittest.mock import patch
 
 
-PAYMENT_MOCK = patch("app.routers.tasks.verify_payment",
-                     return_value={"valid": True, "tx_hash": "0xtest123"})
+PAYMENT_MOCK = patch(
+    "app.routers.tasks.verify_payment",
+    return_value={"valid": True, "tx_hash": "0xtest123"},
+)
 PAYMENT_HEADERS = {"X-PAYMENT": "test"}
 
 
 def test_balance_events_empty(client):
     """New user with no activity has empty balance events."""
-    resp = client.post("/users", json={"nickname": "be-empty", "wallet": "0xBE0", "role": "worker"})
+    resp = client.post(
+        "/users",
+        json={
+            "nickname": "be-empty",
+            "wallet": "BE0userSoL1111111111111111111111111111112",
+            "role": "worker",
+        },
+    )
     user_id = resp.json()["id"]
 
     resp = client.get(f"/users/{user_id}/balance-events")
@@ -23,20 +32,31 @@ def test_balance_events_user_not_found(client):
 
 def test_balance_events_publisher_bounty(client):
     """Publisher who created a paid task sees bounty_paid event."""
-    pub = client.post("/users", json={"nickname": "be-pub", "wallet": "0xBEP", "role": "publisher"})
+    pub = client.post(
+        "/users",
+        json={
+            "nickname": "be-pub",
+            "wallet": "BEPubSoL11111111111111111111111111111111112",
+            "role": "publisher",
+        },
+    )
     pub_id = pub.json()["id"]
 
     with PAYMENT_MOCK:
-        task = client.post("/tasks", json={
-            "title": "BE Test Task",
-            "description": "test",
-            "type": "fastest_first",
-            "threshold": 0.8,
-            "deadline": "2099-01-01T00:00:00Z",
-            "publisher_id": pub_id,
-            "bounty": 5.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        task = client.post(
+            "/tasks",
+            json={
+                "title": "BE Test Task",
+                "description": "test",
+                "type": "fastest_first",
+                "threshold": 0.8,
+                "deadline": "2099-01-01T00:00:00Z",
+                "publisher_id": pub_id,
+                "bounty": 5.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     assert task.status_code == 201
 
     resp = client.get(f"/users/{pub_id}/balance-events")
@@ -54,34 +74,58 @@ def test_balance_events_publisher_bounty(client):
 
 def test_balance_events_worker_payout(client):
     """Worker who won a task sees payout_received event."""
-    pub = client.post("/users", json={"nickname": "be-pub2", "wallet": "0xBEP2", "role": "publisher"})
+    pub = client.post(
+        "/users",
+        json={
+            "nickname": "be-pub2",
+            "wallet": "BEPub2SoL1111111111111111111111111111111112",
+            "role": "publisher",
+        },
+    )
     pub_id = pub.json()["id"]
-    wrk = client.post("/users", json={"nickname": "be-wrk", "wallet": "0xBEW", "role": "worker"})
+    wrk = client.post(
+        "/users",
+        json={
+            "nickname": "be-wrk",
+            "wallet": "BEWrkSoL111111111111111111111111111111112",
+            "role": "worker",
+        },
+    )
     wrk_id = wrk.json()["id"]
 
     with PAYMENT_MOCK:
-        task_resp = client.post("/tasks", json={
-            "title": "Payout Test",
-            "description": "test",
-            "type": "fastest_first",
-            "threshold": 0.5,
-            "deadline": "2099-01-01T00:00:00Z",
-            "publisher_id": pub_id,
-            "bounty": 10.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        task_resp = client.post(
+            "/tasks",
+            json={
+                "title": "Payout Test",
+                "description": "test",
+                "type": "fastest_first",
+                "threshold": 0.5,
+                "deadline": "2099-01-01T00:00:00Z",
+                "publisher_id": pub_id,
+                "bounty": 10.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     task_id = task_resp.json()["id"]
 
     # Submit
-    sub_resp = client.post(f"/tasks/{task_id}/submissions", json={
-        "worker_id": wrk_id, "content": "answer",
-    })
+    sub_resp = client.post(
+        f"/tasks/{task_id}/submissions",
+        json={
+            "worker_id": wrk_id,
+            "content": "answer",
+        },
+    )
     sub_id = sub_resp.json()["id"]
 
     # Score above threshold → triggers payout
     with patch("app.services.payout._send_usdc_transfer", return_value="0xpayout123"):
-        client.post(f"/internal/submissions/{sub_id}/score",
-                    json={"score": 0.9, "feedback": "ok"})
+        client.post(
+            f"/internal/submissions/{sub_id}/score",
+            json={"score": 0.9, "feedback": "ok"},
+        )
 
     resp = client.get(f"/users/{wrk_id}/balance-events")
     data = resp.json()
@@ -97,27 +141,49 @@ def test_balance_events_worker_payout(client):
 
 def test_balance_events_no_submission_deposit(client):
     """Submitting to quality_first no longer creates deposit events."""
-    pub = client.post("/users", json={"nickname": "be-pub3", "wallet": "0xBEP3", "role": "publisher"})
+    pub = client.post(
+        "/users",
+        json={
+            "nickname": "be-pub3",
+            "wallet": "BEPub3SoL1111111111111111111111111111111112",
+            "role": "publisher",
+        },
+    )
     pub_id = pub.json()["id"]
-    wrk = client.post("/users", json={"nickname": "be-wrk2", "wallet": "0xBEW2", "role": "worker"})
+    wrk = client.post(
+        "/users",
+        json={
+            "nickname": "be-wrk2",
+            "wallet": "BEWrk2SoL11111111111111111111111111111112",
+            "role": "worker",
+        },
+    )
     wrk_id = wrk.json()["id"]
 
     with PAYMENT_MOCK:
-        task_resp = client.post("/tasks", json={
-            "title": "Deposit Test",
-            "description": "test",
-            "type": "quality_first",
-            "threshold": 0.8,
-            "deadline": "2099-01-01T00:00:00Z",
-            "publisher_id": pub_id,
-            "bounty": 10.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS)
+        task_resp = client.post(
+            "/tasks",
+            json={
+                "title": "Deposit Test",
+                "description": "test",
+                "type": "quality_first",
+                "threshold": 0.8,
+                "deadline": "2099-01-01T00:00:00Z",
+                "publisher_id": pub_id,
+                "bounty": 10.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        )
     task_id = task_resp.json()["id"]
 
-    client.post(f"/tasks/{task_id}/submissions", json={
-        "worker_id": wrk_id, "content": "my work",
-    })
+    client.post(
+        f"/tasks/{task_id}/submissions",
+        json={
+            "worker_id": wrk_id,
+            "content": "my work",
+        },
+    )
 
     resp = client.get(f"/users/{wrk_id}/balance-events")
     data = resp.json()

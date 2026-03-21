@@ -4,7 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import User, Submission, Task, TaskStatus, PayoutStatus, SubmissionStatus, UserRole
+from ..models import (
+    User,
+    Submission,
+    Task,
+    TaskStatus,
+    PayoutStatus,
+    SubmissionStatus,
+    UserRole,
+)
 from ..schemas import UserCreate, UserOut, UserStats
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -26,9 +34,7 @@ def get_user_by_nickname(nickname: str = Query(...), db: Session = Depends(get_d
 @router.post("", response_model=UserOut)
 def register_user(data: UserCreate, response: Response, db: Session = Depends(get_db)):
     # Check if same wallet already registered (any role) — one wallet = one identity
-    existing_wallet = db.query(User).filter(
-        func.lower(User.wallet) == data.wallet.lower()
-    ).first()
+    existing_wallet = db.query(User).filter(User.wallet == data.wallet).first()
     if existing_wallet:
         # Same wallet + same role: idempotent return
         if existing_wallet.role == data.role:
@@ -75,7 +81,8 @@ def get_user_stats(user_id: str, db: Session = Depends(get_db)):
 
     # Submissions by this user
     sub_ids = [
-        s.id for s in db.query(Submission.id).filter(Submission.worker_id == user_id).all()
+        s.id
+        for s in db.query(Submission.id).filter(Submission.worker_id == user_id).all()
     ]
 
     # Tasks won
@@ -91,7 +98,11 @@ def get_user_stats(user_id: str, db: Session = Depends(get_db)):
             .all()
         )
         tasks_won = len(won_tasks)
-        total_earned = sum(t.payout_amount or 0 for t in won_tasks if t.payout_status == PayoutStatus.paid)
+        total_earned = sum(
+            t.payout_amount or 0
+            for t in won_tasks
+            if t.payout_status == PayoutStatus.paid
+        )
 
     win_rate = tasks_won / tasks_participated if tasks_participated > 0 else 0.0
 

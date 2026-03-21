@@ -3,7 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
-from ..models import Task, Submission, Challenge, User, TaskStatus, JuryBallot, MaliciousTag
+from ..models import (
+    Task,
+    Submission,
+    Challenge,
+    User,
+    TaskStatus,
+    JuryBallot,
+    MaliciousTag,
+)
 from ..schemas import ChallengeCreate, ChallengeOut, JuryVoteIn, JuryBallotOut
 from ..services.escrow import check_usdc_balance, join_challenge_onchain
 from ..services.trust import check_permissions, get_challenge_deposit_rate
@@ -14,7 +22,9 @@ SERVICE_FEE = 0.01  # 0.01 USDC
 router = APIRouter(tags=["challenges"])
 
 
-@router.post("/tasks/{task_id}/challenges", response_model=ChallengeOut, status_code=201)
+@router.post(
+    "/tasks/{task_id}/challenges", response_model=ChallengeOut, status_code=201
+)
 def create_challenge(
     task_id: str,
     data: ChallengeCreate,
@@ -25,44 +35,66 @@ def create_challenge(
         raise HTTPException(status_code=404, detail="Task not found")
 
     if task.status != TaskStatus.challenge_window:
-        raise HTTPException(status_code=400, detail="Task is not in challenge_window state")
+        raise HTTPException(
+            status_code=400, detail="Task is not in challenge_window state"
+        )
 
     if task.challenge_window_end:
-        end = task.challenge_window_end if task.challenge_window_end.tzinfo else task.challenge_window_end.replace(tzinfo=timezone.utc)
+        end = (
+            task.challenge_window_end
+            if task.challenge_window_end.tzinfo
+            else task.challenge_window_end.replace(tzinfo=timezone.utc)
+        )
         if datetime.now(timezone.utc) > end:
             raise HTTPException(status_code=400, detail="Challenge window has closed")
 
     # Verify challenger submission belongs to this task
-    challenger_sub = db.query(Submission).filter(
-        Submission.id == data.challenger_submission_id,
-        Submission.task_id == task_id,
-    ).first()
+    challenger_sub = (
+        db.query(Submission)
+        .filter(
+            Submission.id == data.challenger_submission_id,
+            Submission.task_id == task_id,
+        )
+        .first()
+    )
     if not challenger_sub:
-        raise HTTPException(status_code=400, detail="Challenger submission not found in this task")
+        raise HTTPException(
+            status_code=400, detail="Challenger submission not found in this task"
+        )
 
     # Trust-based permission check for challenger
     challenger_user = db.query(User).filter_by(id=challenger_sub.worker_id).first()
     if challenger_user:
         perms = check_permissions(challenger_user)
         if not perms["can_challenge"]:
-            raise HTTPException(status_code=403, detail="Your trust level does not allow challenging")
+            raise HTTPException(
+                status_code=403, detail="Your trust level does not allow challenging"
+            )
 
     # Cannot challenge yourself
     if data.challenger_submission_id == task.winner_submission_id:
-        raise HTTPException(status_code=400, detail="Winner cannot challenge themselves")
+        raise HTTPException(
+            status_code=400, detail="Winner cannot challenge themselves"
+        )
 
     # Check for duplicate challenge by same worker
-    existing = db.query(Challenge).filter(
-        Challenge.task_id == task_id,
-        Challenge.challenger_submission_id == data.challenger_submission_id,
-    ).first()
+    existing = (
+        db.query(Challenge)
+        .filter(
+            Challenge.task_id == task_id,
+            Challenge.challenger_submission_id == data.challenger_submission_id,
+        )
+        .first()
+    )
     if existing:
-        raise HTTPException(status_code=400, detail="Already submitted a challenge for this task")
+        raise HTTPException(
+            status_code=400, detail="Already submitted a challenge for this task"
+        )
 
-    # --- Escrow integration (only when permit params provided) ---
+    # --- Escrow integration (only when signed_transaction provided) ---
     deposit_tx_hash = None
     deposit_amount = None
-    if data.challenger_wallet and data.permit_v is not None:
+    if data.challenger_wallet and data.signed_transaction:
         # Dynamic deposit rate based on trust tier (fallback to 10%)
         deposit_rate = 0.10
         if challenger_user:
@@ -79,26 +111,31 @@ def create_challenge(
         except Exception:
             balance = 0.0
         if balance < required:
-            raise HTTPException(status_code=400, detail=f"USDC余额不足 (需要 {required}, 余额 {balance})")
+            raise HTTPException(
+                status_code=400,
+                detail=f"USDC余额不足 (需要 {required}, 余额 {balance})",
+            )
 
         # 2. Rate limit: same wallet, 1 challenge per minute
-        recent = db.query(Challenge).filter(
-            Challenge.challenger_wallet == data.challenger_wallet,
-            Challenge.created_at > datetime.now(timezone.utc) - timedelta(minutes=1),
-        ).first()
+        recent = (
+            db.query(Challenge)
+            .filter(
+                Challenge.challenger_wallet == data.challenger_wallet,
+                Challenge.created_at
+                > datetime.now(timezone.utc) - timedelta(minutes=1),
+            )
+            .first()
+        )
         if recent:
             raise HTTPException(status_code=429, detail="每分钟最多提交一次挑战")
 
-        # 3. Relayer: call joinChallenge on-chain (pass per-challenger deposit)
+        # 3. Relayer: call joinChallenge on-chain (Solana signed transaction)
         try:
             deposit_tx_hash = join_challenge_onchain(
                 task_id,
                 data.challenger_wallet,
                 deposit_amount,
-                data.permit_deadline,
-                data.permit_v,
-                data.permit_r,
-                data.permit_s,
+                data.signed_transaction,
             )
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"链上交易失败: {e}")
@@ -127,9 +164,11 @@ def list_challenges(task_id: str, db: Session = Depends(get_db)):
 
 @router.get("/tasks/{task_id}/challenges/{challenge_id}", response_model=ChallengeOut)
 def get_challenge(task_id: str, challenge_id: str, db: Session = Depends(get_db)):
-    challenge = db.query(Challenge).filter(
-        Challenge.id == challenge_id, Challenge.task_id == task_id
-    ).first()
+    challenge = (
+        db.query(Challenge)
+        .filter(Challenge.id == challenge_id, Challenge.task_id == task_id)
+        .first()
+    )
     if not challenge:
         raise HTTPException(status_code=404, detail="Challenge not found")
     return challenge
@@ -192,7 +231,9 @@ def get_jury_ballots(task_id: str, db: Session = Depends(get_db)):
     if all_voted:
         tags = db.query(MaliciousTag).filter_by(task_id=task_id).all()
         for t in tags:
-            tags_by_arbiter.setdefault(t.arbiter_user_id, []).append(t.target_submission_id)
+            tags_by_arbiter.setdefault(t.arbiter_user_id, []).append(
+                t.target_submission_id
+            )
 
     if not all_voted:
         result = []
