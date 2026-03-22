@@ -56,4 +56,4 @@ claw_bazzar.db
 
 # Anchor / Solana
 .anchor/
-target/
+target
