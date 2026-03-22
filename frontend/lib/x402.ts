@@ -1,68 +1,44 @@
-import { privateKeyToAccount } from 'viem/accounts'
-import { type Hex, type Address } from 'viem'
-import { baseSepolia } from 'viem/chains'
+import { Keypair, Connection, Transaction, PublicKey } from '@solana/web3.js'
+import { createTransferCheckedInstruction, getAssociatedTokenAddress } from '@solana/spl-token'
 
-const USDC_CONTRACT: Address = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
+const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+const SOLANA_RPC = 'https://api.devnet.solana.com'
 const X402_VERSION = 2
 
-const EIP712_DOMAIN = {
-  name: 'USDC',
-  version: '2',
-  chainId: baseSepolia.id,
-  verifyingContract: USDC_CONTRACT,
-} as const
-
-const TRANSFER_WITH_AUTHORIZATION_TYPES = {
-  TransferWithAuthorization: [
-    { name: 'from', type: 'address' },
-    { name: 'to', type: 'address' },
-    { name: 'value', type: 'uint256' },
-    { name: 'validAfter', type: 'uint256' },
-    { name: 'validBefore', type: 'uint256' },
-    { name: 'nonce', type: 'bytes32' },
-  ],
-} as const
-
-function randomNonce(): Hex {
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-  return ('0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')) as Hex
-}
-
-export function getDevWalletAddress(privateKey: Hex): Address {
-  return privateKeyToAccount(privateKey).address
+export function getDevWalletAddress(secretKeyBase64: string): string {
+  const secret = Buffer.from(secretKeyBase64, 'base64')
+  const keypair = Keypair.fromSecretKey(secret)
+  return keypair.publicKey.toBase58()
 }
 
 export async function signX402Payment(params: {
-  privateKey: Hex
-  payTo: Address
-  amount: number
+  secretKey: string  // base64 encoded 64-byte secret key
+  payTo: string      // Solana pubkey (Base58)
+  amount: number     // USDC amount
 }): Promise<string> {
-  const { privateKey, payTo, amount } = params
-  const account = privateKeyToAccount(privateKey)
-  const value = BigInt(Math.round(amount * 1e6))
-  const now = BigInt(Math.floor(Date.now() / 1000))
-  const nonce = randomNonce()
+  const { secretKey, payTo, amount } = params
+  const keypair = Keypair.fromSecretKey(Buffer.from(secretKey, 'base64'))
+  const connection = new Connection(SOLANA_RPC)
+  const amountLamports = Math.round(amount * 1e6)
 
-  const authorization = {
-    from: account.address,
-    to: payTo,
-    value,
-    validAfter: 0n,
-    validBefore: now + 3600n,
-    nonce,
-  }
+  const fromAta = await getAssociatedTokenAddress(USDC_MINT, keypair.publicKey)
+  const toAta = await getAssociatedTokenAddress(USDC_MINT, new PublicKey(payTo))
 
-  const signature = await account.signTypedData({
-    domain: EIP712_DOMAIN,
-    types: TRANSFER_WITH_AUTHORIZATION_TYPES,
-    primaryType: 'TransferWithAuthorization',
-    message: authorization,
-  })
+  const tx = new Transaction().add(
+    createTransferCheckedInstruction(
+      fromAta, USDC_MINT, toAta,
+      keypair.publicKey, amountLamports, 6,
+    )
+  )
 
-  const amountStr = value.toString()
+  const { blockhash } = await connection.getLatestBlockhash()
+  tx.recentBlockhash = blockhash
+  tx.feePayer = keypair.publicKey
+  tx.sign(keypair)
 
-  // Full x402 v2 PaymentPayload per spec
+  const serialized = tx.serialize()
+  const amountStr = amountLamports.toString()
+
   const paymentPayload = {
     x402Version: X402_VERSION,
     resource: {
@@ -72,27 +48,14 @@ export async function signX402Payment(params: {
     },
     accepted: {
       scheme: 'exact',
-      network: 'eip155:84532',
-      asset: USDC_CONTRACT,
+      network: 'solana-devnet',
+      asset: USDC_MINT.toBase58(),
       amount: amountStr,
       payTo,
       maxTimeoutSeconds: 30,
-      extra: {
-        assetTransferMethod: 'eip3009',
-        name: 'USDC',
-        version: '2',
-      },
     },
     payload: {
-      signature,
-      authorization: {
-        from: authorization.from,
-        to: authorization.to,
-        value: amountStr,
-        validAfter: '0',
-        validBefore: authorization.validBefore.toString(),
-        nonce,
-      },
+      transaction: Buffer.from(serialized).toString('base64'),
     },
   }
 
