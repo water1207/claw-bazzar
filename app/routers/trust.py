@@ -3,13 +3,31 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
-    User, TrustEvent, ArbiterVote, Challenge, ChallengeVerdict,
-    Task, Submission, StakeRecord,
+    User,
+    TrustEvent,
+    ArbiterVote,
+    Challenge,
+    ChallengeVerdict,
+    Task,
+    Submission,
+    StakeRecord,
 )
-from app.schemas import TrustProfile, TrustQuote, TrustEventOut, ArbiterVoteOut, BalanceEventOut, WeeklyLeaderboardEntry
+from app.schemas import (
+    TrustProfile,
+    TrustQuote,
+    TrustEventOut,
+    ArbiterVoteOut,
+    BalanceEventOut,
+    WeeklyLeaderboardEntry,
+    StakeRequest,
+)
 from app.services.trust import (
-    get_challenge_deposit_rate, get_platform_fee_rate, check_permissions,
+    get_challenge_deposit_rate,
+    get_platform_fee_rate,
+    check_permissions,
 )
+from app.models import StakePurpose
+from app.services.staking import stake_for_arbiter, stake_for_credit
 
 router = APIRouter()
 
@@ -97,124 +115,174 @@ def get_balance_events(user_id: str, db: Session = Depends(get_db)):
     events: list[dict] = []
 
     # 1. Publisher: bounty paid
-    pub_tasks = db.query(Task).filter(
-        Task.publisher_id == user_id,
-        Task.payment_tx_hash.isnot(None),
-    ).all()
+    pub_tasks = (
+        db.query(Task)
+        .filter(
+            Task.publisher_id == user_id,
+            Task.payment_tx_hash.isnot(None),
+        )
+        .all()
+    )
     for t in pub_tasks:
-        events.append({
-            "id": f"task_bounty:{t.id}",
-            "event_type": "bounty_paid",
-            "role": "publisher",
-            "task_id": t.id,
-            "task_title": t.title,
-            "amount": t.bounty or 0,
-            "direction": "outflow",
-            "tx_hash": t.payment_tx_hash,
-            "created_at": t.created_at,
-        })
-
-    # 2. Publisher: refund received
-    refund_tasks = db.query(Task).filter(
-        Task.publisher_id == user_id,
-        Task.refund_tx_hash.isnot(None),
-    ).all()
-    for t in refund_tasks:
-        events.append({
-            "id": f"task_refund:{t.id}",
-            "event_type": "refund_received",
-            "role": "publisher",
-            "task_id": t.id,
-            "task_title": t.title,
-            "amount": t.refund_amount or 0,
-            "direction": "inflow",
-            "tx_hash": t.refund_tx_hash,
-            "created_at": t.created_at,
-        })
-
-    # 3. Worker: payout received
-    winner_subs = db.query(Submission).filter(
-        Submission.worker_id == user_id,
-    ).all()
-    winner_sub_ids = [s.id for s in winner_subs]
-    if winner_sub_ids:
-        payout_tasks = db.query(Task).filter(
-            Task.winner_submission_id.in_(winner_sub_ids),
-            Task.payout_tx_hash.isnot(None),
-        ).all()
-        for t in payout_tasks:
-            events.append({
-                "id": f"task_payout:{t.id}",
-                "event_type": "payout_received",
-                "role": "worker",
+        events.append(
+            {
+                "id": f"task_bounty:{t.id}",
+                "event_type": "bounty_paid",
+                "role": "publisher",
                 "task_id": t.id,
                 "task_title": t.title,
-                "amount": t.payout_amount or 0,
-                "direction": "inflow",
-                "tx_hash": t.payout_tx_hash,
+                "amount": t.bounty or 0,
+                "direction": "outflow",
+                "tx_hash": t.payment_tx_hash,
                 "created_at": t.created_at,
-            })
+            }
+        )
+
+    # 2. Publisher: refund received
+    refund_tasks = (
+        db.query(Task)
+        .filter(
+            Task.publisher_id == user_id,
+            Task.refund_tx_hash.isnot(None),
+        )
+        .all()
+    )
+    for t in refund_tasks:
+        events.append(
+            {
+                "id": f"task_refund:{t.id}",
+                "event_type": "refund_received",
+                "role": "publisher",
+                "task_id": t.id,
+                "task_title": t.title,
+                "amount": t.refund_amount or 0,
+                "direction": "inflow",
+                "tx_hash": t.refund_tx_hash,
+                "created_at": t.created_at,
+            }
+        )
+
+    # 3. Worker: payout received
+    winner_subs = (
+        db.query(Submission)
+        .filter(
+            Submission.worker_id == user_id,
+        )
+        .all()
+    )
+    winner_sub_ids = [s.id for s in winner_subs]
+    if winner_sub_ids:
+        payout_tasks = (
+            db.query(Task)
+            .filter(
+                Task.winner_submission_id.in_(winner_sub_ids),
+                Task.payout_tx_hash.isnot(None),
+            )
+            .all()
+        )
+        for t in payout_tasks:
+            events.append(
+                {
+                    "id": f"task_payout:{t.id}",
+                    "event_type": "payout_received",
+                    "role": "worker",
+                    "task_id": t.id,
+                    "task_title": t.title,
+                    "amount": t.payout_amount or 0,
+                    "direction": "inflow",
+                    "tx_hash": t.payout_tx_hash,
+                    "created_at": t.created_at,
+                }
+            )
 
     # 4. Challenger: deposit paid (on-chain via joinChallenge)
-    challenger_subs = db.query(Submission).filter(
-        Submission.worker_id == user_id,
-    ).all()
+    challenger_subs = (
+        db.query(Submission)
+        .filter(
+            Submission.worker_id == user_id,
+        )
+        .all()
+    )
     challenger_sub_ids = [s.id for s in challenger_subs]
     if challenger_sub_ids:
-        deposit_challenges = db.query(Challenge).filter(
-            Challenge.challenger_submission_id.in_(challenger_sub_ids),
-            Challenge.deposit_tx_hash.isnot(None),
-        ).all()
+        deposit_challenges = (
+            db.query(Challenge)
+            .filter(
+                Challenge.challenger_submission_id.in_(challenger_sub_ids),
+                Challenge.deposit_tx_hash.isnot(None),
+            )
+            .all()
+        )
         for c in deposit_challenges:
             task = db.query(Task).filter_by(id=c.task_id).first()
-            events.append({
-                "id": f"challenge_deposit:{c.id}",
-                "event_type": "challenge_deposit_paid",
-                "role": "worker",
-                "task_id": c.task_id,
-                "task_title": task.title if task else None,
-                "amount": c.deposit_amount or task.submission_deposit or round((task.bounty or 0) * 0.10, 6),
-                "direction": "outflow",
-                "tx_hash": c.deposit_tx_hash,
-                "created_at": c.created_at,
-            })
+            events.append(
+                {
+                    "id": f"challenge_deposit:{c.id}",
+                    "event_type": "challenge_deposit_paid",
+                    "role": "worker",
+                    "task_id": c.task_id,
+                    "task_title": task.title if task else None,
+                    "amount": c.deposit_amount
+                    or task.submission_deposit
+                    or round((task.bounty or 0) * 0.10, 6),
+                    "direction": "outflow",
+                    "tx_hash": c.deposit_tx_hash,
+                    "created_at": c.created_at,
+                }
+            )
 
     # 6. Arbiter: reward
-    arbiter_votes = db.query(ArbiterVote).filter(
-        ArbiterVote.arbiter_user_id == user_id,
-        ArbiterVote.reward_amount.isnot(None),
-    ).all()
+    arbiter_votes = (
+        db.query(ArbiterVote)
+        .filter(
+            ArbiterVote.arbiter_user_id == user_id,
+            ArbiterVote.reward_amount.isnot(None),
+        )
+        .all()
+    )
     for v in arbiter_votes:
         challenge = db.query(Challenge).filter_by(id=v.challenge_id).first()
-        task = db.query(Task).filter_by(id=challenge.task_id).first() if challenge else None
-        events.append({
-            "id": f"vote_reward:{v.id}",
-            "event_type": "arbiter_reward",
-            "role": "arbiter",
-            "task_id": challenge.task_id if challenge else None,
-            "task_title": task.title if task else None,
-            "amount": v.reward_amount,
-            "direction": "inflow",
-            "tx_hash": None,
-            "created_at": v.created_at,
-        })
+        task = (
+            db.query(Task).filter_by(id=challenge.task_id).first()
+            if challenge
+            else None
+        )
+        events.append(
+            {
+                "id": f"vote_reward:{v.id}",
+                "event_type": "arbiter_reward",
+                "role": "arbiter",
+                "task_id": challenge.task_id if challenge else None,
+                "task_title": task.title if task else None,
+                "amount": v.reward_amount,
+                "direction": "inflow",
+                "tx_hash": None,
+                "created_at": v.created_at,
+            }
+        )
 
     # 7. Staking: deposits and slashes
-    stake_records = db.query(StakeRecord).filter(
-        StakeRecord.user_id == user_id,
-    ).all()
+    stake_records = (
+        db.query(StakeRecord)
+        .filter(
+            StakeRecord.user_id == user_id,
+        )
+        .all()
+    )
     for r in stake_records:
-        events.append({
-            "id": f"stake:{ r.id}",
-            "event_type": "stake_slashed" if r.slashed else "stake_deposited",
-            "role": "worker",
-            "task_id": None,
-            "task_title": None,
-            "amount": r.amount,
-            "direction": "outflow",
-            "tx_hash": r.tx_hash,
-            "created_at": r.created_at,
-        })
+        events.append(
+            {
+                "id": f"stake:{ r.id}",
+                "event_type": "stake_slashed" if r.slashed else "stake_deposited",
+                "role": "worker",
+                "task_id": None,
+                "task_title": None,
+                "amount": r.amount,
+                "direction": "outflow",
+                "tx_hash": r.tx_hash,
+                "created_at": r.created_at,
+            }
+        )
 
     events.sort(key=lambda e: e["created_at"], reverse=True)
     return events[:100]
@@ -239,16 +307,18 @@ def get_challenge_votes(
             if v.arbiter_user_id == viewer_id:
                 result.append(v)
             else:
-                result.append(ArbiterVoteOut(
-                    id=v.id,
-                    challenge_id=v.challenge_id,
-                    arbiter_user_id=v.arbiter_user_id,
-                    vote=None,
-                    feedback=None,
-                    is_majority=None,
-                    reward_amount=None,
-                    created_at=v.created_at,
-                ))
+                result.append(
+                    ArbiterVoteOut(
+                        id=v.id,
+                        challenge_id=v.challenge_id,
+                        arbiter_user_id=v.arbiter_user_id,
+                        vote=None,
+                        feedback=None,
+                        is_majority=None,
+                        reward_amount=None,
+                        created_at=v.created_at,
+                    )
+                )
         return result
 
     return votes
@@ -284,6 +354,24 @@ def submit_arbiter_vote(
     return vote
 
 
+@router.post("/users/{user_id}/stake", status_code=201)
+def stake(user_id: str, body: StakeRequest, db: Session = Depends(get_db)):
+    """Stake USDC via a pre-signed Solana transaction."""
+    user = db.query(User).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    try:
+        if body.purpose == StakePurpose.arbiter_deposit:
+            record = stake_for_arbiter(db, user_id, body.signed_transaction)
+        else:
+            record = stake_for_credit(db, user_id, body.amount, body.signed_transaction)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return {"id": record.id, "tx_hash": record.tx_hash, "amount": record.amount}
+
+
 @router.get("/leaderboard/weekly", response_model=list[WeeklyLeaderboardEntry])
 def weekly_leaderboard(db: Session = Depends(get_db)):
     """Return this week's leaderboard: workers ranked by total payout from closed tasks."""
@@ -294,8 +382,11 @@ def weekly_leaderboard(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     # Start of current week (Monday 00:00 UTC)
     monday = now - timedelta(
-        days=now.weekday(), hours=now.hour, minutes=now.minute,
-        seconds=now.second, microseconds=now.microsecond,
+        days=now.weekday(),
+        hours=now.hour,
+        minutes=now.minute,
+        seconds=now.second,
+        microseconds=now.microsecond,
     )
     prev_monday = monday - timedelta(days=7)
 
@@ -315,15 +406,16 @@ def weekly_leaderboard(db: Session = Depends(get_db)):
         for task in tasks:
             sub = db.query(Submission).filter_by(id=task.winner_submission_id).first()
             if sub:
-                earnings[sub.worker_id] = (
-                    earnings.get(sub.worker_id, 0.0)
-                    + (task.payout_amount or task.bounty * 0.8)
+                earnings[sub.worker_id] = earnings.get(sub.worker_id, 0.0) + (
+                    task.payout_amount or task.bounty * 0.8
                 )
         return earnings
 
     # Current week rankings
     current_earnings = _aggregate_earnings(monday, now)
-    sorted_current = sorted(current_earnings.items(), key=lambda x: x[1], reverse=True)[:100]
+    sorted_current = sorted(current_earnings.items(), key=lambda x: x[1], reverse=True)[
+        :100
+    ]
 
     # Previous week rankings (for rank_change)
     prev_earnings = _aggregate_earnings(prev_monday, monday)
@@ -342,7 +434,9 @@ def weekly_leaderboard(db: Session = Depends(get_db)):
     won_map: dict[str, int] = {}
     if worker_ids:
         participated_rows = (
-            db.query(Submission.worker_id, func.count(func.distinct(Submission.task_id)))
+            db.query(
+                Submission.worker_id, func.count(func.distinct(Submission.task_id))
+            )
             .filter(Submission.worker_id.in_(worker_ids))
             .group_by(Submission.worker_id)
             .all()
@@ -352,7 +446,9 @@ def weekly_leaderboard(db: Session = Depends(get_db)):
         won_rows = (
             db.query(Submission.worker_id, func.count(Task.id))
             .join(Task, Task.winner_submission_id == Submission.id)
-            .filter(Submission.worker_id.in_(worker_ids), Task.status == TaskStatus.closed)
+            .filter(
+                Submission.worker_id.in_(worker_ids), Task.status == TaskStatus.closed
+            )
             .group_by(Submission.worker_id)
             .all()
         )
@@ -368,19 +464,21 @@ def weekly_leaderboard(db: Session = Depends(get_db)):
         tasks_participated = participated_map.get(worker_id, 0)
         tasks_won = won_map.get(worker_id, 0)
         win_rate = tasks_won / tasks_participated if tasks_participated > 0 else 0.0
-        result.append(WeeklyLeaderboardEntry(
-            rank=rank,
-            rank_change=rank_change,
-            user_id=user.id,
-            nickname=user.nickname,
-            wallet=user.wallet,
-            github_id=user.github_id,
-            total_earned=round(total_earned, 2),
-            tasks_won=tasks_won,
-            tasks_participated=tasks_participated,
-            win_rate=round(win_rate, 4),
-            trust_score=user.trust_score,
-            trust_tier=user.trust_tier,
-        ))
+        result.append(
+            WeeklyLeaderboardEntry(
+                rank=rank,
+                rank_change=rank_change,
+                user_id=user.id,
+                nickname=user.nickname,
+                wallet=user.wallet,
+                github_id=user.github_id,
+                total_earned=round(total_earned, 2),
+                tasks_won=tasks_won,
+                tasks_participated=tasks_participated,
+                win_rate=round(win_rate, 4),
+                trust_score=user.trust_score,
+                trust_tier=user.trust_tier,
+            )
+        )
 
     return result

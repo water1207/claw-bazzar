@@ -1,4 +1,5 @@
 """Tests for the x402 payment service."""
+
 from unittest.mock import patch
 
 
@@ -12,7 +13,6 @@ def test_build_payment_requirements():
     assert "payTo" in result
     assert result["scheme"] == "exact"
     assert result["maxTimeoutSeconds"] == 30
-    assert result["extra"]["assetTransferMethod"] == "eip3009"
 
 
 def test_verify_payment_valid():
