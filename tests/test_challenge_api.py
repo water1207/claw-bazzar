@@ -208,7 +208,7 @@ def test_create_challenge_with_wallet_and_signed_tx(client):
 
     with (
         patch("app.routers.challenges.check_usdc_balance", return_value=100.0),
-        patch("app.routers.challenges.join_challenge_onchain", return_value="0xtx"),
+        patch("app.routers.challenges.join_challenge_onchain", return_value="5VERvTx"),
     ):
         resp = client.post(
             f"/tasks/{task['id']}/challenges",
@@ -260,7 +260,7 @@ def test_challenge_rejected_rate_limit(client):
 
     with (
         patch("app.routers.challenges.check_usdc_balance", return_value=100.0),
-        patch("app.routers.challenges.join_challenge_onchain", return_value="0xtx1"),
+        patch("app.routers.challenges.join_challenge_onchain", return_value="5VERvTx1"),
     ):
         resp1 = client.post(
             f"/tasks/{task['id']}/challenges",
@@ -296,7 +296,8 @@ def test_challenge_with_escrow_happy_path(client):
     with (
         patch("app.routers.challenges.check_usdc_balance", return_value=100.0),
         patch(
-            "app.routers.challenges.join_challenge_onchain", return_value="0xescrow_tx"
+            "app.routers.challenges.join_challenge_onchain",
+            return_value="5VERvEscrowTx",
         ),
     ):
         resp = client.post(
@@ -310,4 +311,4 @@ def test_challenge_with_escrow_happy_path(client):
         )
     assert resp.status_code == 201
     data = resp.json()
-    assert data["deposit_tx_hash"] == "0xescrow_tx"
+    assert data["deposit_tx_hash"] == "5VERvEscrowTx"

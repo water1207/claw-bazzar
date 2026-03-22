@@ -133,8 +133,6 @@ def create_challenge(
         try:
             deposit_tx_hash = join_challenge_onchain(
                 task_id,
-                data.challenger_wallet,
-                deposit_amount,
                 data.signed_transaction,
             )
         except Exception as e:
