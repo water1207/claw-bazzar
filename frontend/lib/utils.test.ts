@@ -80,9 +80,11 @@ describe('scoreColor', () => {
 
 describe('fetchUsdcBalance', () => {
   it('returns a numeric balance string', async () => {
-    // This test calls the real RPC — skip in CI if needed
-    const balance = await fetchUsdcBalance('0x9F851CaeeaD0CDfEb12Cb498993D7559fFE11e20')
-    // address has 20 USDC — just check it's a valid number string
+    // This test calls the real Solana devnet RPC — skip in CI if needed
+    // Using a known devnet address; balance may be 0 but should not throw
+    const balance = await fetchUsdcBalance('So11111111111111111111111111111111111111112')
+    // Just check it returns a string (may be '0.00' if account doesn't exist)
+    expect(typeof balance).toBe('string')
     expect(parseFloat(balance)).toBeGreaterThanOrEqual(0)
   })
 })

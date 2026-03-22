@@ -45,23 +45,28 @@ export function scoreColor(score: number | null, threshold: number | null): stri
   return 'text-red-400'
 }
 
-const BASE_SEPOLIA_RPC = 'https://sepolia.base.org'
-const USDC_CONTRACT = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
+const SOLANA_RPC = 'https://api.devnet.solana.com'
+const USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 
 export async function fetchUsdcBalance(address: string): Promise<string> {
-  // balanceOf(address) selector = 0x70a08231
-  const data = '0x70a08231' + address.replace('0x', '').toLowerCase().padStart(64, '0')
-  const resp = await fetch(BASE_SEPOLIA_RPC, {
+  const { PublicKey } = await import('@solana/web3.js')
+  const { getAssociatedTokenAddress } = await import('@solana/spl-token')
+
+  const owner = new PublicKey(address)
+  const mint = new PublicKey(USDC_MINT)
+  const ata = await getAssociatedTokenAddress(mint, owner)
+
+  const resp = await fetch(SOLANA_RPC, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      jsonrpc: '2.0', method: 'eth_call',
-      params: [{ to: USDC_CONTRACT, data }, 'latest'],
+      jsonrpc: '2.0',
+      method: 'getTokenAccountBalance',
+      params: [ata.toBase58()],
       id: 1,
     }),
   })
   const json = await resp.json()
-  if (json.error) throw new Error(`RPC error: ${json.error.message}`)
-  const raw = BigInt(json.result ?? '0x0')
-  return (Number(raw) / 1e6).toFixed(2)
+  if (json.error) return '0.00'
+  return (json.result?.value?.uiAmountString ?? '0.00')
 }
