@@ -176,7 +176,7 @@ function ChallengeCard({ challenge, task }: {
         <div className="text-xs">
           <span className="text-muted-foreground">Deposit Tx: </span>
           <a
-            href={`https://sepolia.basescan.org/tx/${challenge.deposit_tx_hash}`}
+            href={`https://explorer.solana.com/tx/${challenge.deposit_tx_hash}?cluster=devnet`}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono text-blue-400 hover:underline break-all"

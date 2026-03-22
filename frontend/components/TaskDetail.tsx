@@ -12,7 +12,7 @@ import { SettlementPanel } from './SettlementPanel'
 import { TaskStatusStepper } from './TaskStatusStepper'
 import { formatDeadline, formatBounty } from '@/lib/utils'
 
-const BASE_SEPOLIA_EXPLORER = 'https://sepolia.basescan.org/tx'
+const SOLANA_EXPLORER = 'https://explorer.solana.com/tx'
 
 function formatHMS(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds))
@@ -28,7 +28,7 @@ function TxLink({ hash }: { hash: string }) {
   const short = `${hash.slice(0, 10)}…${hash.slice(-6)}`
   return (
     <a
-      href={`${BASE_SEPOLIA_EXPLORER}/${hash}`}
+      href={`${SOLANA_EXPLORER}/${hash}?cluster=devnet`}
       target="_blank"
       rel="noopener noreferrer"
       className="font-mono text-xs text-blue-400 hover:underline"

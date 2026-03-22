@@ -74,7 +74,7 @@ export function BalanceEventsTable({ events }: { events: BalanceEvent[] }) {
                 <td className="py-1.5 px-2">
                   {e.tx_hash ? (
                     <a
-                      href={`https://sepolia.basescan.org/tx/${e.tx_hash}`}
+                      href={`https://explorer.solana.com/tx/${e.tx_hash}?cluster=devnet`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-400 hover:underline font-mono"

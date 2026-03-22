@@ -382,10 +382,7 @@ export async function createChallenge(
     challenger_submission_id: string
     reason: string
     challenger_wallet?: string
-    permit_deadline?: number
-    permit_v?: number
-    permit_r?: string
-    permit_s?: string
+    signed_transaction?: string  // base64-encoded signed Solana transaction
   },
 ): Promise<Challenge> {
   const resp = await fetch(`/api/tasks/${taskId}/challenges`, {

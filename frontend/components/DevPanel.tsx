@@ -11,18 +11,17 @@ import {
 import { createTask, createSubmission, registerUser, createChallenge, useUser } from '@/lib/api'
 import type { UserRole, Task, Submission, TaskDetail, Challenge } from '@/lib/api'
 import { signX402Payment, getDevWalletAddress } from '@/lib/x402'
-import { signChallengePermit } from '@/lib/permit'
+import { signJoinChallenge } from '@/lib/sign-challenge'
 import { fetchUsdcBalance } from '@/lib/utils'
 import { ArbiterPanel } from '@/components/ArbiterPanel'
 import { BalanceTrustHistoryPanel } from '@/components/BalanceTrustHistoryPanel'
 import { TrustBadge } from '@/components/TrustBadge'
 import { TaskStatusStepper } from '@/components/TaskStatusStepper'
 import { FeedbackCard } from '@/components/FeedbackCard'
-import type { Hex } from 'viem'
 import { DEV_PUBLISHER, DEV_WORKERS } from '@/lib/dev-wallets'
 
-const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET as Hex | undefined
-const ESCROW_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS || ''
+const PLATFORM_WALLET = process.env.NEXT_PUBLIC_PLATFORM_WALLET
+const ESCROW_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_PROGRAM_ID || ''
 
 const PRESETS = [
   { label: '1h', value: '1', unit: 'hours' },
@@ -784,22 +783,22 @@ export function DevPanel() {
           } catch { /* use default */ }
         }
         const depositAmount = challengeTask.submission_deposit ?? bountyAmount * depositRate
-        const totalAmount = depositAmount + 0.01 // + service fee
 
-        const permit = await signChallengePermit({
-          privateKey: workerKey,
-          spender: ESCROW_ADDRESS,
-          amount: totalAmount,
+        const taskIdHash = new Uint8Array(
+          await crypto.subtle.digest('SHA-256', new TextEncoder().encode(challengeTaskId))
+        )
+        const signedTx = await signJoinChallenge({
+          secretKey: workerKey,
+          escrowProgramId: ESCROW_ADDRESS,
+          taskIdHash,
+          depositAmount,
         })
 
         const result = await createChallenge(challengeTaskId, {
           challenger_submission_id: challengeSubId,
           reason: challengeReason,
           challenger_wallet: getDevWalletAddress(workerKey),
-          permit_deadline: permit.deadline,
-          permit_v: permit.v,
-          permit_r: permit.r,
-          permit_s: permit.s,
+          signed_transaction: signedTx,
         })
         setChallengeResult(result)
       } else {
@@ -839,7 +838,7 @@ export function DevPanel() {
               value={wallet}
               onChange={(e) => setWallet(e.target.value)}
               required
-              placeholder="0x..."
+              placeholder="So1ana..."
             />
           </div>
 
@@ -1126,7 +1125,7 @@ export function DevPanel() {
                 <p className="text-muted-foreground">
                   Tx:{' '}
                   <a
-                    href={`https://sepolia.basescan.org/tx/${publishedTask.payment_tx_hash}`}
+                    href={`https://explorer.solana.com/tx/${publishedTask.payment_tx_hash}?cluster=devnet`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="font-mono text-blue-400 hover:underline break-all"
@@ -1327,7 +1326,7 @@ export function DevPanel() {
                   <p className="text-muted-foreground">
                     Deposit Tx:{' '}
                     <a
-                      href={`https://sepolia.basescan.org/tx/${challengeResult.deposit_tx_hash}`}
+                      href={`https://explorer.solana.com/tx/${challengeResult.deposit_tx_hash}?cluster=devnet`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-mono text-blue-400 hover:underline break-all"
