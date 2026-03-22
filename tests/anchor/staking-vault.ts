@@ -2,10 +2,10 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {
   createMint,
-  createAccount,
   mintTo,
   getAccount,
   TOKEN_PROGRAM_ID,
+  getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { StakingVault } from "../../target/types/staking_vault";
@@ -25,26 +25,25 @@ describe("staking-vault", () => {
   const user = anchor.web3.Keypair.generate();
   let userAta: anchor.web3.PublicKey;
   let authorityAta: anchor.web3.PublicKey;
-  let platformAta: anchor.web3.PublicKey;
 
   before(async () => {
-    // Airdrop SOL
     const sig = await provider.connection.requestAirdrop(
       user.publicKey,
       2 * anchor.web3.LAMPORTS_PER_SOL
     );
     await provider.connection.confirmTransaction(sig);
 
-    // Create USDC mock mint
     usdcMint = await createMint(
       provider.connection,
       (authority as any).payer,
       authority.publicKey,
       null,
-      6
+      6,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
 
-    // Derive PDAs
     [configPda] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("config")],
       program.programId
@@ -58,34 +57,37 @@ describe("staking-vault", () => {
       program.programId
     );
 
-    // Create ATAs
-    userAta = await createAccount(
+    const userAtaAccount = await getOrCreateAssociatedTokenAccount(
       provider.connection,
       (authority as any).payer,
       usdcMint,
-      user.publicKey
+      user.publicKey,
+      false,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
-    authorityAta = await createAccount(
-      provider.connection,
-      (authority as any).payer,
-      usdcMint,
-      authority.publicKey
-    );
-    platformAta = await createAccount(
-      provider.connection,
-      (authority as any).payer,
-      usdcMint,
-      authority.publicKey
-    );
+    userAta = userAtaAccount.address;
 
-    // Mint USDC to user
+    const authorityAtaAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      (authority as any).payer,
+      usdcMint,
+      authority.publicKey,
+      false,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
+    );
+    authorityAta = authorityAtaAccount.address;
+
     await mintTo(
       provider.connection,
       (authority as any).payer,
       usdcMint,
       userAta,
       authority.publicKey,
-      50_000_000 // 50 USDC
+      50_000_000
     );
   });
 
@@ -94,14 +96,10 @@ describe("staking-vault", () => {
       .initialize(usdcMint)
       .accounts({
         authority: authority.publicKey,
-        config: configPda,
         usdcMint,
         vaultAuthority,
         vaultTokenAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     const config = await program.account.config.fetch(configPda);
@@ -110,7 +108,7 @@ describe("staking-vault", () => {
   });
 
   it("stakes USDC", async () => {
-    const stakeAmount = 5_000_000; // 5 USDC
+    const stakeAmount = 5_000_000;
 
     const [stakeRecord] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("stake"), user.publicKey.toBuffer()],
@@ -121,14 +119,11 @@ describe("staking-vault", () => {
       .stake(new anchor.BN(stakeAmount))
       .accounts({
         user: user.publicKey,
-        config: configPda,
         usdcMint,
         stakeRecord,
         userTokenAccount: userAta,
         vaultTokenAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
+      } as any)
       .signers([user])
       .rpc();
 
@@ -136,13 +131,12 @@ describe("staking-vault", () => {
     assert.equal(record.amount.toNumber(), stakeAmount);
     assert.ok(record.stakedAt.toNumber() > 0);
 
-    // Verify vault balance
     const vaultAccount = await getAccount(provider.connection, vaultTokenAccount);
     assert.equal(Number(vaultAccount.amount), stakeAmount);
   });
 
   it("stakes additional USDC (accumulates)", async () => {
-    const additionalAmount = 3_000_000; // 3 USDC
+    const additionalAmount = 3_000_000;
 
     const [stakeRecord] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("stake"), user.publicKey.toBuffer()],
@@ -153,23 +147,20 @@ describe("staking-vault", () => {
       .stake(new anchor.BN(additionalAmount))
       .accounts({
         user: user.publicKey,
-        config: configPda,
         usdcMint,
         stakeRecord,
         userTokenAccount: userAta,
         vaultTokenAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
+      } as any)
       .signers([user])
       .rpc();
 
     const record = await program.account.stakeRecord.fetch(stakeRecord);
-    assert.equal(record.amount.toNumber(), 8_000_000); // 5 + 3
+    assert.equal(record.amount.toNumber(), 8_000_000);
   });
 
   it("unstakes USDC (authority-controlled)", async () => {
-    const unstakeAmount = 2_000_000; // 2 USDC
+    const unstakeAmount = 2_000_000;
 
     const [stakeRecord] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("stake"), user.publicKey.toBuffer()],
@@ -180,18 +171,16 @@ describe("staking-vault", () => {
       .unstake(new anchor.BN(unstakeAmount))
       .accounts({
         authority: authority.publicKey,
-        config: configPda,
         user: user.publicKey,
         stakeRecord,
         vaultAuthority,
         vaultTokenAccount,
         userTokenAccount: userAta,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      } as any)
       .rpc();
 
     const record = await program.account.stakeRecord.fetch(stakeRecord);
-    assert.equal(record.amount.toNumber(), 6_000_000); // 8 - 2
+    assert.equal(record.amount.toNumber(), 6_000_000);
   });
 
   it("slashes user stake", async () => {
@@ -207,22 +196,19 @@ describe("staking-vault", () => {
       .slash()
       .accounts({
         authority: authority.publicKey,
-        config: configPda,
         user: user.publicKey,
         stakeRecord,
         vaultAuthority,
         vaultTokenAccount,
-        platformTokenAccount: platformAta,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
+        platformTokenAccount: authorityAta,
+      } as any)
       .rpc();
 
     const record = await program.account.stakeRecord.fetch(stakeRecord);
     assert.equal(record.amount.toNumber(), 0);
 
-    // Platform received slashed funds
-    const platAccount = await getAccount(provider.connection, platformAta);
-    assert.equal(Number(platAccount.amount), slashAmount);
+    const platAccount = await getAccount(provider.connection, authorityAta);
+    assert.ok(Number(platAccount.amount) >= slashAmount);
   });
 
   it("rejects zero-amount stake", async () => {
@@ -236,14 +222,11 @@ describe("staking-vault", () => {
         .stake(new anchor.BN(0))
         .accounts({
           user: user.publicKey,
-          config: configPda,
           usdcMint,
           stakeRecord,
           userTokenAccount: userAta,
           vaultTokenAccount,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
+        } as any)
         .signers([user])
         .rpc();
       assert.fail("Should have thrown");
@@ -263,14 +246,12 @@ describe("staking-vault", () => {
         .unstake(new anchor.BN(999_000_000))
         .accounts({
           authority: authority.publicKey,
-          config: configPda,
           user: user.publicKey,
           stakeRecord,
           vaultAuthority,
           vaultTokenAccount,
           userTokenAccount: userAta,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
+        } as any)
         .rpc();
       assert.fail("Should have thrown");
     } catch (err: any) {

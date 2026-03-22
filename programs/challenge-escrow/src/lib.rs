@@ -602,7 +602,8 @@ pub mod challenge_escrow {
         }
         idx += num_arbiters as usize;
 
-        // 4. Platform gets remainder
+        // 4. Platform gets remainder — reload vault balance after prior transfers
+        ctx.accounts.vault_token_account.reload()?;
         let vault_balance = ctx.accounts.vault_token_account.amount;
         if vault_balance > 0 {
             let platform_ata = &remaining[idx];
@@ -724,7 +725,8 @@ pub mod challenge_escrow {
         }
         idx += num_arbiters as usize;
 
-        // 4. Platform gets remainder
+        // 4. Platform gets remainder — reload vault balance after prior transfers
+        ctx.accounts.vault_token_account.reload()?;
         let vault_balance = ctx.accounts.vault_token_account.amount;
         if vault_balance > 0 {
             let platform_ata = &remaining[idx];

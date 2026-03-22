@@ -24,7 +24,6 @@ describe("challenge-escrow", () => {
   let vaultTokenAccount: anchor.web3.PublicKey;
   let configPda: anchor.web3.PublicKey;
 
-  // Test users
   const winner = anchor.web3.Keypair.generate();
   const challenger = anchor.web3.Keypair.generate();
 
@@ -36,7 +35,6 @@ describe("challenge-escrow", () => {
   const taskIdHash = createHash("sha256").update(taskId).digest();
 
   before(async () => {
-    // Airdrop SOL to test accounts
     for (const kp of [winner, challenger]) {
       const sig = await provider.connection.requestAirdrop(
         kp.publicKey,
@@ -45,16 +43,17 @@ describe("challenge-escrow", () => {
       await provider.connection.confirmTransaction(sig);
     }
 
-    // Create USDC mock mint
     usdcMint = await createMint(
       provider.connection,
       (authority as any).payer,
       authority.publicKey,
       null,
-      6
+      6,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
 
-    // Derive PDAs
     [configPda] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("config")],
       program.programId
@@ -64,38 +63,45 @@ describe("challenge-escrow", () => {
       program.programId
     );
     [vaultTokenAccount] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("escrow_vault_token")],
+      [Buffer.from("vault_token")],
       program.programId
     );
 
-    // Create ATAs for test users
     winnerAta = await createAccount(
       provider.connection,
       (authority as any).payer,
       usdcMint,
-      winner.publicKey
+      winner.publicKey,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
     challengerAta = await createAccount(
       provider.connection,
       (authority as any).payer,
       usdcMint,
-      challenger.publicKey
+      challenger.publicKey,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
     authorityAta = await createAccount(
       provider.connection,
       (authority as any).payer,
       usdcMint,
-      authority.publicKey
+      authority.publicKey,
+      undefined,
+      undefined,
+      TOKEN_PROGRAM_ID
     );
 
-    // Mint USDC to challenger (for deposits)
     await mintTo(
       provider.connection,
       (authority as any).payer,
       usdcMint,
       challengerAta,
       authority.publicKey,
-      100_000_000 // 100 USDC
+      100_000_000
     );
   });
 
@@ -104,14 +110,10 @@ describe("challenge-escrow", () => {
       .initialize(usdcMint)
       .accounts({
         authority: authority.publicKey,
-        config: configPda,
         usdcMint,
         vaultAuthority,
         vaultTokenAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     const config = await program.account.config.fetch(configPda);
@@ -120,10 +122,9 @@ describe("challenge-escrow", () => {
   });
 
   it("creates a challenge", async () => {
-    const bounty = 10_000_000; // 10 USDC
-    const incentive = 500_000; // 0.5 USDC
+    const bounty = 10_000_000;
+    const incentive = 500_000;
 
-    // Mint bounty to authority ATA first
     await mintTo(
       provider.connection,
       (authority as any).payer,
@@ -139,18 +140,14 @@ describe("challenge-escrow", () => {
     );
 
     await program.methods
-      .createChallenge([...taskIdHash], new anchor.BN(bounty), new anchor.BN(incentive))
+      .createChallenge([...taskIdHash], new anchor.BN(bounty), new anchor.BN(incentive), winner.publicKey)
       .accounts({
         authority: authority.publicKey,
-        config: configPda,
+        usdcMint,
         challengeInfo: challengePda,
-        winner: winner.publicKey,
         authorityTokenAccount: authorityAta,
-        vaultAuthority,
         vaultTokenAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
+      } as any)
       .rpc();
 
     const challenge = await program.account.challengeInfo.fetch(challengePda);
@@ -162,8 +159,7 @@ describe("challenge-escrow", () => {
   });
 
   it("allows a challenger to join", async () => {
-    const depositAmount = 1_000_000; // 1 USDC
-    const serviceFee = 10_000; // 0.01 USDC
+    const depositAmount = 1_000_000;
 
     const [challengePda] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("challenge"), taskIdHash],
@@ -178,15 +174,13 @@ describe("challenge-escrow", () => {
       .joinChallenge([...taskIdHash], new anchor.BN(depositAmount))
       .accounts({
         challenger: challenger.publicKey,
-        config: configPda,
+        usdcMint,
         challengeInfo: challengePda,
         challengerRecord,
         challengerTokenAccount: challengerAta,
         vaultAuthority,
         vaultTokenAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
+      } as any)
       .signers([challenger])
       .rpc();
 
@@ -204,33 +198,30 @@ describe("challenge-escrow", () => {
       program.programId
     );
 
-    const challenge = await program.account.challengeInfo.fetch(challengePda);
-    const winnerPayout = challenge.bounty.toNumber();
+    // Vault holds: bounty(10) + incentive(0.5) + deposit(1) + fee(0.01) = 11.51 USDC
+    // Winner gets 8, challenger refund from total_deposits, platform gets remainder
+    const winnerPayout = 8_000_000;
 
-    // Resolve with original winner upheld, challenger refunded
     await program.methods
       .resolveChallenge(
         [...taskIdHash],
-        winner.publicKey,
         new anchor.BN(winnerPayout),
-        [{ wallet: challenger.publicKey, amount: new anchor.BN(1_000_000) }],
-        [],
-        new anchor.BN(0)
+        new anchor.BN(0),
+        1,
+        [true],
+        0,
       )
       .accounts({
         authority: authority.publicKey,
-        config: configPda,
         challengeInfo: challengePda,
         vaultAuthority,
         vaultTokenAccount,
         platformTokenAccount: authorityAta,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      } as any)
       .remainingAccounts([
-        // Winner ATA
         { pubkey: winnerAta, isSigner: false, isWritable: true },
-        // Challenger refund ATA
         { pubkey: challengerAta, isSigner: false, isWritable: true },
+        { pubkey: authorityAta, isSigner: false, isWritable: true },
       ])
       .rpc();
 
@@ -246,22 +237,17 @@ describe("challenge-escrow", () => {
       );
 
       await program.methods
-        .createChallenge([...taskIdHash], new anchor.BN(1_000_000), new anchor.BN(50_000))
+        .createChallenge([...taskIdHash], new anchor.BN(1_000_000), new anchor.BN(50_000), winner.publicKey)
         .accounts({
           authority: authority.publicKey,
-          config: configPda,
+          usdcMint,
           challengeInfo: challengePda,
-          winner: winner.publicKey,
           authorityTokenAccount: authorityAta,
-          vaultAuthority,
           vaultTokenAccount,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
+        } as any)
         .rpc();
       assert.fail("Should have thrown");
     } catch (err) {
-      // PDA already initialized — Anchor rejects re-init
       assert.ok(err);
     }
   });
