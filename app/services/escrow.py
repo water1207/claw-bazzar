@@ -62,19 +62,26 @@ def create_challenge_onchain(
     incentive_lamports = usdc_to_lamports(incentive)
     winner_pubkey = Pubkey.from_string(winner_wallet)
 
-    # Borsh serialize: task_id_hash(32) + bounty(u64) + incentive(u64)
-    args = task_seed + struct.pack("<QQ", bounty_lamports, incentive_lamports)
+    # Borsh serialize: task_id_hash(32) + bounty(u64) + incentive(u64) + winner(Pubkey, 32 bytes)
+    args = (
+        task_seed
+        + struct.pack("<QQ", bounty_lamports, incentive_lamports)
+        + bytes(winner_pubkey)
+    )
 
     payer_ata = get_associated_token_address(payer.pubkey(), USDC_MINT)
 
     accounts = [
         AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),  # authority
         AccountMeta(config_pda, is_signer=False, is_writable=False),  # config
+        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),  # usdc_mint
         AccountMeta(challenge_pda, is_signer=False, is_writable=True),  # challenge_info
-        AccountMeta(vault_pda, is_signer=False, is_writable=True),  # escrow_vault
-        AccountMeta(payer_ata, is_signer=False, is_writable=True),  # authority_ata
-        AccountMeta(winner_pubkey, is_signer=False, is_writable=False),  # winner
-        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),  # mint
+        AccountMeta(
+            payer_ata, is_signer=False, is_writable=True
+        ),  # authority_token_account
+        AccountMeta(
+            vault_pda, is_signer=False, is_writable=True
+        ),  # vault_token_account
         AccountMeta(
             TOKEN_PROGRAM_ID, is_signer=False, is_writable=False
         ),  # token_program
@@ -133,16 +140,21 @@ def resolve_challenge_onchain(
     vault_authority_pda, _ = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
 
     accounts = [
-        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),
-        AccountMeta(config_pda, is_signer=False, is_writable=False),
-        AccountMeta(challenge_pda, is_signer=False, is_writable=True),
-        AccountMeta(vault_pda, is_signer=False, is_writable=True),
-        AccountMeta(vault_authority_pda, is_signer=False, is_writable=False),
-        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),
-        AccountMeta(TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
+        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),  # authority
+        AccountMeta(config_pda, is_signer=False, is_writable=False),  # config
+        AccountMeta(challenge_pda, is_signer=False, is_writable=True),  # challenge_info
+        AccountMeta(
+            vault_authority_pda, is_signer=False, is_writable=False
+        ),  # vault_authority
+        AccountMeta(
+            vault_pda, is_signer=False, is_writable=True
+        ),  # vault_token_account
+        AccountMeta(
+            TOKEN_PROGRAM_ID, is_signer=False, is_writable=False
+        ),  # token_program
     ]
 
-    # Remaining accounts: winner ATA, then refund ATAs, then arbiter ATAs
+    # Remaining accounts: winner ATA, then refund ATAs, then arbiter ATAs, then platform ATA
     winner_ata = get_associated_token_address(winner_pubkey, USDC_MINT)
     accounts.append(AccountMeta(winner_ata, is_signer=False, is_writable=True))
 
@@ -155,6 +167,10 @@ def resolve_challenge_onchain(
         arbiter_pubkey = Pubkey.from_string(a)
         arbiter_ata = get_associated_token_address(arbiter_pubkey, USDC_MINT)
         accounts.append(AccountMeta(arbiter_ata, is_signer=False, is_writable=True))
+
+    # Platform ATA (last remaining account — receives vault remainder)
+    platform_ata = get_associated_token_address(payer.pubkey(), USDC_MINT)
+    accounts.append(AccountMeta(platform_ata, is_signer=False, is_writable=True))
 
     ix = build_instruction(ESCROW_PROGRAM_ID, "resolve_challenge", args, accounts)
     tx = Transaction().add(ix)
@@ -193,16 +209,21 @@ def void_challenge_onchain(
     vault_authority_pda, _ = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
 
     accounts = [
-        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),
-        AccountMeta(config_pda, is_signer=False, is_writable=False),
-        AccountMeta(challenge_pda, is_signer=False, is_writable=True),
-        AccountMeta(vault_pda, is_signer=False, is_writable=True),
-        AccountMeta(vault_authority_pda, is_signer=False, is_writable=False),
-        AccountMeta(USDC_MINT, is_signer=False, is_writable=False),
-        AccountMeta(TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
+        AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),  # authority
+        AccountMeta(config_pda, is_signer=False, is_writable=False),  # config
+        AccountMeta(challenge_pda, is_signer=False, is_writable=True),  # challenge_info
+        AccountMeta(
+            vault_authority_pda, is_signer=False, is_writable=False
+        ),  # vault_authority
+        AccountMeta(
+            vault_pda, is_signer=False, is_writable=True
+        ),  # vault_token_account
+        AccountMeta(
+            TOKEN_PROGRAM_ID, is_signer=False, is_writable=False
+        ),  # token_program
     ]
 
-    # Remaining accounts: publisher ATA, refund ATAs, arbiter ATAs
+    # Remaining accounts: publisher ATA, refund ATAs, arbiter ATAs, platform ATA
     publisher_ata = get_associated_token_address(publisher_pubkey, USDC_MINT)
     accounts.append(AccountMeta(publisher_ata, is_signer=False, is_writable=True))
 
@@ -215,6 +236,10 @@ def void_challenge_onchain(
         arbiter_pubkey = Pubkey.from_string(a)
         arbiter_ata = get_associated_token_address(arbiter_pubkey, USDC_MINT)
         accounts.append(AccountMeta(arbiter_ata, is_signer=False, is_writable=True))
+
+    # Platform ATA (last remaining account — receives vault remainder)
+    platform_ata = get_associated_token_address(payer.pubkey(), USDC_MINT)
+    accounts.append(AccountMeta(platform_ata, is_signer=False, is_writable=True))
 
     ix = build_instruction(ESCROW_PROGRAM_ID, "void_challenge", args, accounts)
     tx = Transaction().add(ix)
