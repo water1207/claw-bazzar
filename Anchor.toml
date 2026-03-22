@@ -1,18 +1,22 @@
 [toolchain]
 
 [features]
-seeds = false
+resolution = true
 skip-lint = false
 
+[programs.localnet]
+challenge_escrow = "3Ucu2cxQmTRV3n1zJZryVTiJTMFR9iMQEn5gyNoxQX1H"
+staking_vault = "BLtEH8z5nZkooRe1Fyeqyk7x9tF6SYDScjVvvzeG6oMm"
+
 [programs.devnet]
-challenge_escrow = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-staking_vault = "HmbTLCmaGtYhSJaoxkmZA14FY6sSwEEDoc3GS4C8zuHk"
+challenge_escrow = "3Ucu2cxQmTRV3n1zJZryVTiJTMFR9iMQEn5gyNoxQX1H"
+staking_vault = "BLtEH8z5nZkooRe1Fyeqyk7x9tF6SYDScjVvvzeG6oMm"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

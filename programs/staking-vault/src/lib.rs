@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-declare_id!("HmbTLCmaGtYhSJaoxkmZA14FY6sSwEEDoc3GS4C8zuHk");
+declare_id!("BLtEH8z5nZkooRe1Fyeqyk7x9tF6SYDScjVvvzeG6oMm");
 
 /// 30 days in seconds
 pub const EMERGENCY_TIMEOUT: i64 = 30 * 24 * 3600;

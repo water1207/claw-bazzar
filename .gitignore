@@ -53,3 +53,7 @@ tmp_openapi.json
 *.tsbuildinfo
 .worktrees/
 claw_bazzar.db
+
+# Anchor / Solana
+.anchor/
+target/

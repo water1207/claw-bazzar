@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("3Ucu2cxQmTRV3n1zJZryVTiJTMFR9iMQEn5gyNoxQX1H");
 
 /// 0.01 USDC (6 decimals)
 pub const SERVICE_FEE: u64 = 10_000;
@@ -180,7 +180,7 @@ pub struct CreateChallenge<'info> {
         init,
         payer = authority,
         space = ChallengeInfo::LEN,
-        seeds = [b"challenge", &task_id_hash],
+        seeds = [b"challenge", task_id_hash.as_ref()],
         bump,
     )]
     pub challenge_info: Account<'info, ChallengeInfo>,
@@ -223,7 +223,7 @@ pub struct JoinChallenge<'info> {
 
     #[account(
         mut,
-        seeds = [b"challenge", &task_id_hash],
+        seeds = [b"challenge", task_id_hash.as_ref()],
         bump = challenge_info.bump,
     )]
     pub challenge_info: Account<'info, ChallengeInfo>,
@@ -232,7 +232,7 @@ pub struct JoinChallenge<'info> {
         init,
         payer = challenger,
         space = ChallengerRecord::LEN,
-        seeds = [b"challenger", &task_id_hash, challenger.key().as_ref()],
+        seeds = [b"challenger", task_id_hash.as_ref(), challenger.key().as_ref()],
         bump,
     )]
     pub challenger_record: Account<'info, ChallengerRecord>,
@@ -275,7 +275,7 @@ pub struct ResolveChallenge<'info> {
 
     #[account(
         mut,
-        seeds = [b"challenge", &task_id_hash],
+        seeds = [b"challenge", task_id_hash.as_ref()],
         bump = challenge_info.bump,
     )]
     pub challenge_info: Account<'info, ChallengeInfo>,
@@ -313,7 +313,7 @@ pub struct VoidChallenge<'info> {
 
     #[account(
         mut,
-        seeds = [b"challenge", &task_id_hash],
+        seeds = [b"challenge", task_id_hash.as_ref()],
         bump = challenge_info.bump,
     )]
     pub challenge_info: Account<'info, ChallengeInfo>,
@@ -351,7 +351,7 @@ pub struct EmergencyWithdraw<'info> {
 
     #[account(
         mut,
-        seeds = [b"challenge", &task_id_hash],
+        seeds = [b"challenge", task_id_hash.as_ref()],
         bump = challenge_info.bump,
     )]
     pub challenge_info: Account<'info, ChallengeInfo>,
@@ -499,8 +499,8 @@ pub mod challenge_escrow {
     ///   [last]           platform ATA (always last)
     ///
     /// refund_flags[i] corresponds to remaining_accounts[1+i].
-    pub fn resolve_challenge(
-        ctx: Context<ResolveChallenge>,
+    pub fn resolve_challenge<'a>(
+        ctx: Context<'_, '_, 'a, 'a, ResolveChallenge<'a>>,
         task_id_hash: [u8; 32],
         winner_payout: u64,
         arbiter_reward: u64,
@@ -634,8 +634,8 @@ pub mod challenge_escrow {
     ///   [1..num_refunds] challenger ATAs (refund_flags[i] selects which are paid back)
     ///   [num_refunds..num_refunds+num_arbiters] arbiter ATAs
     ///   [last]           platform ATA
-    pub fn void_challenge(
-        ctx: Context<VoidChallenge>,
+    pub fn void_challenge<'a>(
+        ctx: Context<'_, '_, 'a, 'a, VoidChallenge<'a>>,
         task_id_hash: [u8; 32],
         publisher_refund: u64,
         arbiter_reward: u64,
