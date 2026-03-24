@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-declare_id!("3Ucu2cxQmTRV3n1zJZryVTiJTMFR9iMQEn5gyNoxQX1H");
+declare_id!("Hv7XhkW1cDArS4q8bFcZHBZDAekbUwFChUCFNqcBhsbj");
 
 /// 0.01 USDC (6 decimals)
 pub const SERVICE_FEE: u64 = 10_000;

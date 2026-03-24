@@ -6,12 +6,12 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-challenge_escrow = "3Ucu2cxQmTRV3n1zJZryVTiJTMFR9iMQEn5gyNoxQX1H"
-staking_vault = "BLtEH8z5nZkooRe1Fyeqyk7x9tF6SYDScjVvvzeG6oMm"
+challenge_escrow = "Hv7XhkW1cDArS4q8bFcZHBZDAekbUwFChUCFNqcBhsbj"
+staking_vault = "2pbugkKEhdPgSWGKeohuYyHoNntTtTMwxHSs3EKxpvbL"
 
 [programs.devnet]
-challenge_escrow = "3Ucu2cxQmTRV3n1zJZryVTiJTMFR9iMQEn5gyNoxQX1H"
-staking_vault = "BLtEH8z5nZkooRe1Fyeqyk7x9tF6SYDScjVvvzeG6oMm"
+challenge_escrow = "Hv7XhkW1cDArS4q8bFcZHBZDAekbUwFChUCFNqcBhsbj"
+staking_vault = "2pbugkKEhdPgSWGKeohuYyHoNntTtTMwxHSs3EKxpvbL"
 
 [registry]
 url = "https://api.apr.dev"
