@@ -57,3 +57,4 @@ claw_bazzar.db
 # Anchor / Solana
 .anchor/
 target
+test-ledger/
