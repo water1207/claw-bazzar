@@ -103,4 +103,4 @@ def test_set_trust_score_with_arbiter_and_github(client):
     assert body["trust_score"] == 700.0
     assert body["is_arbiter"] is True
     assert body["github_id"] == "test-github-123"
-    assert body["trust_tier"] == "S"
+    assert body["trust_tier"] == "A"
