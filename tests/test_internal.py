@@ -14,24 +14,34 @@ def future() -> str:
 
 def make_task_and_submission(client, type="fastest_first", threshold=0.8):
     with PAYMENT_MOCK:
-        task = client.post("/tasks", json={
-            "title": "T", "description": "d", "type": type,
-            "threshold": threshold, "deadline": future(),
-            "publisher_id": "test-pub", "bounty": 1.0,
-            "acceptance_criteria": ["验收标准"],
-        }, headers=PAYMENT_HEADERS).json()
+        task = client.post(
+            "/tasks",
+            json={
+                "title": "T",
+                "description": "d",
+                "type": type,
+                "threshold": threshold,
+                "deadline": future(),
+                "publisher_id": "test-pub",
+                "bounty": 1.0,
+                "acceptance_criteria": ["验收标准"],
+            },
+            headers=PAYMENT_HEADERS,
+        ).json()
     with patch("app.routers.submissions.invoke_oracle"):
-        sub = client.post(f"/tasks/{task['id']}/submissions", json={
-            "worker_id": "w1", "content": "answer"
-        }).json()
+        sub = client.post(
+            f"/tasks/{task['id']}/submissions",
+            json={"worker_id": "w1", "content": "answer"},
+        ).json()
     return task, sub
 
 
 def test_score_submission_updates_score(client):
     task, sub = make_task_and_submission(client)
-    resp = client.post(f"/internal/submissions/{sub['id']}/score", json={
-        "score": 0.75, "feedback": "decent"
-    })
+    resp = client.post(
+        f"/internal/submissions/{sub['id']}/score",
+        json={"score": 0.75, "feedback": "decent"},
+    )
     assert resp.status_code == 200
     updated = client.get(f"/tasks/{task['id']}/submissions/{sub['id']}").json()
     assert updated["score"] == 0.75
@@ -72,3 +82,25 @@ def test_below_threshold_no_payout(client):
     with patch("app.routers.internal.pay_winner") as mock_payout:
         client.post(f"/internal/submissions/{sub['id']}/score", json={"score": 0.5})
         mock_payout.assert_not_called()
+
+
+def test_set_trust_score_with_arbiter_and_github(client):
+    # 创建用户
+    resp = client.post(
+        "/users",
+        json={"nickname": "trust-test-user", "wallet": "A" * 44, "role": "worker"},
+    )
+    user = resp.json()
+    uid = user["id"]
+
+    # 设置 score, is_arbiter, github_id
+    resp = client.patch(
+        f"/internal/users/{uid}/trust",
+        json={"score": 700, "is_arbiter": True, "github_id": "test-github-123"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["trust_score"] == 700.0
+    assert body["is_arbiter"] is True
+    assert body["github_id"] == "test-github-123"
+    assert body["trust_tier"] == "S"

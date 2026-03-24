@@ -2,8 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import (
-    Submission, Task, Challenge, User,
-    SubmissionStatus, TaskStatus, PayoutStatus, ChallengeStatus,
+    Submission,
+    Task,
+    Challenge,
+    User,
+    SubmissionStatus,
+    TaskStatus,
+    PayoutStatus,
+    ChallengeStatus,
 )
 from ..schemas import ScoreInput, ManualJudgeInput, ChallengeOut
 from ..services.payout import pay_winner
@@ -33,9 +39,15 @@ def score_submission(sub_id: str, data: ScoreInput, db: Session = Depends(get_db
             pay_winner(db, task.id)
             from ..services.trust import apply_event
             from ..models import TrustEventType
+
             if db.query(User).filter_by(id=task.publisher_id).first():
-                apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
-                            task_bounty=task.bounty or 0.0, task_id=task.id)
+                apply_event(
+                    db,
+                    task.publisher_id,
+                    TrustEventType.publisher_completed,
+                    task_bounty=task.bounty or 0.0,
+                    task_id=task.id,
+                )
 
     return {"ok": True}
 
@@ -65,7 +77,9 @@ def trigger_arbitration(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/challenges/{challenge_id}/judge", response_model=ChallengeOut)
-def judge_challenge(challenge_id: str, data: ManualJudgeInput, db: Session = Depends(get_db)):
+def judge_challenge(
+    challenge_id: str, data: ManualJudgeInput, db: Session = Depends(get_db)
+):
     challenge = db.query(Challenge).filter(Challenge.id == challenge_id).first()
     if not challenge:
         raise HTTPException(status_code=404, detail="Challenge not found")
@@ -93,18 +107,33 @@ def set_trust_score(user_id: str, data: dict, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     from ..services.trust import _compute_tier
+
     score = float(data.get("score", user.trust_score))
     user.trust_score = max(0.0, min(1000.0, score))
     user.trust_tier = _compute_tier(user.trust_score)
+    if "is_arbiter" in data:
+        user.is_arbiter = bool(data["is_arbiter"])
+    if "github_id" in data:
+        user.github_id = str(data["github_id"])
     db.commit()
     db.refresh(user)
-    return {"id": user.id, "trust_score": user.trust_score, "trust_tier": user.trust_tier.value}
+    return {
+        "id": user.id,
+        "trust_score": user.trust_score,
+        "trust_tier": user.trust_tier.value,
+        "is_arbiter": user.is_arbiter,
+        "github_id": user.github_id,
+    }
 
 
 @router.get("/oracle-logs")
 def oracle_logs(
-    task_count: int = Query(default=5, ge=1, le=50, description="Return logs for the N most recent tasks"),
-    limit: int = Query(default=200, ge=1, le=500, description="Max log entries to return"),
+    task_count: int = Query(
+        default=5, ge=1, le=50, description="Return logs for the N most recent tasks"
+    ),
+    limit: int = Query(
+        default=200, ge=1, le=500, description="Max log entries to return"
+    ),
     db: Session = Depends(get_db),
 ):
     all_logs = get_oracle_logs(limit=limit)
