@@ -3,7 +3,7 @@ import { createTransferCheckedInstruction, getAssociatedTokenAddress } from '@so
 
 const USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
 const SOLANA_RPC = 'https://api.devnet.solana.com'
-const X402_VERSION = 2
+const X402_VERSION = 1
 
 export function getDevWalletAddress(secretKeyBase64: string): string {
   const secret = Buffer.from(secretKeyBase64, 'base64')
@@ -55,7 +55,7 @@ export async function signX402Payment(params: {
       maxTimeoutSeconds: 30,
     },
     payload: {
-      transaction: Buffer.from(serialized).toString('base64'),
+      serializedTransaction: Buffer.from(serialized).toString('base64'),
     },
   }
 
