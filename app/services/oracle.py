@@ -9,8 +9,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
-from ..models import Submission, Task, SubmissionStatus, TaskStatus, TaskType, ScoringDimension
+from ..models import (
+    Submission,
+    Task,
+    SubmissionStatus,
+    TaskStatus,
+    TaskType,
+    ScoringDimension,
+)
 from .payout import pay_winner
+
 
 def _parse_criteria(raw: str | None) -> list[str]:
     """将数据库中存储的 JSON 字符串反序列化为条目列表。"""
@@ -106,10 +114,15 @@ def _call_oracle(payload: dict, meta: dict | None = None) -> dict:
     """Call oracle subprocess. meta provides context for logging:
     task_id, task_title, submission_id, worker_id."""
     start = time.monotonic()
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     result = subprocess.run(
         [sys.executable, str(ORACLE_SCRIPT)],
         input=json.dumps(_sanitize_surrogates(payload), ensure_ascii=False),
-        capture_output=True, text=True, encoding="utf-8", timeout=120,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        env=env,
     )
     duration_ms = int((time.monotonic() - start) * 1000)
     if result.returncode != 0:
@@ -146,12 +159,16 @@ def _build_payload(task: Task, submission: Submission, mode: str) -> dict:
     return {
         "mode": mode,
         "task": {
-            "id": task.id, "description": task.description,
-            "type": task.type.value, "threshold": task.threshold,
+            "id": task.id,
+            "description": task.description,
+            "type": task.type.value,
+            "threshold": task.threshold,
         },
         "submission": {
-            "id": submission.id, "content": submission.content,
-            "revision": submission.revision, "worker_id": submission.worker_id,
+            "id": submission.id,
+            "content": submission.content,
+            "revision": submission.revision,
+            "worker_id": submission.worker_id,
         },
     }
 
@@ -191,8 +208,12 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
         return
 
     # Step 1: Gate Check
-    sub_meta = {"task_id": task.id, "task_title": task.title,
-                "submission_id": submission.id, "worker_id": submission.worker_id}
+    sub_meta = {
+        "task_id": task.id,
+        "task_title": task.title,
+        "submission_id": submission.id,
+        "worker_id": submission.worker_id,
+    }
     gate_payload = {
         "mode": "gate_check",
         "task_description": task.description,
@@ -204,40 +225,54 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
     # Injection guard result
     if gate_result.get("injection_detected"):
         submission.status = SubmissionStatus.policy_violation
-        submission.oracle_feedback = json.dumps({
-            "type": "injection",
-            "reason": gate_result.get("reason", ""),
-            "field": gate_result.get("field", ""),
-        })
+        submission.oracle_feedback = json.dumps(
+            {
+                "type": "injection",
+                "reason": gate_result.get("reason", ""),
+                "field": gate_result.get("field", ""),
+            }
+        )
         from .trust import apply_event, TrustEventType
-        apply_event(db, submission.worker_id, TrustEventType.worker_malicious, task_id=task.id)
+
+        apply_event(
+            db, submission.worker_id, TrustEventType.worker_malicious, task_id=task.id
+        )
         db.commit()
         return
 
     if not gate_result.get("overall_passed", False):
-        submission.oracle_feedback = json.dumps({
-            "type": "gate_check",
-            **gate_result,
-        })
+        submission.oracle_feedback = json.dumps(
+            {
+                "type": "gate_check",
+                **gate_result,
+            }
+        )
         submission.status = SubmissionStatus.gate_failed
         db.commit()
         return
 
     # Gate passed — commit immediately so status never stays stuck at pending
-    submission.oracle_feedback = json.dumps({
-        "type": "gate_check",
-        **gate_result,
-    })
+    submission.oracle_feedback = json.dumps(
+        {
+            "type": "gate_check",
+            **gate_result,
+        }
+    )
     submission.status = SubmissionStatus.gate_passed
     db.commit()
 
     # Step 2: Individual scoring (score hidden, revision suggestions returned)
-    dimensions = db.query(ScoringDimension).filter(
-        ScoringDimension.task_id == task_id
-    ).all()
+    dimensions = (
+        db.query(ScoringDimension).filter(ScoringDimension.task_id == task_id).all()
+    )
     dims_data = [
-        {"id": d.dim_id, "name": d.name, "description": d.description,
-         "weight": d.weight, "scoring_guidance": d.scoring_guidance}
+        {
+            "id": d.dim_id,
+            "name": d.name,
+            "description": d.description,
+            "weight": d.weight,
+            "scoring_guidance": d.scoring_guidance,
+        }
         for d in dimensions
     ]
 
@@ -250,10 +285,12 @@ def give_feedback(db: Session, submission_id: str, task_id: str) -> None:
     }
     score_result = _call_oracle(score_payload, meta=sub_meta)
 
-    submission.oracle_feedback = json.dumps({
-        "type": "individual_scoring",
-        **score_result,
-    })
+    submission.oracle_feedback = json.dumps(
+        {
+            "type": "individual_scoring",
+            **score_result,
+        }
+    )
     db.commit()
 
 
@@ -264,8 +301,12 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
     if not submission or not task:
         return
 
-    sub_meta = {"task_id": task.id, "task_title": task.title,
-                "submission_id": submission.id, "worker_id": submission.worker_id}
+    sub_meta = {
+        "task_id": task.id,
+        "task_title": task.title,
+        "submission_id": submission.id,
+        "worker_id": submission.worker_id,
+    }
 
     # Step 1: Gate Check
     gate_payload = {
@@ -279,39 +320,48 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
     # Injection guard result
     if gate_result.get("injection_detected"):
         submission.status = SubmissionStatus.policy_violation
-        submission.oracle_feedback = json.dumps({
-            "type": "injection",
-            "reason": gate_result.get("reason", ""),
-            "field": gate_result.get("field", ""),
-        })
+        submission.oracle_feedback = json.dumps(
+            {
+                "type": "injection",
+                "reason": gate_result.get("reason", ""),
+                "field": gate_result.get("field", ""),
+            }
+        )
         from .trust import apply_event, TrustEventType
-        apply_event(db, submission.worker_id, TrustEventType.worker_malicious, task_id=task.id)
+
+        apply_event(
+            db, submission.worker_id, TrustEventType.worker_malicious, task_id=task.id
+        )
         db.commit()
         return
 
     if not gate_result.get("overall_passed", False):
-        submission.oracle_feedback = json.dumps({
-            "type": "gate_check",
-            **gate_result,
-        })
+        submission.oracle_feedback = json.dumps(
+            {
+                "type": "gate_check",
+                **gate_result,
+            }
+        )
         submission.status = SubmissionStatus.gate_failed
         db.commit()
         return
 
     # Step 2: Score Individual (band-first + evidence)
-    dimensions = db.query(ScoringDimension).filter(
-        ScoringDimension.task_id == task_id
-    ).all()
+    dimensions = (
+        db.query(ScoringDimension).filter(ScoringDimension.task_id == task_id).all()
+    )
 
     if not dimensions:
         # V1 fallback — no dimensions available
         output = _call_oracle(_build_payload(task, submission, "score"), meta=sub_meta)
         submission.score = output.get("score", 0.0)
-        submission.oracle_feedback = json.dumps({
-            "type": "scoring",
-            "passed": submission.score >= (task.threshold or 0),
-            **output,
-        })
+        submission.oracle_feedback = json.dumps(
+            {
+                "type": "scoring",
+                "passed": submission.score >= (task.threshold or 0),
+                **output,
+            }
+        )
         submission.status = SubmissionStatus.scored
         db.commit()
         if submission.score >= (task.threshold or 0):
@@ -319,8 +369,13 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
         return
 
     dims_data = [
-        {"id": d.dim_id, "name": d.name, "description": d.description,
-         "weight": d.weight, "scoring_guidance": d.scoring_guidance}
+        {
+            "id": d.dim_id,
+            "name": d.name,
+            "description": d.description,
+            "weight": d.weight,
+            "scoring_guidance": d.scoring_guidance,
+        }
         for d in dimensions
     ]
     score_payload = {
@@ -343,18 +398,20 @@ def score_submission(db: Session, submission_id: str, task_id: str) -> None:
     final_score = penalty_result["final_score"]
     passed = final_score >= PENALTY_THRESHOLD
 
-    submission.oracle_feedback = json.dumps({
-        "type": "scoring",
-        "dimension_scores": dim_scores,
-        "overall_band": score_result.get("overall_band", ""),
-        "revision_suggestions": score_result.get("revision_suggestions", []),
-        "weighted_base": penalty_result["weighted_base"],
-        "penalty": penalty_result["penalty"],
-        "penalty_reasons": penalty_result["penalty_reasons"],
-        "final_score": final_score,
-        "risk_flags": penalty_result["risk_flags"],
-        "passed": passed,
-    })
+    submission.oracle_feedback = json.dumps(
+        {
+            "type": "scoring",
+            "dimension_scores": dim_scores,
+            "overall_band": score_result.get("overall_band", ""),
+            "revision_suggestions": score_result.get("revision_suggestions", []),
+            "weighted_base": penalty_result["weighted_base"],
+            "penalty": penalty_result["penalty"],
+            "penalty_reasons": penalty_result["penalty_reasons"],
+            "final_score": final_score,
+            "risk_flags": penalty_result["risk_flags"],
+            "passed": passed,
+        }
+    )
     submission.score = final_score / 100.0
     submission.status = SubmissionStatus.scored
     db.commit()
@@ -424,41 +481,60 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
     if not task:
         return
 
-    passed = db.query(Submission).filter(
-        Submission.task_id == task_id,
-        Submission.status == SubmissionStatus.gate_passed,
-    ).all()
+    passed = (
+        db.query(Submission)
+        .filter(
+            Submission.task_id == task_id,
+            Submission.status == SubmissionStatus.gate_passed,
+        )
+        .all()
+    )
 
     # Backward compat with V1 tests
     if not passed:
-        passed = db.query(Submission).filter(
-            Submission.task_id == task_id,
-            Submission.status == SubmissionStatus.pending,
-        ).all()
+        passed = (
+            db.query(Submission)
+            .filter(
+                Submission.task_id == task_id,
+                Submission.status == SubmissionStatus.pending,
+            )
+            .all()
+        )
 
     if not passed:
         return
 
-    dimensions = db.query(ScoringDimension).filter(
-        ScoringDimension.task_id == task_id
-    ).all()
+    dimensions = (
+        db.query(ScoringDimension).filter(ScoringDimension.task_id == task_id).all()
+    )
 
     task_meta = {"task_id": task.id, "task_title": task.title}
 
     # V1 fallback: no dimensions
     if not dimensions:
         for submission in passed:
-            m = {**task_meta, "submission_id": submission.id, "worker_id": submission.worker_id}
+            m = {
+                **task_meta,
+                "submission_id": submission.id,
+                "worker_id": submission.worker_id,
+            }
             output = _call_oracle(_build_payload(task, submission, "score"), meta=m)
             submission.score = output.get("score", 0.0)
-            submission.oracle_feedback = output.get("feedback", submission.oracle_feedback)
+            submission.oracle_feedback = output.get(
+                "feedback", submission.oracle_feedback
+            )
             submission.status = SubmissionStatus.scored
         db.commit()
         return
 
     dims_data = [
-        {"id": d.dim_id, "name": d.name, "description": d.description,
-         "weight": d.weight, "scoring_guidance": d.scoring_guidance}
+        {
+            "id": d.dim_id,
+            "name": d.name,
+            "description": d.description,
+            "weight": d.weight,
+            "scoring_guidance": d.scoring_guidance,
+        }
         for d in dimensions
     ]
     fixed_dim_ids = {d.dim_id for d in dimensions if d.dim_type == "fixed"}
@@ -479,8 +555,13 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
             dim_scores_for_penalty = feedback.get("dimension_scores", {})
         except (json.JSONDecodeError, KeyError):
             dim_scores_for_penalty = {}
-        dims_for_penalty = [{"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight} for d in dimensions]
-        penalty_result = compute_penalized_total(dim_scores_for_penalty, dims_for_penalty)
+        dims_for_penalty = [
+            {"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight}
+            for d in dimensions
+        ]
+        penalty_result = compute_penalized_total(
+            dim_scores_for_penalty, dims_for_penalty
+        )
         sub.score = penalty_result["final_score"] / 100.0
         sub.status = SubmissionStatus.scored
 
@@ -495,7 +576,10 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
             dim_scores = feedback.get("dimension_scores", {})
         except (json.JSONDecodeError, KeyError):
             dim_scores = {}
-        dims_for_penalty = [{"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight} for d in dimensions]
+        dims_for_penalty = [
+            {"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight}
+            for d in dimensions
+        ]
         return compute_penalized_total(dim_scores, dims_for_penalty)["final_score"]
 
     eligible.sort(key=_get_penalized_total, reverse=True)
@@ -525,7 +609,9 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
             dim_id = dim_data["id"]
             if dim_id not in individual_ir_map:
                 individual_ir_map[dim_id] = {}
-            individual_ir_map[dim_id][anon["label"]] = ir.get(dim_id, {"band": "?", "evidence": ""})
+            individual_ir_map[dim_id][anon["label"]] = ir.get(
+                dim_id, {"band": "?", "evidence": ""}
+            )
 
     # Step 3: Horizontal scoring per dimension (PARALLEL)
     all_scores = {}
@@ -568,14 +654,21 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
                 }
                 dim_scores_for_ranking[dim_id] = {"score": entry["final_score"]}
 
-        dims_for_penalty = [{"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight} for d in dimensions]
-        penalty_result = compute_penalized_total(dim_scores_for_ranking, dims_for_penalty)
+        dims_for_penalty = [
+            {"dim_id": d.dim_id, "dim_type": d.dim_type, "weight": d.weight}
+            for d in dimensions
+        ]
+        penalty_result = compute_penalized_total(
+            dim_scores_for_ranking, dims_for_penalty
+        )
 
-        ranking.append({
-            "label": label,
-            "dimension_breakdown": breakdown,
-            **penalty_result,
-        })
+        ranking.append(
+            {
+                "label": label,
+                "dimension_breakdown": breakdown,
+                **penalty_result,
+            }
+        )
 
     ranking.sort(key=lambda x: x["final_score"], reverse=True)
 
@@ -592,43 +685,56 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
                 advantages.append(f"• {dim_data['name']}: {advantage}")
 
         rationale_lines = advantages if advantages else ["• 综合评分最高"]
-        winner_rationale = f"Winner 在 {len(dims_data)} 个维度中综合表现最优：\n" + "\n".join(rationale_lines)
+        winner_rationale = (
+            f"Winner 在 {len(dims_data)} 个维度中综合表现最优：\n"
+            + "\n".join(rationale_lines)
+        )
 
         rankings_list = []
         for rank_idx, entry in enumerate(ranking):
             sub = label_map[entry["label"]]
-            rankings_list.append({
-                "rank": rank_idx + 1,
-                "submission_id": sub.id,
-                "worker_id": sub.worker_id,
-                "final_score": entry["final_score"],
-            })
+            rankings_list.append(
+                {
+                    "rank": rank_idx + 1,
+                    "submission_id": sub.id,
+                    "worker_id": sub.worker_id,
+                    "final_score": entry["final_score"],
+                }
+            )
 
-        comparative_feedback_json = json.dumps({
-            "winner_rationale": winner_rationale,
-            "rankings": rankings_list,
-        }, ensure_ascii=False)
+        comparative_feedback_json = json.dumps(
+            {
+                "winner_rationale": winner_rationale,
+                "rankings": rankings_list,
+            },
+            ensure_ascii=False,
+        )
 
     # Write back to submissions
     for rank_idx, entry in enumerate(ranking):
         sub = label_map[entry["label"]]
-        sub.oracle_feedback = json.dumps({
-            "type": "scoring",
-            "dimension_scores": entry["dimension_breakdown"],
-            "weighted_base": entry["weighted_base"],
-            "penalty": entry["penalty"],
-            "penalty_reasons": entry["penalty_reasons"],
-            "final_score": entry["final_score"],
-            "risk_flags": entry["risk_flags"],
-            "rank": rank_idx + 1,
-        })
+        sub.oracle_feedback = json.dumps(
+            {
+                "type": "scoring",
+                "dimension_scores": entry["dimension_breakdown"],
+                "weighted_base": entry["weighted_base"],
+                "penalty": entry["penalty"],
+                "penalty_reasons": entry["penalty_reasons"],
+                "final_score": entry["final_score"],
+                "risk_flags": entry["risk_flags"],
+                "rank": rank_idx + 1,
+            }
+        )
         sub.score = entry["final_score"] / 100.0
         sub.status = SubmissionStatus.scored
 
         # Only winner gets comparative_feedback
         if rank_idx == 0 and comparative_feedback_json:
             sub.comparative_feedback = comparative_feedback_json
-            print(f"[batch_score] Setting comparative_feedback on winner sub={sub.id[:8]}, len={len(comparative_feedback_json)}", flush=True)
+            print(
+                f"[batch_score] Setting comparative_feedback on winner sub={sub.id[:8]}, len={len(comparative_feedback_json)}",
+                flush=True,
+            )
 
     # Mark remaining eligible subs (outside top 3) as scored
     for sub in eligible:
@@ -643,21 +749,34 @@ def batch_score_submissions(db: Session, task_id: str) -> None:
 def _apply_fastest_first(db: Session, task: Task, submission: Submission) -> None:
     if task.type.value != "fastest_first" or task.status != TaskStatus.open:
         return
-    if task.threshold is not None and submission.score >= task.threshold:
+    # submission.score is stored as 0-1 fraction, threshold is 0-100 percentage
+    score_pct = (submission.score or 0) * 100
+    if task.threshold is not None and score_pct >= task.threshold:
         task.winner_submission_id = submission.id
         task.status = TaskStatus.closed
         db.commit()
         pay_winner(db, task.id)
         from .trust import apply_event
         from ..models import TrustEventType, User
+
         # Worker wins trust event
         if db.query(User).filter_by(id=submission.worker_id).first():
-            apply_event(db, submission.worker_id, TrustEventType.worker_won,
-                        task_bounty=task.bounty or 0.0, task_id=task.id)
+            apply_event(
+                db,
+                submission.worker_id,
+                TrustEventType.worker_won,
+                task_bounty=task.bounty or 0.0,
+                task_id=task.id,
+            )
         # Publisher completed trust event
         if db.query(User).filter_by(id=task.publisher_id).first():
-            apply_event(db, task.publisher_id, TrustEventType.publisher_completed,
-                        task_bounty=task.bounty or 0.0, task_id=task.id)
+            apply_event(
+                db,
+                task.publisher_id,
+                TrustEventType.publisher_completed,
+                task_bounty=task.bounty or 0.0,
+                task_id=task.id,
+            )
 
 
 def invoke_oracle(submission_id: str, task_id: str) -> None:
