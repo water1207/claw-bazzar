@@ -58,6 +58,16 @@ def sign_x402(amount_usdc):
     return base64.b64encode(json.dumps(payload).encode()).decode()
 
 
+# Resolve user IDs dynamically
+def get_user_id(nickname):
+    resp = httpx.get(f"{BASE_URL}/users", params={"nickname": nickname}, timeout=10)
+    return resp.json()["id"]
+
+
+publisher_id = get_user_id("dev-publisher")
+alice_id = get_user_id("Alice")
+print(f"Publisher: {publisher_id}, Alice: {alice_id}")
+
 # Step 1: Create task
 print("=== Step 1: Create fastest_first task ===")
 header = sign_x402(1.0)
@@ -74,7 +84,7 @@ resp = httpx.post(
         "threshold": 60,
         "acceptance_criteria": ["Explain PoH mechanism", "At least 100 words"],
         "deadline": deadline,
-        "publisher_id": "85fe2660-7828-4787-8bcd-99dd6d225a07",
+        "publisher_id": publisher_id,
     },
     headers={"X-PAYMENT": header},
     timeout=60,
@@ -104,7 +114,7 @@ for d in dims:
 
 # Step 2: Alice submits
 print("\n=== Step 2: Alice submits ===")
-alice_id = "7602129c-d3f7-402d-ad63-79e0b78c569d"
+# alice_id already resolved above
 resp = httpx.post(
     f"{BASE_URL}/tasks/{task_id}/submissions",
     json={
