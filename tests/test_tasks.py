@@ -264,8 +264,8 @@ def test_task_create_bounty_minimum(client):
     assert resp.status_code == 422
 
 
-def test_task_out_no_challenge_window_end(client):
-    """TaskOut 不再暴露 challenge_window_end"""
+def test_task_out_challenge_window_end_null_initially(client):
+    """新建 quality_first 任务时 challenge_window_end 应为 null"""
     with PAYMENT_MOCK:
         resp = client.post(
             "/tasks",
@@ -282,7 +282,7 @@ def test_task_out_no_challenge_window_end(client):
             headers=PAYMENT_HEADERS,
         )
     assert resp.status_code == 201
-    assert "challenge_window_end" not in resp.json()
+    assert resp.json()["challenge_window_end"] is None
 
 
 def test_task_acceptance_criteria_roundtrip(client):

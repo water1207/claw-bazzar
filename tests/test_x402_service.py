@@ -19,7 +19,7 @@ def test_verify_payment_valid():
     from app.services.x402 import verify_payment
 
     with patch(
-        "app.services.x402._facilitator_verify",
+        "app.services.x402._verify_and_settle",
         return_value={"valid": True, "tx_hash": "0xabc123"},
     ):
         result = verify_payment("some-payment-header", 1.0)
@@ -31,7 +31,7 @@ def test_verify_payment_invalid():
     from app.services.x402 import verify_payment
 
     with patch(
-        "app.services.x402._facilitator_verify",
+        "app.services.x402._verify_and_settle",
         return_value={"valid": False, "tx_hash": None},
     ):
         result = verify_payment("bad-payment-header", 1.0)

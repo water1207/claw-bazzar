@@ -39,15 +39,16 @@ def test_create_challenge_onchain():
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.value = "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp"
-    mock_client.send_transaction.return_value = mock_resp
+    mock_client.send_raw_transaction.return_value = mock_resp
 
     mock_keypair = MagicMock()
     dummy_pubkey = Pubkey.from_string("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
     mock_keypair.pubkey.return_value = dummy_pubkey
 
     mock_ix = MagicMock()
+    mock_msg = MagicMock()
     mock_tx = MagicMock()
-    mock_tx.add.return_value = mock_tx
+    mock_tx.__bytes__ = MagicMock(return_value=b"fake-tx-bytes")
 
     with (
         patch("app.services.escrow.get_client", return_value=mock_client),
@@ -58,8 +59,11 @@ def test_create_challenge_onchain():
             return_value=dummy_pubkey,
         ),
         patch("app.services.escrow.build_instruction", return_value=mock_ix),
-        patch("app.services.escrow.Transaction", return_value=mock_tx),
+        patch("app.services.escrow.Message") as MockMessage,
+        patch("app.services.escrow.Transaction") as MockTransaction,
     ):
+        MockMessage.new_with_blockhash.return_value = mock_msg
+        MockTransaction.new_unsigned.return_value = mock_tx
         tx = create_challenge_onchain(
             "task-1", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", 8.0, 1.0
         )
@@ -90,15 +94,16 @@ def test_resolve_challenge_onchain():
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.value = "5xResolve..."
-    mock_client.send_transaction.return_value = mock_resp
+    mock_client.send_raw_transaction.return_value = mock_resp
 
     mock_keypair = MagicMock()
     dummy_pubkey = Pubkey.from_string("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
     mock_keypair.pubkey.return_value = dummy_pubkey
 
     mock_ix = MagicMock()
+    mock_msg = MagicMock()
     mock_tx = MagicMock()
-    mock_tx.add.return_value = mock_tx
+    mock_tx.__bytes__ = MagicMock(return_value=b"fake-tx-bytes")
 
     with (
         patch("app.services.escrow.get_client", return_value=mock_client),
@@ -109,8 +114,11 @@ def test_resolve_challenge_onchain():
             return_value=dummy_pubkey,
         ),
         patch("app.services.escrow.build_instruction", return_value=mock_ix),
-        patch("app.services.escrow.Transaction", return_value=mock_tx),
+        patch("app.services.escrow.Message") as MockMessage,
+        patch("app.services.escrow.Transaction") as MockTransaction,
     ):
+        MockMessage.new_with_blockhash.return_value = mock_msg
+        MockTransaction.new_unsigned.return_value = mock_tx
         tx = resolve_challenge_onchain(
             "task-1",
             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
@@ -134,15 +142,16 @@ def test_void_challenge_onchain():
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.value = "5xVoid..."
-    mock_client.send_transaction.return_value = mock_resp
+    mock_client.send_raw_transaction.return_value = mock_resp
 
     mock_keypair = MagicMock()
     dummy_pubkey = Pubkey.from_string("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
     mock_keypair.pubkey.return_value = dummy_pubkey
 
     mock_ix = MagicMock()
+    mock_msg = MagicMock()
     mock_tx = MagicMock()
-    mock_tx.add.return_value = mock_tx
+    mock_tx.__bytes__ = MagicMock(return_value=b"fake-tx-bytes")
 
     with (
         patch("app.services.escrow.get_client", return_value=mock_client),
@@ -153,8 +162,11 @@ def test_void_challenge_onchain():
             return_value=dummy_pubkey,
         ),
         patch("app.services.escrow.build_instruction", return_value=mock_ix),
-        patch("app.services.escrow.Transaction", return_value=mock_tx),
+        patch("app.services.escrow.Message") as MockMessage,
+        patch("app.services.escrow.Transaction") as MockTransaction,
     ):
+        MockMessage.new_with_blockhash.return_value = mock_msg
+        MockTransaction.new_unsigned.return_value = mock_tx
         tx = void_challenge_onchain(
             "task-1",
             "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
