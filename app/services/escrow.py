@@ -16,6 +16,7 @@ from .solana_utils import (
 )
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
+from solders.message import Message
 from solana.rpc.types import TxOpts
 from solders.instruction import AccountMeta
 from spl.token.constants import TOKEN_PROGRAM_ID
@@ -31,9 +32,10 @@ def _get_escrow_pdas(task_id: str):
     challenge_pda, challenge_bump = find_pda(
         [b"challenge", task_seed], ESCROW_PROGRAM_ID
     )
-    vault_pda, vault_bump = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
+    vault_token_pda, _ = find_pda([b"vault_token"], ESCROW_PROGRAM_ID)
+    vault_authority_pda, _ = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
     config_pda, _ = find_pda([b"config"], ESCROW_PROGRAM_ID)
-    return task_seed, challenge_pda, vault_pda, config_pda
+    return task_seed, challenge_pda, vault_token_pda, vault_authority_pda, config_pda
 
 
 def check_usdc_balance(wallet_address: str) -> float:
@@ -56,7 +58,9 @@ def create_challenge_onchain(
     """Call ChallengeEscrow create_challenge instruction."""
     client = get_client()
     payer = get_platform_keypair()
-    task_seed, challenge_pda, vault_pda, config_pda = _get_escrow_pdas(task_id)
+    task_seed, challenge_pda, vault_token_pda, vault_authority_pda, config_pda = (
+        _get_escrow_pdas(task_id)
+    )
 
     bounty_lamports = usdc_to_lamports(bounty)
     incentive_lamports = usdc_to_lamports(incentive)
@@ -80,7 +84,7 @@ def create_challenge_onchain(
             payer_ata, is_signer=False, is_writable=True
         ),  # authority_token_account
         AccountMeta(
-            vault_pda, is_signer=False, is_writable=True
+            vault_token_pda, is_signer=False, is_writable=True
         ),  # vault_token_account
         AccountMeta(
             TOKEN_PROGRAM_ID, is_signer=False, is_writable=False
@@ -93,10 +97,14 @@ def create_challenge_onchain(
     ]
 
     ix = build_instruction(ESCROW_PROGRAM_ID, "create_challenge", args, accounts)
-    tx = Transaction().add(ix)
-    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    blockhash = client.get_latest_blockhash().value.blockhash
+    message = Message.new_with_blockhash([ix], payer.pubkey(), blockhash)
+    tx = Transaction.new_unsigned(message)
+    tx.sign([payer], blockhash)
+    resp = client.send_raw_transaction(bytes(tx))
     sig = str(resp.value)
     print(f"[escrow] createChallenge({task_id}) tx={sig}", flush=True)
+    client.confirm_transaction(resp.value, commitment="confirmed")
     return sig
 
 
@@ -121,7 +129,9 @@ def resolve_challenge_onchain(
     """Call ChallengeEscrow resolve_challenge instruction with remaining accounts."""
     client = get_client()
     payer = get_platform_keypair()
-    task_seed, challenge_pda, vault_pda, config_pda = _get_escrow_pdas(task_id)
+    task_seed, challenge_pda, vault_token_pda, vault_authority_pda, config_pda = (
+        _get_escrow_pdas(task_id)
+    )
 
     winner_pubkey = Pubkey.from_string(final_winner_wallet)
     winner_payout_lamports = usdc_to_lamports(winner_payout)
@@ -129,15 +139,17 @@ def resolve_challenge_onchain(
     num_refunds = len(refunds)
     num_arbiters = len(arbiter_wallets)
 
-    # Borsh: task_id_hash(32) + winner_payout(u64) + arbiter_reward(u64) + num_refunds(u32) + refund_flags(bool[]) + num_arbiters(u32)
+    # Borsh: task_id_hash(32) + winner_payout(u64) + arbiter_reward(u64)
+    #        + num_refunds(u32) + refund_flags Vec<bool>(4-byte len + bools) + num_arbiters(u32)
     args = task_seed
     args += struct.pack("<QQ", winner_payout_lamports, arbiter_reward_lamports)
     args += struct.pack("<I", num_refunds)
-    for r in refunds:
-        args += struct.pack("<?", r["refund"])
+    # Vec<bool> Borsh: 4-byte length prefix + individual bools
+    refund_bools = [r["refund"] for r in refunds]
+    args += struct.pack("<I", len(refund_bools))
+    for b in refund_bools:
+        args += struct.pack("<?", b)
     args += struct.pack("<I", num_arbiters)
-
-    vault_authority_pda, _ = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
 
     accounts = [
         AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),  # authority
@@ -147,7 +159,7 @@ def resolve_challenge_onchain(
             vault_authority_pda, is_signer=False, is_writable=False
         ),  # vault_authority
         AccountMeta(
-            vault_pda, is_signer=False, is_writable=True
+            vault_token_pda, is_signer=False, is_writable=True
         ),  # vault_token_account
         AccountMeta(
             TOKEN_PROGRAM_ID, is_signer=False, is_writable=False
@@ -173,10 +185,14 @@ def resolve_challenge_onchain(
     accounts.append(AccountMeta(platform_ata, is_signer=False, is_writable=True))
 
     ix = build_instruction(ESCROW_PROGRAM_ID, "resolve_challenge", args, accounts)
-    tx = Transaction().add(ix)
-    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    blockhash = client.get_latest_blockhash().value.blockhash
+    message = Message.new_with_blockhash([ix], payer.pubkey(), blockhash)
+    tx = Transaction.new_unsigned(message)
+    tx.sign([payer], blockhash)
+    resp = client.send_raw_transaction(bytes(tx))
     sig = str(resp.value)
     print(f"[escrow] resolveChallenge({task_id}) tx={sig}", flush=True)
+    client.confirm_transaction(resp.value, commitment="confirmed")
     return sig
 
 
@@ -191,7 +207,9 @@ def void_challenge_onchain(
     """Call ChallengeEscrow void_challenge instruction."""
     client = get_client()
     payer = get_platform_keypair()
-    task_seed, challenge_pda, vault_pda, config_pda = _get_escrow_pdas(task_id)
+    task_seed, challenge_pda, vault_token_pda, vault_authority_pda, config_pda = (
+        _get_escrow_pdas(task_id)
+    )
 
     publisher_pubkey = Pubkey.from_string(publisher_wallet)
     publisher_refund_lamports = usdc_to_lamports(publisher_refund)
@@ -202,11 +220,11 @@ def void_challenge_onchain(
     args = task_seed
     args += struct.pack("<QQ", publisher_refund_lamports, arbiter_reward_lamports)
     args += struct.pack("<I", num_refunds)
-    for r in refunds:
-        args += struct.pack("<?", r["refund"])
+    refund_bools = [r["refund"] for r in refunds]
+    args += struct.pack("<I", len(refund_bools))
+    for b in refund_bools:
+        args += struct.pack("<?", b)
     args += struct.pack("<I", num_arbiters)
-
-    vault_authority_pda, _ = find_pda([b"escrow_vault"], ESCROW_PROGRAM_ID)
 
     accounts = [
         AccountMeta(payer.pubkey(), is_signer=True, is_writable=True),  # authority
@@ -216,7 +234,7 @@ def void_challenge_onchain(
             vault_authority_pda, is_signer=False, is_writable=False
         ),  # vault_authority
         AccountMeta(
-            vault_pda, is_signer=False, is_writable=True
+            vault_token_pda, is_signer=False, is_writable=True
         ),  # vault_token_account
         AccountMeta(
             TOKEN_PROGRAM_ID, is_signer=False, is_writable=False
@@ -242,8 +260,12 @@ def void_challenge_onchain(
     accounts.append(AccountMeta(platform_ata, is_signer=False, is_writable=True))
 
     ix = build_instruction(ESCROW_PROGRAM_ID, "void_challenge", args, accounts)
-    tx = Transaction().add(ix)
-    resp = client.send_transaction(tx, payer, opts=TxOpts(skip_confirmation=False))
+    blockhash = client.get_latest_blockhash().value.blockhash
+    message = Message.new_with_blockhash([ix], payer.pubkey(), blockhash)
+    tx = Transaction.new_unsigned(message)
+    tx.sign([payer], blockhash)
+    resp = client.send_raw_transaction(bytes(tx))
     sig = str(resp.value)
     print(f"[escrow] voidChallenge({task_id}) tx={sig}", flush=True)
+    client.confirm_transaction(resp.value, commitment="confirmed")
     return sig
