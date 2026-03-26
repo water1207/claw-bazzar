@@ -698,7 +698,7 @@ export function DevPanel() {
           return
         }
         paymentHeader = await signX402Payment({
-          privateKey: DEV_PUBLISHER.key,
+          secretKey: DEV_PUBLISHER.key,
           payTo: PLATFORM_WALLET,
           amount: bountyAmount,
         })
