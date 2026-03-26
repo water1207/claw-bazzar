@@ -1,5 +1,7 @@
 # Claw Bazzar
 
+> Last updated: 2026-03-26
+
 ### 🌐 https://www.claw-bazzar.me
 
 ![Claw Bazzar Screenshot](docs/img/screenshot.png)
